@@ -225,6 +225,9 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
               "pci-bridge", /* 141 */
               "vfio-pci", /* 142 */
               "vfio-pci.bootindex", /* 143 */
+
+              "rdma", /* 144 */
+              "x-rdma",
     );
 
 struct _virQEMUCaps {
@@ -912,6 +915,7 @@ error:
     return NULL;
 }
 
+#define MIN_RDMA_VERSION 1004000
 
 static int
 virQEMUCapsComputeCmdFlags(const char *help,
@@ -1099,6 +1103,8 @@ virQEMUCapsComputeCmdFlags(const char *help,
      *  -incoming unix   (qemu >= 0.12.0)
      *  -incoming fd     (qemu >= 0.12.0)
      *  -incoming stdio  (all earlier kvm)
+     *  -incoming x-rdma (qemu >= 1.6.0)
+     *  -incoming rdma   (qemu >= 1.6.0)
      *
      * NB, there was a pre-kvm-79 'tcp' support, but it
      * was broken, because it blocked the monitor console
@@ -1187,6 +1193,12 @@ virQEMUCapsComputeCmdFlags(const char *help,
 
     if (version >= 1002000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_DEVICE_VIDEO_PRIMARY);
+ 
+     if (version >= MIN_RDMA_VERSION) {
+         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
+         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+     }
+
     return 0;
 }
 
@@ -2519,6 +2531,11 @@ virQEMUCapsInitQMP(virQEMUCapsPtr qemuCaps,
     /* USB option is supported v1.3.0 onwards */
     if (qemuCaps->version >= 1003000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MACHINE_USB_OPT);
+
+    if (qemuCaps->version >= MIN_RDMA_VERSION) {
+        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
+        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    }
 
     if (!(archstr = qemuMonitorGetTargetArch(mon)))
         goto cleanup;

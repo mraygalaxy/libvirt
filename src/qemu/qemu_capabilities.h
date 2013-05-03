@@ -183,6 +183,9 @@ enum virQEMUCapsFlags {
     QEMU_CAPS_DEVICE_VFIO_PCI    = 142, /* -device vfio-pci */
     QEMU_CAPS_VFIO_PCI_BOOTINDEX = 143, /* bootindex param for vfio-pci device */
 
+    QEMU_CAPS_MIGRATE_QEMU_RDMA  = 144, /* have qemu rdma migration */
+    QEMU_CAPS_MIGRATE_QEMU_X_RDMA  = 145, /* have qemu x-rdma migration */
+
     QEMU_CAPS_LAST,                   /* this must always be the last item */
 };
 

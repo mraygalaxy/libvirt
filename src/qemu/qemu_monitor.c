@@ -1920,6 +1920,7 @@ int qemuMonitorMigrateToFd(qemuMonitorPtr mon,
 
 int qemuMonitorMigrateToHost(qemuMonitorPtr mon,
                              unsigned int flags,
+                             const char *proto,
                              const char *hostname,
                              int port)
 {
@@ -1935,7 +1936,7 @@ int qemuMonitorMigrateToHost(qemuMonitorPtr mon,
     }
 
 
-    if (virAsprintf(&uri, "tcp:%s:%d", hostname, port) < 0) {
+    if (virAsprintf(&uri, "%s:%s:%d", proto, hostname, port) < 0) {
         virReportOOMError();
         return -1;
     }
