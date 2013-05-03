@@ -6946,6 +6946,22 @@ qemuBuildCommandLine(virConnectPtr conn,
                 goto error;
             }
             virCommandAddArg(cmd, migrateFrom);
+        } else if (STRPREFIX(migrateFrom, "rdma")) {
+            if (!qemuCapsGet(caps, QEMU_CAPS_MIGRATE_QEMU_RDMA)) {
+                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
+                               "%s", _("RDMA migration is not supported with "
+                                       "this QEMU binary"));
+                goto error;
+            }
+            virCommandAddArg(cmd, migrateFrom);
+        } else if (STRPREFIX(migrateFrom, "x-rdma")) {
+            if (!qemuCapsGet(caps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA)) {
+                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
+                               "%s", _("X-RDMA migration is not supported with "
+                                       "this QEMU binary"));
+                goto error;
+            }
+            virCommandAddArg(cmd, migrateFrom);
         } else if (STREQ(migrateFrom, "stdio")) {
             if (qemuCapsGet(caps, QEMU_CAPS_MIGRATE_QEMU_FD)) {
                 virCommandAddArgFormat(cmd, "fd:%d", migrateFd);

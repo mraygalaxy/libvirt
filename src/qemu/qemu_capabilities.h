@@ -166,6 +166,9 @@ enum qemuCapsFlags {
     QEMU_CAPS_DEVICE_USB_SERIAL  = 125, /* -device usb-serial */
     QEMU_CAPS_DEVICE_USB_NET     = 126, /* -device usb-net */
 
+    QEMU_CAPS_MIGRATE_QEMU_RDMA  = 127, /* have qemu rdma migration */
+    QEMU_CAPS_MIGRATE_QEMU_X_RDMA  = 128, /* have qemu x-rdma migration */
+
     QEMU_CAPS_LAST,                   /* this must always be the last item */
 };
 

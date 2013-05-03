@@ -203,6 +203,9 @@ VIR_ENUM_IMPL(qemuCaps, QEMU_CAPS_LAST,
 
               "usb-serial", /* 125 */
               "usb-net",
+                
+              "rdma", /* 127 */
+              "x-rdma",
 
     );
 
@@ -934,6 +937,7 @@ error:
     return NULL;
 }
 
+#define MIN_RDMA_VERSION 1004000
 
 static int
 qemuCapsComputeCmdFlags(const char *help,
@@ -1111,6 +1115,8 @@ qemuCapsComputeCmdFlags(const char *help,
      *  -incoming unix   (qemu >= 0.12.0)
      *  -incoming fd     (qemu >= 0.12.0)
      *  -incoming stdio  (all earlier kvm)
+     *  -incoming x-rdma (qemu >= 1.6.0)
+     *  -incoming rdma   (qemu >= 1.6.0)
      *
      * NB, there was a pre-kvm-79 'tcp' support, but it
      * was broken, because it blocked the monitor console
@@ -1196,6 +1202,11 @@ qemuCapsComputeCmdFlags(const char *help,
 
     if (version >= 1002000)
         qemuCapsSet(caps, QEMU_CAPS_DEVICE_VIDEO_PRIMARY);
+
+    if (version >= MIN_RDMA_VERSION) {
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    }
     return 0;
 }
 
@@ -2423,6 +2434,11 @@ qemuCapsInitQMP(qemuCapsPtr caps,
     caps->usedQMP = true;
 
     qemuCapsInitQMPBasic(caps);
+
+    if (caps->version >= MIN_RDMA_VERSION) {
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    }
 
     if (!(archstr = qemuMonitorGetTargetArch(mon)))
         goto cleanup;
