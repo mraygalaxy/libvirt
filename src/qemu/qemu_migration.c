@@ -1823,6 +1823,8 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
     int ret = -1;
     int rdma = 0;
     int xrdma = 0;
+    int mc = 0;
+    int xmc = 0;
 
     VIR_DEBUG("driver=%p, dconn=%p, cookiein=%s, cookieinlen=%d, "
               "cookieout=%p, cookieoutlen=%p, uri_in=%s, uri_out=%p, "
@@ -1871,13 +1873,14 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
         if(hostname)
             hostname = strdup(hostname + 1);
 
-        /* Check the URI starts with "tcp" or rdma-related.  We will escape the
+        /* Check the URI starts with "tcp" or rdma or micro-checkpointing.  We will escape the
          * URI when passing it to the qemu monitor, so bad
          * characters in hostname part don't matter.
          */
-        if (!STRPREFIX(uri_in, "tcp:") && !STRPREFIX(uri_in, "rdma:") && !STRPREFIX(uri_in, "x-rdma:")) {
+        if (!STRPREFIX(uri_in, "tcp:") && !STRPREFIX(uri_in, "rdma:") && !STRPREFIX(uri_in, "x-rdma:") 
+                && !STRPREFIX(uri_in, "mc:") && !STRPREFIX(uri_in, "x-mc:")) {
             virReportError(VIR_ERR_INVALID_ARG, "%s",
-                           _("only tcp URIs are supported for KVM/QEMU"
+                           _("only tcp/rdma/mc URIs are supported for KVM/QEMU"
                              " migrations"));
             goto cleanup;
         }
@@ -1888,6 +1891,14 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
 
         if (STRPREFIX(uri_in, "x-rdma:")) {
                 xrdma = 1;
+        }
+
+        if (STRPREFIX(uri_in, "mc:")) {
+                mc = 1;
+        }
+
+        if (STRPREFIX(uri_in, "x-mc:")) {
+                xmc = 1;
         }
 
         /* Get the port number. */
@@ -1929,6 +1940,10 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
         snprintf(migrateFrom, sizeof(migrateFrom), "rdma:%s:%d", hostname, this_port);
     } else if(xrdma) {
         snprintf(migrateFrom, sizeof(migrateFrom), "x-rdma:%s:%d", hostname, this_port);
+    } else if(mc) {
+        snprintf(migrateFrom, sizeof(migrateFrom), "mc:%s:%d", hostname, this_port);
+    } else if(xmc) {
+        snprintf(migrateFrom, sizeof(migrateFrom), "x-mc:%s:%d", hostname, this_port);
     } else {
         snprintf(migrateFrom, sizeof(migrateFrom), "tcp:%s:%d", hostname, this_port);
     }
@@ -2450,6 +2465,7 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
     int ret = -1;
     char *tmp = NULL;
     int rdma = 0;
+    int mc = 0;
     qemuMigrationSpec spec;
 
     VIR_DEBUG("driver=%p, vm=%p, uri=%s, cookiein=%s, cookieinlen=%d, "
@@ -2478,6 +2494,20 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
         }
         rdma = 1;
         spec.dest.host.proto = "x-rdma";
+    } else if (STRPREFIX(uri, "mc:") && !STRPREFIX(uri, "mc://")) {
+        if (virAsprintf(&tmp, "mc://%s", uri + strlen("mc:")) < 0) {
+            virReportOOMError();
+            return -1;
+        }
+        mc = 1;
+        spec.dest.host.proto = "mc";
+    } else if (STRPREFIX(uri, "x-mc:") && !STRPREFIX(uri, "x-mc://")) {
+        if (virAsprintf(&tmp, "x-mc://%s", uri + strlen("x-mc:")) < 0) {
+            virReportOOMError();
+            return -1;
+        }
+        mc = 1;
+        spec.dest.host.proto = "x-mc";
     } else {
         uribits = virURIParse(uri);
     }
@@ -2490,7 +2520,7 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
     if (!uribits)
         return -1;
 
-    if (qemuCapsGet(priv->caps, QEMU_CAPS_MIGRATE_QEMU_FD) && !rdma)
+    if (qemuCapsGet(priv->caps, QEMU_CAPS_MIGRATE_QEMU_FD) && !rdma && !mc)
         spec.destType = MIGRATION_DEST_CONNECT_HOST;
     else
         spec.destType = MIGRATION_DEST_HOST;

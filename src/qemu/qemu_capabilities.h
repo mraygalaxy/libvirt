@@ -169,6 +169,9 @@ enum qemuCapsFlags {
     QEMU_CAPS_MIGRATE_QEMU_RDMA  = 127, /* have qemu rdma migration */
     QEMU_CAPS_MIGRATE_QEMU_X_RDMA  = 128, /* have qemu x-rdma migration */
 
+    QEMU_CAPS_MIGRATE_QEMU_MC  = 129, /* have qemu micro-checkpointing */
+    QEMU_CAPS_MIGRATE_QEMU_X_MC  = 130, /* have qemu x-micro-checkpointing */
+
     QEMU_CAPS_LAST,                   /* this must always be the last item */
 };
 

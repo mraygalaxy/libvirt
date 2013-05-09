@@ -6962,6 +6962,22 @@ qemuBuildCommandLine(virConnectPtr conn,
                 goto error;
             }
             virCommandAddArg(cmd, migrateFrom);
+        } else if (STRPREFIX(migrateFrom, "mc")) {
+            if (!qemuCapsGet(caps, QEMU_CAPS_MIGRATE_QEMU_MC)) {
+                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
+                               "%s", _("micro-checkpointing is not supported with "
+                                       "this QEMU binary"));
+                goto error;
+            }
+            virCommandAddArg(cmd, migrateFrom);
+        } else if (STRPREFIX(migrateFrom, "x-mc")) {
+            if (!qemuCapsGet(caps, QEMU_CAPS_MIGRATE_QEMU_X_MC)) {
+                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
+                               "%s", _("micro-checkpointing is not supported with "
+                                       "this QEMU binary"));
+                goto error;
+            }
+            virCommandAddArg(cmd, migrateFrom);
         } else if (STREQ(migrateFrom, "stdio")) {
             if (qemuCapsGet(caps, QEMU_CAPS_MIGRATE_QEMU_FD)) {
                 virCommandAddArgFormat(cmd, "fd:%d", migrateFd);

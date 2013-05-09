@@ -207,6 +207,9 @@ VIR_ENUM_IMPL(qemuCaps, QEMU_CAPS_LAST,
               "rdma", /* 127 */
               "x-rdma",
 
+              "mc", /* 129 */
+              "x-mc",
+
     );
 
 struct _qemuCaps {
@@ -938,6 +941,7 @@ error:
 }
 
 #define MIN_RDMA_VERSION 1004000
+#define MIN_MC_VERSION 1004000
 
 static int
 qemuCapsComputeCmdFlags(const char *help,
@@ -1117,6 +1121,8 @@ qemuCapsComputeCmdFlags(const char *help,
      *  -incoming stdio  (all earlier kvm)
      *  -incoming x-rdma (qemu >= 1.6.0)
      *  -incoming rdma   (qemu >= 1.6.0)
+     *  -incoming x-mc   (qemu >= 1.6.0)
+     *  -incoming mc     (qemu >= 1.6.0)
      *
      * NB, there was a pre-kvm-79 'tcp' support, but it
      * was broken, because it blocked the monitor console
@@ -1206,6 +1212,11 @@ qemuCapsComputeCmdFlags(const char *help,
     if (version >= MIN_RDMA_VERSION) {
         qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
         qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    }
+
+    if (version >= MIN_MC_VERSION) {
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_MC);
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_X_MC);
     }
     return 0;
 }
@@ -2438,6 +2449,11 @@ qemuCapsInitQMP(qemuCapsPtr caps,
     if (caps->version >= MIN_RDMA_VERSION) {
         qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
         qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    }
+
+    if (caps->version >= MIN_MC_VERSION) {
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_MC);
+        qemuCapsSet(caps, QEMU_CAPS_MIGRATE_QEMU_X_MC);
     }
 
     if (!(archstr = qemuMonitorGetTargetArch(mon)))
