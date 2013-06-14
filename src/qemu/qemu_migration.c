@@ -1196,6 +1196,7 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
         break;
 
     case QEMU_MONITOR_MIGRATION_STATUS_ACTIVE:
+    case QEMU_MONITOR_MIGRATION_STATUS_PINNING:
         priv->job.info.dataTotal = memTotal;
         priv->job.info.dataRemaining = memRemaining;
         priv->job.info.dataProcessed = memProcessed;
