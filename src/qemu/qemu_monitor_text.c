@@ -1510,7 +1510,8 @@ int qemuMonitorTextGetMigrationStatus(qemuMonitorPtr mon,
             goto cleanup;
         }
 
-        if (*status == QEMU_MONITOR_MIGRATION_STATUS_ACTIVE) {
+        if (*status == QEMU_MONITOR_MIGRATION_STATUS_ACTIVE ||
+                *status == QEMU_MONITOR_MIGRATION_STATUS_SETUP) {
             tmp = end + 1;
 
             if (!(tmp = strstr(tmp, MIGRATION_TRANSFER_PREFIX)))
