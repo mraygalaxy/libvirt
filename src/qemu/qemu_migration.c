@@ -1195,6 +1195,10 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
                        _("%s: %s"), job, _("is not active"));
         break;
 
+    case QEMU_MONITOR_MIGRATION_STATUS_SETUP:
+        ret = 0;
+        break;
+
     case QEMU_MONITOR_MIGRATION_STATUS_ACTIVE:
         priv->job.info.dataTotal = memTotal;
         priv->job.info.dataRemaining = memRemaining;

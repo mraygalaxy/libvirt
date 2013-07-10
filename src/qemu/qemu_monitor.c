@@ -99,7 +99,7 @@ VIR_ONCE_GLOBAL_INIT(qemuMonitor)
 
 VIR_ENUM_IMPL(qemuMonitorMigrationStatus,
               QEMU_MONITOR_MIGRATION_STATUS_LAST,
-              "inactive", "active", "completed", "failed", "cancelled")
+              "inactive", "setup", "active", "completed", "failed", "cancelled")
 
 VIR_ENUM_IMPL(qemuMonitorVMStatus,
               QEMU_MONITOR_VM_STATUS_LAST,
