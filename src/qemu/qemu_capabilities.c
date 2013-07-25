@@ -234,6 +234,8 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
 
               "vnc-share-policy", /* 150 */
               "device-del-event",
+
+              "x-rdma", /* 152 */
     );
 
 struct _virQEMUCaps {
@@ -914,7 +916,6 @@ error:
     return NULL;
 }
 
-
 static int
 virQEMUCapsComputeCmdFlags(const char *help,
                            unsigned int version,
@@ -1101,6 +1102,7 @@ virQEMUCapsComputeCmdFlags(const char *help,
      *  -incoming unix   (qemu >= 0.12.0)
      *  -incoming fd     (qemu >= 0.12.0)
      *  -incoming stdio  (all earlier kvm)
+     *  -incoming x-rdma (qemu >= 1.6.0)
      *
      * NB, there was a pre-kvm-79 'tcp' support, but it
      * was broken, because it blocked the monitor console
@@ -2436,6 +2438,10 @@ virQEMUCapsInitArchQMPBasic(virQEMUCapsPtr qemuCaps,
 {
     char *archstr = NULL;
     int ret = -1;
+
+    if (qemuCaps->version >= MIN_X_RDMA_VERSION) {
+        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    }
 
     if (!(archstr = qemuMonitorGetTargetArch(mon)))
         return -1;
