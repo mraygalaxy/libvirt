@@ -273,8 +273,8 @@
         unsigned long __unsuppflags = flags & ~(supported);             \
         if (__unsuppflags) {                                            \
             virReportInvalidArg(flags,                                  \
-                                _("unsupported flags (0x%lx) orig 0x%x in function %s"), \
-                                __unsuppflags, supported, __FUNCTION__);           \
+                                _("unsupported flags (0x%lx) in function %s"), \
+                                __unsuppflags, __FUNCTION__);           \
             return retval;                                              \
         }                                                               \
     } while (0)
