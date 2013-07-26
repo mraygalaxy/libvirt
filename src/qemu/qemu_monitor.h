@@ -368,6 +368,7 @@ struct _qemuMonitorMigrationStatus {
     bool downtime_set;
     unsigned long long downtime;
     unsigned long long setup_time;
+    double mbps;
 
     unsigned long long ram_transferred;
     unsigned long long ram_remaining;
@@ -387,8 +388,6 @@ struct _qemuMonitorMigrationStatus {
     unsigned long long xbzrle_pages;
     unsigned long long xbzrle_cache_miss;
     unsigned long long xbzrle_overflow;
-
-    double mbps;
 };
 
 int qemuMonitorGetMigrationStatus(qemuMonitorPtr mon,

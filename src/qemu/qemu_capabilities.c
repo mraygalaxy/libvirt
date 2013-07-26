@@ -916,6 +916,7 @@ error:
     return NULL;
 }
 
+
 static int
 virQEMUCapsComputeCmdFlags(const char *help,
                            unsigned int version,
