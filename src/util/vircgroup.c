@@ -95,9 +95,11 @@ bool virCgroupAvailable(void)
     return ret;
 }
 
-bool virCgroupIsValidMachineGroup(virCgroupPtr group,
-                                  const char *name,
-                                  const char *drivername)
+static bool
+virCgroupValidateMachineGroup(virCgroupPtr group,
+                              const char *name,
+                              const char *drivername,
+                              bool stripEmulatorSuffix)
 {
     size_t i;
     bool valid = false;
@@ -119,12 +121,26 @@ bool virCgroupIsValidMachineGroup(virCgroupPtr group,
         tmp = strrchr(group->controllers[i].placement, '/');
         if (!tmp)
             goto cleanup;
+
+        if (stripEmulatorSuffix &&
+            (i == VIR_CGROUP_CONTROLLER_CPU ||
+             i == VIR_CGROUP_CONTROLLER_CPUACCT ||
+             i == VIR_CGROUP_CONTROLLER_CPUSET)) {
+            if (STREQ(tmp, "/emulator"))
+                *tmp = '\0';
+            tmp = strrchr(group->controllers[i].placement, '/');
+            if (!tmp)
+                goto cleanup;
+        }
+
         tmp++;
 
         if (STRNEQ(tmp, name) &&
-            STRNEQ(tmp, partname))
+            STRNEQ(tmp, partname)) {
+            VIR_DEBUG("Name '%s' for controller '%s' does not match '%s' or '%s'",
+                      tmp, virCgroupControllerTypeToString(i), name, partname);
             goto cleanup;
-
+        }
     }
 
     valid = true;
@@ -410,7 +426,8 @@ static int virCgroupDetectPlacement(virCgroupPtr group,
                  * selfpath=="/libvirt.service" + path="" -> "/libvirt.service"
                  * selfpath=="/libvirt.service" + path="foo" -> "/libvirt.service/foo"
                  */
-                if (typelen == len && STREQLEN(typestr, tmp, len)) {
+                if (typelen == len && STREQLEN(typestr, tmp, len) &&
+                    group->controllers[i].mountPoint != NULL) {
                     if (virAsprintf(&group->controllers[i].placement,
                                     "%s%s%s", selfpath,
                                     (STREQ(selfpath, "/") ||
@@ -1390,7 +1407,7 @@ int virCgroupNewPartition(const char *path ATTRIBUTE_UNUSED,
 */
 int virCgroupNewSelf(virCgroupPtr *group)
 {
-    return virCgroupNewDetect(-1, group);
+    return virCgroupNewDetect(-1, -1, group);
 }
 
 
@@ -1561,12 +1578,14 @@ int virCgroupNewEmulator(virCgroupPtr domain ATTRIBUTE_UNUSED,
 
 #if defined HAVE_MNTENT_H && defined HAVE_GETMNTENT_R
 int virCgroupNewDetect(pid_t pid,
+                       int controllers,
                        virCgroupPtr *group)
 {
-    return virCgroupNew(pid, "", NULL, -1, group);
+    return virCgroupNew(pid, "", NULL, controllers, group);
 }
 #else
 int virCgroupNewDetect(pid_t pid ATTRIBUTE_UNUSED,
+                       int controllers ATTRIBUTE_UNUSED,
                        virCgroupPtr *group ATTRIBUTE_UNUSED)
 {
     virReportSystemError(ENXIO, "%s",
@@ -1574,6 +1593,31 @@ int virCgroupNewDetect(pid_t pid ATTRIBUTE_UNUSED,
     return -1;
 }
 #endif
+
+/*
+ * Returns 0 on success (but @group may be NULL), -1 on fatal error
+ */
+int virCgroupNewDetectMachine(const char *name,
+                              const char *drivername,
+                              pid_t pid,
+                              int controllers,
+                              virCgroupPtr *group)
+{
+    if (virCgroupNewDetect(pid, controllers, group) < 0) {
+        if (virCgroupNewIgnoreError())
+            return 0;
+        return -1;
+    }
+
+    if (!virCgroupValidateMachineGroup(*group, name, drivername, true)) {
+        VIR_DEBUG("Failed to validate machine name for '%s' driver '%s'",
+                  name, drivername);
+        virCgroupFree(group);
+        return 0;
+    }
+
+    return 0;
+}
 
 int virCgroupNewMachine(const char *name,
                         const char *drivername,

@@ -134,8 +134,8 @@ virNetworkIpDefClear(virNetworkIpDefPtr def)
     VIR_FREE(def->family);
     VIR_FREE(def->ranges);
 
-    while (def->nhosts--)
-        virNetworkDHCPHostDefClear(&def->hosts[def->nhosts]);
+    while (def->nhosts)
+        virNetworkDHCPHostDefClear(&def->hosts[--def->nhosts]);
 
     VIR_FREE(def->hosts);
     VIR_FREE(def->tftproot);
@@ -158,8 +158,8 @@ virNetworkDNSTxtDefClear(virNetworkDNSTxtDefPtr def)
 static void
 virNetworkDNSHostDefClear(virNetworkDNSHostDefPtr def)
 {
-    while (def->nnames--)
-        VIR_FREE(def->names[def->nnames]);
+    while (def->nnames)
+        VIR_FREE(def->names[--def->nnames]);
     VIR_FREE(def->names);
 }
 
@@ -176,18 +176,18 @@ static void
 virNetworkDNSDefClear(virNetworkDNSDefPtr def)
 {
     if (def->txts) {
-        while (def->ntxts--)
-            virNetworkDNSTxtDefClear(&def->txts[def->ntxts]);
+        while (def->ntxts)
+            virNetworkDNSTxtDefClear(&def->txts[--def->ntxts]);
         VIR_FREE(def->txts);
     }
     if (def->hosts) {
-        while (def->nhosts--)
-            virNetworkDNSHostDefClear(&def->hosts[def->nhosts]);
+        while (def->nhosts)
+            virNetworkDNSHostDefClear(&def->hosts[--def->nhosts]);
         VIR_FREE(def->hosts);
     }
     if (def->srvs) {
-        while (def->nsrvs--)
-            virNetworkDNSSrvDefClear(&def->srvs[def->nsrvs]);
+        while (def->nsrvs)
+            virNetworkDNSSrvDefClear(&def->srvs[--def->nsrvs]);
         VIR_FREE(def->srvs);
     }
 }
@@ -206,6 +206,7 @@ virNetworkForwardDefClear(virNetworkForwardDefPtr def)
         virNetworkForwardIfDefClear(&def->ifs[i]);
     }
     VIR_FREE(def->ifs);
+    def->nifs = def->npfs = 0;
 }
 
 void
@@ -855,7 +856,6 @@ virNetworkDNSHostDefParseXML(const char *networkName,
         virReportError(VIR_ERR_XML_DETAIL,
                        _("Missing IP address in network '%s' DNS HOST record"),
                        networkName);
-        VIR_FREE(ip);
         goto error;
     }
 
@@ -916,10 +916,10 @@ virNetworkDNSSrvDefParseXML(const char *networkName,
     if (!(def->service = virXMLPropString(node, "service")) && !partialOkay) {
         virReportError(VIR_ERR_XML_DETAIL,
                        _("Missing required service attribute in DNS SRV record "
-                         " of network %s"), networkName);
+                         "of network %s"), networkName);
         goto error;
     }
-    if (strlen(def->service) > DNS_RECORD_LENGTH_SRV) {
+    if (def->service && strlen(def->service) > DNS_RECORD_LENGTH_SRV) {
         virReportError(VIR_ERR_XML_DETAIL,
                        _("Service name '%s' in network %s is too long, limit is %d bytes"),
                        def->service, networkName, DNS_RECORD_LENGTH_SRV);
@@ -935,10 +935,11 @@ virNetworkDNSSrvDefParseXML(const char *networkName,
     }
 
     /* Check whether protocol value is the supported one */
-    if (STRNEQ(def->protocol, "tcp") && (STRNEQ(def->protocol, "udp"))) {
+    if (def->protocol && STRNEQ(def->protocol, "tcp") &&
+        (STRNEQ(def->protocol, "udp"))) {
         virReportError(VIR_ERR_XML_DETAIL,
                        _("Invalid protocol attribute value '%s' "
-                         " in DNS SRV record of network %s"),
+                         "in DNS SRV record of network %s"),
                        def->protocol, networkName);
         goto error;
     }
