@@ -348,6 +348,7 @@ int qemuMonitorSetMigrationCacheSize(qemuMonitorPtr mon,
 
 enum {
     QEMU_MONITOR_MIGRATION_STATUS_INACTIVE,
+    QEMU_MONITOR_MIGRATION_STATUS_SETUP,
     QEMU_MONITOR_MIGRATION_STATUS_ACTIVE,
     QEMU_MONITOR_MIGRATION_STATUS_COMPLETED,
     QEMU_MONITOR_MIGRATION_STATUS_ERROR,
@@ -366,6 +367,7 @@ struct _qemuMonitorMigrationStatus {
     /* total or expected depending on status */
     bool downtime_set;
     unsigned long long downtime;
+    unsigned long long setup_time;
 
     unsigned long long ram_transferred;
     unsigned long long ram_remaining;
@@ -385,6 +387,8 @@ struct _qemuMonitorMigrationStatus {
     unsigned long long xbzrle_pages;
     unsigned long long xbzrle_cache_miss;
     unsigned long long xbzrle_overflow;
+
+    double mbps;
 };
 
 int qemuMonitorGetMigrationStatus(qemuMonitorPtr mon,

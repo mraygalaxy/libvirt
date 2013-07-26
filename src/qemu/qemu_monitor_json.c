@@ -2504,6 +2504,24 @@ qemuMonitorJSONGetMigrationStatusReply(virJSONValuePtr reply,
                 return -1;
             }
         }
+
+        rc = virJSONValueObjectGetNumberUlong(ret, "setup-time",
+                                              &status->setup_time);
+
+        if (rc < 0) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                           _("migration was active, but no setup-time was set"));
+            return -1;
+        }
+
+        rc = virJSONValueObjectGetNumberDouble(ret, "mbps",
+                                              &status->mbps);
+
+        if (rc < 0) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                           _("migration was active, but no mbps was set"));
+            return -1;
+        }
     }
 
     return 0;

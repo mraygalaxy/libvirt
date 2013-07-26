@@ -1667,6 +1667,12 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
             priv->job.status.ram_transferred +
             priv->job.status.disk_transferred;
 
+        priv->job.info.mbps = priv->job.status.mbps;
+        priv->job.info.setupTime = priv->job.status.setup_time;
+
+        ret = 0;
+        break;
+    case QEMU_MONITOR_MIGRATION_STATUS_SETUP:
         ret = 0;
         break;
 

@@ -4048,6 +4048,7 @@ struct _virDomainJobInfo {
     /* Time is measured in mill-seconds */
     unsigned long long timeElapsed;    /* Always set */
     unsigned long long timeRemaining;  /* Only for VIR_DOMAIN_JOB_BOUNDED */
+    unsigned long long setupTime;      /* length of the SETUP phase */
 
     /* Data is measured in bytes unless otherwise specified
      * and is measuring the job as a whole
@@ -4073,6 +4074,8 @@ struct _virDomainJobInfo {
     unsigned long long fileTotal;
     unsigned long long fileProcessed;
     unsigned long long fileRemaining;
+
+    double mbps;
 };
 
 int virDomainGetJobInfo(virDomainPtr dom,
