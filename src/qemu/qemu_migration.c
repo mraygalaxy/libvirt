@@ -2669,7 +2669,6 @@ cleanup:
     virURIFree(uri);
     VIR_FREE(hostname);
 
-    /*
     if (protocol) {
         VIR_FREE(protocol);
     }
@@ -2680,7 +2679,6 @@ cleanup:
     if (well_formed_protocol) {
         VIR_FREE(well_formed_protocol);
     }
-    */
 
     if (ret != 0)
         VIR_FREE(*uri_out);
