@@ -2672,9 +2672,11 @@ cleanup:
     if (protocol) {
         VIR_FREE(protocol);
     }
+    /*
     if (tok) {
         VIR_FREE(tok);
     }
+    */
 
     if (well_formed_protocol) {
         VIR_FREE(well_formed_protocol);
