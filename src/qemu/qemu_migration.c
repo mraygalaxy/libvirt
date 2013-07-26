@@ -1574,6 +1574,46 @@ cleanup:
 }
 
 static int
+qemuMigrationSetPinAll(virQEMUDriverPtr driver,
+                            virDomainObjPtr vm,
+                            enum qemuDomainAsyncJob job)
+{
+    qemuDomainObjPrivatePtr priv = vm->privateData;
+    int ret;
+
+    if (qemuDomainObjEnterMonitorAsync(driver, vm, job) < 0)
+        return -1;
+
+    ret = qemuMonitorGetMigrationCapability(
+                priv->mon,
+                QEMU_MONITOR_MIGRATION_CAPS_X_RDMA_PIN_ALL);
+
+    if (ret < 0) {
+        goto cleanup;
+    } else if (ret == 0) {
+        if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
+            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
+                           _("rdma pinning migration is not supported by "
+                             "target QEMU binary"));
+        } else {
+            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
+                           _("rdma pinning migration is not supported by "
+                             "source QEMU binary"));
+        }
+        ret = -1;
+        goto cleanup;
+    }
+
+    ret = qemuMonitorSetMigrationCapability(
+                priv->mon,
+                QEMU_MONITOR_MIGRATION_CAPS_X_RDMA_PIN_ALL);
+
+cleanup:
+    qemuDomainObjExitMonitor(driver, vm);
+    return ret;
+}
+
+static int
 qemuMigrationWaitForSpice(virQEMUDriverPtr driver,
                           virDomainObjPtr vm)
 {
@@ -2360,6 +2400,11 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
 
     if (flags & VIR_MIGRATE_COMPRESSED &&
         qemuMigrationSetCompression(driver, vm,
+                                    QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
+        goto stop;
+
+    if (flags & VIR_MIGRATE_X_RDMA_PIN_ALL &&
+        qemuMigrationSetPinAll(driver, vm,
                                     QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
@@ -3160,6 +3205,11 @@ qemuMigrationRun(virQEMUDriverPtr driver,
 
     if (flags & VIR_MIGRATE_COMPRESSED &&
         qemuMigrationSetCompression(driver, vm,
+                                    QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+        goto cleanup;
+
+    if (flags & VIR_MIGRATE_X_RDMA_PIN_ALL &&
+        qemuMigrationSetPinAll(driver, vm,
                                     QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 

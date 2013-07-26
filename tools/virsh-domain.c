@@ -8380,6 +8380,10 @@ static const vshCmdOptDef opts_migrate[] = {
      .type = VSH_OT_BOOL,
      .help = N_("compress repeated pages during live migration")
     },
+    {.name = "x-rdma-pin-all",
+     .type = VSH_OT_BOOL,
+     .help = N_("support memory pinning during rdma live migration")
+    },
     {.name = "abort-on-error",
      .type = VSH_OT_BOOL,
      .help = N_("abort on soft errors during migration")
@@ -8512,6 +8516,9 @@ doMigrate(void *opaque)
 
     if (vshCommandOptBool(cmd, "compressed"))
         flags |= VIR_MIGRATE_COMPRESSED;
+
+    if (vshCommandOptBool(cmd, "x-rdma-pin-all"))
+        flags |= VIR_MIGRATE_X_RDMA_PIN_ALL;
 
     if (vshCommandOptBool(cmd, "offline")) {
         flags |= VIR_MIGRATE_OFFLINE;
