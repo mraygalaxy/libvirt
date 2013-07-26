@@ -2551,7 +2551,6 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
     int this_port;
     char *hostname = NULL;
     const char *protocol = NULL;
-    char *tok = NULL;
     char *well_formed_protocol = NULL;
     const char *p;
     char *uri_str = NULL;
@@ -2606,8 +2605,7 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
          * characters in hostname part don't matter.
          */
 
-        tok = strdup(uri_in);
-        protocol = strtok((char *) tok, ":");
+        protocol = strtok(strdup(uri_in), ":");
         if (protocol) {
             if (virAsprintf(&well_formed_protocol, "%s://", protocol) < 0)
                 goto cleanup;
@@ -2672,11 +2670,6 @@ cleanup:
     if (protocol) {
         VIR_FREE(protocol);
     }
-    /*
-    if (tok) {
-        VIR_FREE(tok);
-    }
-    */
 
     if (well_formed_protocol) {
         VIR_FREE(well_formed_protocol);
