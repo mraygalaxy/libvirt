@@ -2665,14 +2665,8 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
 cleanup:
     virURIFree(uri);
     VIR_FREE(hostname);
-
-    if (protocol) {
-        VIR_FREE(protocol);
-    }
-
-    if (well_formed_protocol) {
-        VIR_FREE(well_formed_protocol);
-    }
+    VIR_FREE(protocol);
+    VIR_FREE(well_formed_protocol);
 
     if (ret != 0)
         VIR_FREE(*uri_out);
@@ -3385,8 +3379,8 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
     virURIPtr uribits = NULL;
     int ret = -1;
     char *tmp = NULL;
-    int rdma = 0;
     qemuMigrationSpec spec;
+    char *well_formed_proto = NULL;
 
     VIR_DEBUG("driver=%p, vm=%p, uri=%s, cookiein=%s, cookieinlen=%d, "
               "cookieout=%p, cookieoutlen=%p, flags=%lx, resource=%lu, "
@@ -3395,16 +3389,23 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
               cookieout, cookieoutlen, flags, resource,
               NULLSTR(graphicsuri));
 
+
+    spec.dest.host.proto = strtok(strdup(uri), ":"); 
+
     /* HACK: source host generates bogus URIs, so fix them up */
-    if (STRPREFIX(uri, "tcp:") && !STRPREFIX(uri, "tcp://")) {
-        if (virAsprintf(&tmp, "tcp://%s", uri + strlen("tcp:")) < 0)
+    if (spec.dest.host.proto) {
+        ret = virAsprintf(&well_formed_proto, "%s://",
+                            spec.dest.host.proto);
+        if (ret < 0)
+            goto err;
+    }
+
+    /* HACK: source host generates bogus URIs, so fix them up */
+
+    if (!STRPREFIX(uri, well_formed_proto)) {
+        if (virAsprintf(&tmp, "%s://%s", spec.dest.host.proto,
+                        uri + strlen(spec.dest.host.proto) + 1) < 0)
             return -1;
-        spec.dest.host.proto = "tcp";
-    } else if (STRPREFIX(uri, "x-rdma:") && !STRPREFIX(uri, "x-rdma://")) {
-        if (virAsprintf(&tmp, "x-rdma://%s", uri + strlen("x-rdma:")) < 0)
-            return -1;
-        rdma = 1;
-        spec.dest.host.proto = "x-rdma";
     } else {
         uribits = virURIParse(uri);
     }
@@ -3417,7 +3418,8 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
     if (!uribits)
         return -1;
 
-    if (virQEMUCapsGet(priv->qemuCaps, QEMU_CAPS_MIGRATE_QEMU_FD) && !rdma)
+    if (virQEMUCapsGet(priv->qemuCaps, QEMU_CAPS_MIGRATE_QEMU_FD) && 
+            !STREQ(spec.dest.host.proto, "x-rdma"))
         spec.destType = MIGRATION_DEST_CONNECT_HOST;
     else
         spec.destType = MIGRATION_DEST_HOST;
@@ -3433,6 +3435,9 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
         VIR_FORCE_CLOSE(spec.dest.fd.qemu);
 
     virURIFree(uribits);
+
+err:
+    VIR_FREE(well_formed_proto);
 
     return ret;
 }

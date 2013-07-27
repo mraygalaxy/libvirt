@@ -187,7 +187,8 @@ virURIParse(const char *uri)
         goto error;
 
     /* First check: does it even make sense to jump inside */
-    if (ret->server != NULL &&
+    
+    if (ret->server != NULL && !STREQ(ret->scheme, "x-rdma") &&
         ret->server[0] == '[') {
         size_t length = strlen(ret->server);
 
