@@ -40,6 +40,7 @@ enum {
     VIR_CGROUP_CONTROLLER_BLKIO,
     VIR_CGROUP_CONTROLLER_NET_CLS,
     VIR_CGROUP_CONTROLLER_PERF_EVENT,
+    VIR_CGROUP_CONTROLLER_SYSTEMD,
 
     VIR_CGROUP_CONTROLLER_LAST
 };
@@ -82,6 +83,7 @@ int virCgroupNewDetect(pid_t pid,
 int virCgroupNewDetectMachine(const char *name,
                               const char *drivername,
                               pid_t pid,
+                              const char *partition,
                               int controllers,
                               virCgroupPtr *group);
 

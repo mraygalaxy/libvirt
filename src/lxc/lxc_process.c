@@ -1007,6 +1007,20 @@ int virLXCProcessStart(virConnectPtr conn,
         return -1;
     }
 
+    if (!vm->def->resource) {
+        virDomainResourceDefPtr res;
+
+        if (VIR_ALLOC(res) < 0)
+            goto cleanup;
+
+        if (VIR_STRDUP(res->partition, "/machine") < 0) {
+            VIR_FREE(res);
+            goto cleanup;
+        }
+
+        vm->def->resource = res;
+    }
+
     if (virAsprintf(&logfile, "%s/%s.log",
                     cfg->logDir, vm->def->name) < 0)
         return -1;
@@ -1189,8 +1203,11 @@ int virLXCProcessStart(virConnectPtr conn,
         goto cleanup;
     }
 
-    if (virCgroupNewDetectMachine(vm->def->name, "lxc",
-                                  vm->pid, -1, &priv->cgroup) < 0)
+    if (virCgroupNewDetectMachine(vm->def->name, "lxc", vm->pid,
+                                  vm->def->resource ?
+                                  vm->def->resource->partition :
+                                  NULL,
+                                  -1, &priv->cgroup) < 0)
         goto error;
 
     if (!priv->cgroup) {
@@ -1397,8 +1414,11 @@ virLXCProcessReconnectDomain(virDomainObjPtr vm,
         if (!(priv->monitor = virLXCProcessConnectMonitor(driver, vm)))
             goto error;
 
-        if (virCgroupNewDetectMachine(vm->def->name, "lxc",
-                                      vm->pid, -1, &priv->cgroup) < 0)
+        if (virCgroupNewDetectMachine(vm->def->name, "lxc", vm->pid,
+                                      vm->def->resource ?
+                                      vm->def->resource->partition :
+                                      NULL,
+                                      -1, &priv->cgroup) < 0)
             goto error;
 
         if (!priv->cgroup) {

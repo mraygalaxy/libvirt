@@ -499,11 +499,13 @@ STATEFUL_DRIVER_SOURCE_FILES = \
 check-driverimpls:
 	$(AM_V_GEN)$(PERL) $(srcdir)/check-driverimpls.pl \
 		$(filter /%,$(DRIVER_SOURCE_FILES)) \
-		$(addprefix $(srcdir)/,$(filter-out /%,$(DRIVER_SOURCE_FILES)))
+		$(filter $(srcdir)/%,$(DRIVER_SOURCE_FILES)) \
+		$(addprefix $(srcdir)/,$(filter-out $(srcdir)/%, \
+			$(filter-out /%,$(DRIVER_SOURCE_FILES))))
 
 check-aclrules:
 	$(AM_V_GEN)$(PERL) $(srcdir)/check-aclrules.pl \
-		$(addprefix $(srcdir)/,$(filter-out /%,$(REMOTE_PROTOCOL))) \
+		$(REMOTE_PROTOCOL) \
 		$(addprefix $(srcdir)/,$(filter-out /%,$(STATEFUL_DRIVER_SOURCE_FILES)))
 
 EXTRA_DIST += check-driverimpls.pl check-aclrules.pl
@@ -726,7 +728,11 @@ PARALLELS_DRIVER_SOURCES =					\
 		parallels/parallels_network.c
 
 NETWORK_DRIVER_SOURCES =					\
-		network/bridge_driver.h network/bridge_driver.c
+		network/bridge_driver.h network/bridge_driver.c \
+		network/bridge_driver_platform.h 		\
+		network/bridge_driver_platform.c		\
+		$(NULL)
+EXTRA_DIST += network/bridge_driver_linux.c network/bridge_driver_nop.c
 
 INTERFACE_DRIVER_SOURCES =
 

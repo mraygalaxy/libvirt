@@ -31,6 +31,12 @@
 # define EXIT_AM_SKIP 77 /* tell Automake we're skipping a test */
 # define EXIT_AM_HARDFAIL 99 /* tell Automake that the framework is broken */
 
+/* Work around lack of gnulib support for fprintf %z */
+# ifndef NO_LIBVIRT
+#  undef fprintf
+#  define fprintf virFilePrintf
+# endif
+
 extern char *progname;
 extern char *abs_srcdir;
 
@@ -81,8 +87,9 @@ int virtTestMain(int argc,
                 perror(lib);                                            \
                 return EXIT_FAILURE;                                    \
             }                                                           \
-            if (virAsprintf(&newenv, "%s%s%s", preload ? preload : "",  \
-                            preload ? ":" : "", lib) < 0) {             \
+            if (!preload) {                                             \
+                newenv = (char *) lib;                                  \
+            } else if (virAsprintf(&newenv, "%s:%s", lib, preload) < 0) {   \
                 perror("virAsprintf");                                  \
                 return EXIT_FAILURE;                                    \
             }                                                           \

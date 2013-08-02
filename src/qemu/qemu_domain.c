@@ -2026,6 +2026,54 @@ cleanup:
     virObjectUnref(cfg);
 }
 
+static int
+qemuDomainCheckDiskStartupPolicy(virQEMUDriverPtr driver,
+                                 virDomainObjPtr vm,
+                                 virDomainDiskDefPtr disk,
+                                 bool cold_boot)
+{
+    char uuid[VIR_UUID_STRING_BUFLEN];
+    virDomainEventPtr event = NULL;
+    int startupPolicy = disk->startupPolicy;
+
+    virUUIDFormat(vm->def->uuid, uuid);
+
+    switch ((enum virDomainStartupPolicy) startupPolicy) {
+        case VIR_DOMAIN_STARTUP_POLICY_OPTIONAL:
+            break;
+
+        case VIR_DOMAIN_STARTUP_POLICY_MANDATORY:
+            goto error;
+
+        case VIR_DOMAIN_STARTUP_POLICY_REQUISITE:
+            if (cold_boot)
+                goto error;
+            break;
+
+        case VIR_DOMAIN_STARTUP_POLICY_DEFAULT:
+        case VIR_DOMAIN_STARTUP_POLICY_LAST:
+            /* this should never happen */
+            break;
+    }
+
+    virResetLastError();
+    VIR_DEBUG("Dropping disk '%s' on domain '%s' (UUID '%s') "
+              "due to inaccessible source '%s'",
+              disk->dst, vm->def->name, uuid, disk->src);
+
+    event = virDomainEventDiskChangeNewFromObj(vm, disk->src, NULL, disk->info.alias,
+                                               VIR_DOMAIN_EVENT_DISK_CHANGE_MISSING_ON_START);
+    if (event)
+        qemuDomainEventQueue(driver, event);
+
+    VIR_FREE(disk->src);
+
+    return 0;
+
+error:
+    return -1;
+}
+
 int
 qemuDomainCheckDiskPresence(virQEMUDriverPtr driver,
                             virDomainObjPtr vm,
@@ -2034,67 +2082,30 @@ qemuDomainCheckDiskPresence(virQEMUDriverPtr driver,
     int ret = -1;
     size_t i;
     virDomainDiskDefPtr disk;
-    char uuid[VIR_UUID_STRING_BUFLEN];
-    virDomainEventPtr event = NULL;
-    virQEMUDriverConfigPtr cfg = virQEMUDriverGetConfig(driver);
 
-    virUUIDFormat(vm->def->uuid, uuid);
-
+    VIR_DEBUG("Checking for disk presence");
     for (i = 0; i < vm->def->ndisks; i++) {
         disk = vm->def->disks[i];
 
-        if (!disk->startupPolicy || !disk->src)
+        if (!disk->src)
             continue;
 
-        if (virFileAccessibleAs(disk->src, F_OK,
-                                cfg->user,
-                                cfg->group) >= 0) {
-            /* disk accessible */
+        if (qemuDomainDetermineDiskChain(driver, disk, false) >= 0 &&
+            qemuDiskChainCheckBroken(disk) >= 0)
             continue;
+
+        if (disk->startupPolicy) {
+            if (qemuDomainCheckDiskStartupPolicy(driver, vm, disk,
+                                                 cold_boot) >= 0)
+                continue;
         }
 
-        switch ((enum virDomainStartupPolicy) disk->startupPolicy) {
-            case VIR_DOMAIN_STARTUP_POLICY_OPTIONAL:
-                break;
-
-            case VIR_DOMAIN_STARTUP_POLICY_MANDATORY:
-                virReportSystemError(errno,
-                                     _("cannot access file '%s'"),
-                                     disk->src);
-                goto cleanup;
-                break;
-
-            case VIR_DOMAIN_STARTUP_POLICY_REQUISITE:
-                if (cold_boot) {
-                    virReportSystemError(errno,
-                                         _("cannot access file '%s'"),
-                                         disk->src);
-                    goto cleanup;
-                }
-                break;
-
-            case VIR_DOMAIN_STARTUP_POLICY_DEFAULT:
-            case VIR_DOMAIN_STARTUP_POLICY_LAST:
-                /* this should never happen */
-                break;
-        }
-
-        VIR_DEBUG("Dropping disk '%s' on domain '%s' (UUID '%s') "
-                  "due to inaccessible source '%s'",
-                  disk->dst, vm->def->name, uuid, disk->src);
-
-        event = virDomainEventDiskChangeNewFromObj(vm, disk->src, NULL, disk->info.alias,
-                                                   VIR_DOMAIN_EVENT_DISK_CHANGE_MISSING_ON_START);
-        if (event)
-            qemuDomainEventQueue(driver, event);
-
-        VIR_FREE(disk->src);
+        goto error;
     }
 
     ret = 0;
 
-cleanup:
-    virObjectUnref(cfg);
+error:
     return ret;
 }
 
@@ -2166,6 +2177,28 @@ qemuDomainCleanupRun(virQEMUDriverPtr driver,
     VIR_FREE(priv->cleanupCallbacks);
     priv->ncleanupCallbacks = 0;
     priv->ncleanupCallbacks_max = 0;
+}
+
+int
+qemuDiskChainCheckBroken(virDomainDiskDefPtr disk)
+{
+    char *brokenFile = NULL;
+
+    if (!disk->src || !disk->backingChain)
+        return 0;
+
+    if (virStorageFileChainGetBroken(disk->backingChain, &brokenFile) < 0)
+        return -1;
+
+    if (brokenFile) {
+        virReportError(VIR_ERR_INVALID_ARG,
+                       _("Backing file '%s' of image '%s' is missing."),
+                       brokenFile, disk->src);
+        VIR_FREE(brokenFile);
+        return -1;
+    }
+
+    return 0;
 }
 
 int

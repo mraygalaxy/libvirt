@@ -50,6 +50,7 @@
 #include "virhash.h"
 #include "virhashcode.h"
 #include "virstring.h"
+#include "virsystemd.h"
 
 #define CGROUP_MAX_VAL 512
 
@@ -57,7 +58,8 @@
 
 VIR_ENUM_IMPL(virCgroupController, VIR_CGROUP_CONTROLLER_LAST,
               "cpu", "cpuacct", "cpuset", "memory", "devices",
-              "freezer", "blkio", "net_cls", "perf_event");
+              "freezer", "blkio", "net_cls", "perf_event",
+              "name=systemd");
 
 typedef enum {
     VIR_CGROUP_NONE = 0, /* create subdir under each cgroup if possible. */
@@ -66,8 +68,6 @@ typedef enum {
                                        * attaching tasks
                                        */
 } virCgroupFlags;
-
-static int virCgroupPartitionEscape(char **path);
 
 bool virCgroupAvailable(void)
 {
@@ -95,15 +95,21 @@ bool virCgroupAvailable(void)
     return ret;
 }
 
+#if defined HAVE_MNTENT_H && defined HAVE_GETMNTENT_R
+
+static int virCgroupPartitionEscape(char **path);
+
 static bool
 virCgroupValidateMachineGroup(virCgroupPtr group,
                               const char *name,
                               const char *drivername,
+                              const char *partition,
                               bool stripEmulatorSuffix)
 {
     size_t i;
     bool valid = false;
     char *partname;
+    char *scopename;
 
     if (virAsprintf(&partname, "%s.libvirt-%s",
                     name, drivername) < 0)
@@ -112,8 +118,20 @@ virCgroupValidateMachineGroup(virCgroupPtr group,
     if (virCgroupPartitionEscape(&partname) < 0)
         goto cleanup;
 
+    if (!partition)
+        partition = "/machine";
+
+    if (!(scopename = virSystemdMakeScopeName(name, drivername, partition)))
+        goto cleanup;
+
+    if (virCgroupPartitionEscape(&scopename) < 0)
+        goto cleanup;
+
     for (i = 0; i < VIR_CGROUP_CONTROLLER_LAST; i++) {
         char *tmp;
+
+        if (i == VIR_CGROUP_CONTROLLER_SYSTEMD)
+            continue;
 
         if (!group->controllers[i].placement)
             continue;
@@ -136,9 +154,10 @@ virCgroupValidateMachineGroup(virCgroupPtr group,
         tmp++;
 
         if (STRNEQ(tmp, name) &&
-            STRNEQ(tmp, partname)) {
-            VIR_DEBUG("Name '%s' for controller '%s' does not match '%s' or '%s'",
-                      tmp, virCgroupControllerTypeToString(i), name, partname);
+            STRNEQ(tmp, partname) &&
+            STRNEQ(tmp, scopename)) {
+            VIR_DEBUG("Name '%s' for controller '%s' does not match '%s', '%s' or '%s'",
+                      tmp, virCgroupControllerTypeToString(i), name, partname, scopename);
             goto cleanup;
         }
     }
@@ -147,9 +166,19 @@ virCgroupValidateMachineGroup(virCgroupPtr group,
 
  cleanup:
     VIR_FREE(partname);
+    VIR_FREE(scopename);
     return valid;
 }
-
+#else
+static bool
+virCgroupValidateMachineGroup(virCgroupPtr group ATTRIBUTE_UNUSED,
+                              const char *name ATTRIBUTE_UNUSED,
+                              const char *drivername ATTRIBUTE_UNUSED,
+                              bool stripEmulatorSuffix ATTRIBUTE_UNUSED)
+{
+    return true;
+}
+#endif
 
 /**
  * virCgroupFree:
@@ -320,6 +349,9 @@ static int virCgroupCopyPlacement(virCgroupPtr group,
         if (!group->controllers[i].mountPoint)
             continue;
 
+        if (i == VIR_CGROUP_CONTROLLER_SYSTEMD)
+            continue;
+
         if (path[0] == '/') {
             if (VIR_STRDUP(group->controllers[i].placement, path) < 0)
                 return -1;
@@ -375,6 +407,8 @@ static int virCgroupDetectPlacement(virCgroupPtr group,
     int ret = -1;
     char *procfile;
 
+    VIR_DEBUG("Detecting placement for pid %lld path %s",
+              (unsigned long long)pid, path);
     if (pid == -1) {
         if (VIR_STRDUP(procfile, "/proc/self/cgroup") < 0)
             goto cleanup;
@@ -411,6 +445,7 @@ static int virCgroupDetectPlacement(virCgroupPtr group,
             const char *typestr = virCgroupControllerTypeToString(i);
             int typelen = strlen(typestr);
             char *tmp = controllers;
+
             while (tmp) {
                 char *next = strchr(tmp, ',');
                 int len;
@@ -427,13 +462,20 @@ static int virCgroupDetectPlacement(virCgroupPtr group,
                  * selfpath=="/libvirt.service" + path="foo" -> "/libvirt.service/foo"
                  */
                 if (typelen == len && STREQLEN(typestr, tmp, len) &&
-                    group->controllers[i].mountPoint != NULL) {
-                    if (virAsprintf(&group->controllers[i].placement,
-                                    "%s%s%s", selfpath,
-                                    (STREQ(selfpath, "/") ||
-                                     STREQ(path, "") ? "" : "/"),
-                                    path) < 0)
-                        goto cleanup;
+                    group->controllers[i].mountPoint != NULL &&
+                    group->controllers[i].placement == NULL) {
+                    if (i == VIR_CGROUP_CONTROLLER_SYSTEMD) {
+                        if (VIR_STRDUP(group->controllers[i].placement,
+                                       selfpath) < 0)
+                            goto cleanup;
+                    } else {
+                        if (virAsprintf(&group->controllers[i].placement,
+                                        "%s%s%s", selfpath,
+                                        (STREQ(selfpath, "/") ||
+                                         STREQ(path, "") ? "" : "/"),
+                                        path) < 0)
+                            goto cleanup;
+                    }
                 }
 
                 tmp = next;
@@ -524,13 +566,16 @@ static int virCgroupDetect(virCgroupPtr group,
         return -1;
     }
 
-    if (parent || path[0] == '/') {
-        if (virCgroupCopyPlacement(group, path, parent) < 0)
-            return -1;
-    } else {
-        if (virCgroupDetectPlacement(group, pid, path) < 0)
-            return -1;
-    }
+    /* In some cases we can copy part of the placement info
+     * based on the parent cgroup...
+     */
+    if ((parent || path[0] == '/') &&
+        virCgroupCopyPlacement(group, path, parent) < 0)
+        return -1;
+
+    /* ... but use /proc/cgroups to fill in the rest */
+    if (virCgroupDetectPlacement(group, pid, path) < 0)
+        return -1;
 
     /* Check that for every mounted controller, we found our placement */
     for (i = 0; i < VIR_CGROUP_CONTROLLER_LAST; i++) {
@@ -822,6 +867,12 @@ static int virCgroupMakeGroup(virCgroupPtr parent,
     for (i = 0; i < VIR_CGROUP_CONTROLLER_LAST; i++) {
         char *path = NULL;
 
+        /* We must never mkdir() in systemd's hierarchy */
+        if (i == VIR_CGROUP_CONTROLLER_SYSTEMD) {
+            VIR_DEBUG("Not creating systemd controller group");
+            continue;
+        }
+
         /* Skip over controllers that aren't mounted */
         if (!group->controllers[i].mountPoint) {
             VIR_DEBUG("Skipping unmounted controller %s",
@@ -1026,6 +1077,10 @@ int virCgroupRemove(virCgroupPtr group)
         if (!group->controllers[i].mountPoint)
             continue;
 
+        /* We must never rmdir() in systemd's hierarchy */
+        if (i == VIR_CGROUP_CONTROLLER_SYSTEMD)
+            continue;
+
         /* Don't delete the root group, if we accidentally
            ended up in it for some reason */
         if (STREQ(group->controllers[i].placement, "/"))
@@ -1063,6 +1118,10 @@ int virCgroupAddTask(virCgroupPtr group, pid_t pid)
     for (i = 0; i < VIR_CGROUP_CONTROLLER_LAST; i++) {
         /* Skip over controllers not mounted */
         if (!group->controllers[i].mountPoint)
+            continue;
+
+        /* We must never add tasks in systemd's hierarchy */
+        if (i == VIR_CGROUP_CONTROLLER_SYSTEMD)
             continue;
 
         if (virCgroupSetValueU64(group, i, "tasks", (unsigned long long)pid) < 0)
@@ -1164,6 +1223,10 @@ int virCgroupMoveTask(virCgroupPtr src_group, virCgroupPtr dest_group)
     for (i = 0; i < VIR_CGROUP_CONTROLLER_LAST; i++) {
         if (!src_group->controllers[i].mountPoint ||
             !dest_group->controllers[i].mountPoint)
+            continue;
+
+        /* We must never move tasks in systemd's hierarchy */
+        if (i == VIR_CGROUP_CONTROLLER_SYSTEMD)
             continue;
 
         /* New threads are created in the same group as their parent;
@@ -1600,6 +1663,7 @@ int virCgroupNewDetect(pid_t pid ATTRIBUTE_UNUSED,
 int virCgroupNewDetectMachine(const char *name,
                               const char *drivername,
                               pid_t pid,
+                              const char *partition,
                               int controllers,
                               virCgroupPtr *group)
 {
@@ -1609,7 +1673,7 @@ int virCgroupNewDetectMachine(const char *name,
         return -1;
     }
 
-    if (!virCgroupValidateMachineGroup(*group, name, drivername, true)) {
+    if (!virCgroupValidateMachineGroup(*group, name, drivername, partition, true)) {
         VIR_DEBUG("Failed to validate machine name for '%s' driver '%s'",
                   name, drivername);
         virCgroupFree(group);
@@ -1619,22 +1683,124 @@ int virCgroupNewDetectMachine(const char *name,
     return 0;
 }
 
-int virCgroupNewMachine(const char *name,
-                        const char *drivername,
-                        bool privileged ATTRIBUTE_UNUSED,
-                        const unsigned char *uuid ATTRIBUTE_UNUSED,
-                        const char *rootdir ATTRIBUTE_UNUSED,
-                        pid_t pidleader ATTRIBUTE_UNUSED,
-                        bool isContainer ATTRIBUTE_UNUSED,
-                        const char *partition,
-                        int controllers,
-                        virCgroupPtr *group)
+/*
+ * Returns 0 on success, -1 on fatal error, -2 on systemd not available
+ */
+static int
+virCgroupNewMachineSystemd(const char *name,
+                           const char *drivername,
+                           bool privileged,
+                           const unsigned char *uuid,
+                           const char *rootdir,
+                           pid_t pidleader,
+                           bool isContainer,
+                           const char *partition,
+                           int controllers,
+                           virCgroupPtr *group)
+{
+    int ret = -1;
+    int rv;
+    virCgroupPtr init, parent = NULL;
+    char *path = NULL;
+    char *offset;
+
+    VIR_DEBUG("Trying to setup machine '%s' via systemd", name);
+    if ((rv = virSystemdCreateMachine(name,
+                                      drivername,
+                                      privileged,
+                                      uuid,
+                                      rootdir,
+                                      pidleader,
+                                      isContainer,
+                                      partition)) < 0)
+        return rv;
+
+    if (controllers != -1)
+        controllers |= (1 << VIR_CGROUP_CONTROLLER_SYSTEMD);
+
+    VIR_DEBUG("Detecting systemd placement");
+    if (virCgroupNewDetect(pidleader,
+                           controllers,
+                           &init) < 0)
+        return -1;
+
+    path = init->controllers[VIR_CGROUP_CONTROLLER_SYSTEMD].placement;
+    init->controllers[VIR_CGROUP_CONTROLLER_SYSTEMD].placement = NULL;
+    virCgroupFree(&init);
+
+    if (!path || STREQ(path, "/") || path[0] != '/') {
+        VIR_DEBUG("Systemd didn't setup its controller");
+        ret = -2;
+        goto cleanup;
+    }
+
+    offset = path;
+
+    if (virCgroupNew(pidleader,
+                     "",
+                     NULL,
+                     controllers,
+                     &parent) < 0)
+        goto cleanup;
+
+
+    for (;;) {
+        virCgroupPtr tmp;
+        char *t = strchr(offset + 1, '/');
+        if (t)
+            *t = '\0';
+
+        if (virCgroupNew(pidleader,
+                         path,
+                         parent,
+                         controllers,
+                         &tmp) < 0)
+            goto cleanup;
+
+        if (virCgroupMakeGroup(parent, tmp, true, VIR_CGROUP_NONE) < 0) {
+            virCgroupFree(&tmp);
+            goto cleanup;
+        }
+        if (t) {
+            *t = '/';
+            offset = t;
+            virCgroupFree(&parent);
+            parent = tmp;
+        } else {
+            *group = tmp;
+            break;
+        }
+    }
+
+    if (virCgroupAddTask(*group, pidleader) < 0) {
+        virErrorPtr saved = virSaveLastError();
+        virCgroupRemove(*group);
+        virCgroupFree(group);
+        if (saved) {
+            virSetError(saved);
+            virFreeError(saved);
+        }
+    }
+
+    ret = 0;
+ cleanup:
+    virCgroupFree(&parent);
+    VIR_FREE(path);
+    return ret;
+}
+
+static int
+virCgroupNewMachineManual(const char *name,
+                          const char *drivername,
+                          pid_t pidleader,
+                          const char *partition,
+                          int controllers,
+                          virCgroupPtr *group)
 {
     virCgroupPtr parent = NULL;
     int ret = -1;
 
-    *group = NULL;
-
+    VIR_DEBUG("Fallback to non-systemd setup");
     if (virCgroupNewPartition(partition,
                               STREQ(partition, "/machine"),
                               controllers,
@@ -1668,6 +1834,44 @@ done:
 cleanup:
     virCgroupFree(&parent);
     return ret;
+}
+
+int virCgroupNewMachine(const char *name,
+                        const char *drivername,
+                        bool privileged,
+                        const unsigned char *uuid,
+                        const char *rootdir,
+                        pid_t pidleader,
+                        bool isContainer,
+                        const char *partition,
+                        int controllers,
+                        virCgroupPtr *group)
+{
+    int rv;
+
+    *group = NULL;
+
+    if ((rv = virCgroupNewMachineSystemd(name,
+                                         drivername,
+                                         privileged,
+                                         uuid,
+                                         rootdir,
+                                         pidleader,
+                                         isContainer,
+                                         partition,
+                                         controllers,
+                                         group)) == 0)
+        return 0;
+
+    if (rv == -1)
+        return -1;
+
+    return virCgroupNewMachineManual(name,
+                                     drivername,
+                                     pidleader,
+                                     partition,
+                                     controllers,
+                                     group);
 }
 
 bool virCgroupNewIgnoreError(void)
@@ -2501,6 +2705,12 @@ static int virCgroupKillInternal(virCgroupPtr group, int signum, virHashTablePtr
     while (!done) {
         done = true;
         if (!(fp = fopen(keypath, "r"))) {
+            if (errno == ENOENT) {
+                VIR_DEBUG("No file %s, assuming done", keypath);
+                killedAny = false;
+                goto done;
+            }
+
             virReportSystemError(errno,
                                  _("Failed to read %s"),
                                  keypath);
@@ -2540,6 +2750,7 @@ static int virCgroupKillInternal(virCgroupPtr group, int signum, virHashTablePtr
         }
     }
 
+ done:
     ret = killedAny ? 1 : 0;
 
 cleanup:
@@ -2609,8 +2820,13 @@ static int virCgroupKillRecursiveInternal(virCgroupPtr group, int signum, virHas
     if (rc == 1)
         killedAny = true;
 
-    VIR_DEBUG("Iterate over children of %s", keypath);
+    VIR_DEBUG("Iterate over children of %s (killedAny=%d)", keypath, killedAny);
     if (!(dp = opendir(keypath))) {
+        if (errno == ENOENT) {
+            VIR_DEBUG("Path %s does not exist, assuming done", keypath);
+            killedAny = false;
+            goto done;
+        }
         virReportSystemError(errno,
                              _("Cannot open %s"), keypath);
         return -1;
@@ -2640,6 +2856,7 @@ static int virCgroupKillRecursiveInternal(virCgroupPtr group, int signum, virHas
         virCgroupFree(&subgroup);
     }
 
+ done:
     ret = killedAny ? 1 : 0;
 
 cleanup:

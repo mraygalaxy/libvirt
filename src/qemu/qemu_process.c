@@ -2724,7 +2724,7 @@ qemuProcessUpdateState(virQEMUDriverPtr driver, virDomainObjPtr vm)
             newState = VIR_DOMAIN_SHUTDOWN;
             newReason = VIR_DOMAIN_SHUTDOWN_UNKNOWN;
             ignore_value(VIR_STRDUP_QUIET(msg, "shutdown"));
-        } else if (reason == VIR_DOMAIN_PAUSED_GUEST_PANICKED) {
+        } else if (reason == VIR_DOMAIN_PAUSED_CRASHED) {
             newState = VIR_DOMAIN_CRASHED;
             newReason = VIR_DOMAIN_CRASHED_PANICKED;
             ignore_value(VIR_STRDUP_QUIET(msg, "crashed"));
@@ -3621,16 +3621,10 @@ int qemuProcessStart(virConnectPtr conn,
     if (qemuAssignDeviceAliases(vm->def, priv->qemuCaps) < 0)
         goto cleanup;
 
-    VIR_DEBUG("Checking for CDROM and floppy presence");
     if (qemuDomainCheckDiskPresence(driver, vm,
                                     flags & VIR_QEMU_PROCESS_START_COLD) < 0)
         goto cleanup;
 
-    for (i = 0; i < vm->def->ndisks; i++) {
-        if (qemuDomainDetermineDiskChain(driver, vm->def->disks[i],
-                                         false) < 0)
-            goto cleanup;
-    }
 
     /* Get the advisory nodeset from numad if 'placement' of
      * either <vcpu> or <numatune> is 'auto'.

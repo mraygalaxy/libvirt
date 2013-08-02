@@ -667,8 +667,7 @@ VIR_ENUM_IMPL(virDomainPausedReason, VIR_DOMAIN_PAUSED_LAST,
 
 VIR_ENUM_IMPL(virDomainShutdownReason, VIR_DOMAIN_SHUTDOWN_LAST,
               "unknown",
-              "user",
-              "crashed")
+              "user")
 
 VIR_ENUM_IMPL(virDomainShutoffReason, VIR_DOMAIN_SHUTOFF_LAST,
               "unknown",
@@ -1333,7 +1332,7 @@ void virDomainNetDefFree(virDomainNetDefPtr def)
     VIR_FREE(def);
 }
 
-static void ATTRIBUTE_NONNULL(1)
+void ATTRIBUTE_NONNULL(1)
 virDomainChrSourceDefClear(virDomainChrSourceDefPtr def)
 {
     switch (def->type) {
@@ -10221,6 +10220,8 @@ virDomainChrGetDomainPtrs(virDomainDefPtr vmdef,
         break;
 
     case VIR_DOMAIN_CHR_DEVICE_TYPE_LAST:
+        *arrPtr = NULL;
+        *cntPtr = NULL;
         break;
     }
 }
