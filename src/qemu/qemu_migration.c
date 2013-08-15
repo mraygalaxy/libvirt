@@ -2321,7 +2321,8 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
          * and there is at least one IPv6 address configured
          */
         if (virQEMUCapsGet(qemuCaps, QEMU_CAPS_IPV6_MIGRATION) &&
-            getaddrinfo("::", NULL, &hints, &info) == 0) {
+            (getaddrinfo("::", NULL, &hints, &info) == 0) &&
+                         !strstr(protocol, "rdma")) {
             freeaddrinfo(info);
             listenAddr = "[::]";
         } else {
