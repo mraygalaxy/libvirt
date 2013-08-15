@@ -46,6 +46,7 @@
 #include "virerror.h"
 #include "viralloc.h"
 #include "virfile.h"
+#include "virprocess.h"
 #include "datatypes.h"
 #include "fdstream.h"
 #include "viruuid.h"
@@ -2408,6 +2409,11 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
                                     QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
+    if (strstr(protocol, "rdma")) {
+        virProcessSetMaxMemLock(vm->pid,
+                                qemuDomainMemoryLimit(vm->def) * 1024 * 4);
+    }
+
     if (mig->lockState) {
         VIR_DEBUG("Received lockstate %s", mig->lockState);
         VIR_FREE(priv->lockState);
@@ -3229,6 +3235,11 @@ qemuMigrationRun(virQEMUDriverPtr driver,
 
     switch (spec->destType) {
     case MIGRATION_DEST_HOST:
+        if (strstr(spec->dest.host.proto, "rdma")) {
+            virProcessSetMaxMemLock(vm->pid,
+                                    qemuDomainMemoryLimit(vm->def) * 1024 * 4);
+        }
+
         ret = qemuMonitorMigrateToHost(priv->mon, migrate_flags,
                                        spec->dest.host.proto,
                                        spec->dest.host.name,
