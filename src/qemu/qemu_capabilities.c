@@ -899,6 +899,9 @@ virCapsPtr virQEMUCapsInit(virQEMUCapsCachePtr cache)
     virCapabilitiesAddHostMigrateTransport(caps,
                                            "tcp");
 
+    virCapabilitiesAddHostMigrateTransport(caps,
+                                           "x-rdma");
+
     /* QEMU can support pretty much every arch that exists,
      * so just probe for them all - we gracefully fail
      * if a qemu-system-$ARCH binary can't be found
