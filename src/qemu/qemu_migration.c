@@ -2677,7 +2677,7 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
         /* Convert uri_in to well-formed URI with // after colon */
         if (!(STRPREFIX(uri_in, well_formed_protocol))) {
             well_formed_uri = false;
-            if (virAsprintf(&uri_str, "%s://%s", protocol) < 0)
+            if (virAsprintf(&uri_str, "%s://%s", protocol, p) < 0)
                 goto cleanup;
         }
 
