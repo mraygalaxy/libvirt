@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Red Hat, Inc.
+ * Copyright (C) 2012-2013 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -36,7 +36,23 @@
 
 #define VIR_FROM_THIS VIR_FROM_NONE
 
-static char randomState[128];
+/* The algorithm of virRandomBits relies on gnulib's guarantee that
+ * 'random_r' matches the POSIX requirements on 'random' of being
+ * evenly distributed among exactly [0, 2**31) (that is, we always get
+ * exactly 31 bits).  While this happens to be the value of RAND_MAX
+ * on glibc, note that POSIX only requires RAND_MAX to be tied to the
+ * weaker 'rand', so there are platforms where RAND_MAX is smaller
+ * than the range of 'random_r'.  For the results to be evenly
+ * distributed among up to 64 bits, we also rely on the period of
+ * 'random_r' to be at least 2**64, which POSIX only guarantees for
+ * 'random' if you use 256 bytes of state.  */
+enum {
+    RANDOM_BITS_PER_ITER = 31,
+    RANDOM_BITS_MASK = (1U << RANDOM_BITS_PER_ITER) - 1,
+    RANDOM_STATE_SIZE = 256,
+};
+
+static char randomState[RANDOM_STATE_SIZE];
 static struct random_data randomData;
 static virMutex randomLock;
 
@@ -50,7 +66,7 @@ virRandomOnceInit(void)
     /* Normally we want a decent seed.  But if reproducible debugging
      * of a fixed pseudo-random sequence is ever required, uncomment
      * this block to let an environment variable force the seed.  */
-    const char *debug = getenv("VIR_DEBUG_RANDOM_SEED");
+    const char *debug = virGetEnvBlockSUID("VIR_DEBUG_RANDOM_SEED");
 
     if (debug && virStrToLong_ui(debug, NULL, 0, &seed) < 0)
         return -1;
@@ -70,10 +86,6 @@ virRandomOnceInit(void)
 
 VIR_ONCE_GLOBAL_INIT(virRandom)
 
-/* The algorithm of virRandomBits requires that RAND_MAX == 2^n-1 for
- * some n; gnulib's random_r meets this property. */
-verify(((RAND_MAX + 1U) & RAND_MAX) == 0);
-
 /**
  * virRandomBits:
  * @nbits: Number of bits of randommess required
@@ -85,7 +97,6 @@ verify(((RAND_MAX + 1U) & RAND_MAX) == 0);
  */
 uint64_t virRandomBits(int nbits)
 {
-    int bits_per_iter = count_one_bits(RAND_MAX);
     uint64_t ret = 0;
     int32_t bits;
 
@@ -98,10 +109,10 @@ uint64_t virRandomBits(int nbits)
 
     virMutexLock(&randomLock);
 
-    while (nbits > bits_per_iter) {
+    while (nbits > RANDOM_BITS_PER_ITER) {
         random_r(&randomData, &bits);
-        ret = (ret << bits_per_iter) | (bits & RAND_MAX);
-        nbits -= bits_per_iter;
+        ret = (ret << RANDOM_BITS_PER_ITER) | (bits & RANDOM_BITS_MASK);
+        nbits -= RANDOM_BITS_PER_ITER;
     }
 
     random_r(&randomData, &bits);

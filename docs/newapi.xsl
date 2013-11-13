@@ -25,9 +25,74 @@
   <!-- Build keys for all symbols -->
   <xsl:key name="symbols" match="/api/symbols/*" use="@name"/>
 
+  <xsl:param name="builddir" select="'..'"/>
+
   <!-- the target directory for the HTML output -->
   <xsl:variable name="htmldir">html</xsl:variable>
   <xsl:variable name="href_base">../</xsl:variable>
+
+  <xsl:variable name="acls">
+    <xsl:copy-of select="document('{$builddir}/src/libvirt_access.xml')/aclinfo/api"/>
+  </xsl:variable>
+  <xsl:variable name="qemuacls">
+    <xsl:copy-of select="document('{$builddir}/src/libvirt_access_qemu.xml')/aclinfo/api"/>
+  </xsl:variable>
+  <xsl:variable name="lxcacls">
+    <xsl:copy-of select="document('{$builddir}/src/libvirt_access_lxc.xml')/aclinfo/api"/>
+  </xsl:variable>
+
+  <xsl:template name="aclinfo">
+    <xsl:param name="api"/>
+
+    <xsl:if test="count(exsl:node-set($acls)/api[@name=$api]/check) > 0">
+      <h5>Access control parameter checks</h5>
+      <table class="acl">
+        <thead>
+          <tr>
+            <th>Object</th>
+            <th>Permission</th>
+            <th>Condition</th>
+          </tr>
+        </thead>
+        <xsl:apply-templates select="exsl:node-set($acls)/api[@name=$api]/check" mode="acl"/>
+      </table>
+    </xsl:if>
+    <xsl:if test="count(exsl:node-set($acls)/api[@name=$api]/filter) > 0">
+      <h5>Access control return value filters</h5>
+      <table class="acl">
+        <thead>
+          <tr>
+            <th>Object</th>
+            <th>Permission</th>
+          </tr>
+        </thead>
+        <xsl:apply-templates select="exsl:node-set($acls)/api[@name=$api]/filter" mode="acl"/>
+      </table>
+    </xsl:if>
+  </xsl:template>
+
+  <xsl:template match="check" mode="acl">
+    <tr>
+      <td><a href="../acl.html#object_{@object}"><xsl:value-of select="@object"/></a></td>
+      <td><a href="../acl.html#perm_{@object}_{@perm}"><xsl:value-of select="@perm"/></a></td>
+      <xsl:choose>
+        <xsl:when test="@flags">
+          <td><xsl:value-of select="@flags"/></td>
+        </xsl:when>
+        <xsl:otherwise>
+          <td>-</td>
+        </xsl:otherwise>
+      </xsl:choose>
+    </tr>
+  </xsl:template>
+
+  <xsl:template match="filter" mode="acl">
+    <tr>
+      <td><xsl:value-of select="@object"/></td>
+      <td><xsl:value-of select="@perm"/></td>
+    </tr>
+  </xsl:template>
+
 
   <xsl:template name="navbar">
     <xsl:variable name="previous" select="preceding-sibling::file[1]"/>
@@ -64,6 +129,19 @@
         <a href="libvirt-{$ref/@file}.html#{$ref/@name}"><xsl:value-of select="$stem"/></a>
         <xsl:value-of select="substring-after($token, $stem)"/>
       </xsl:when>
+      <xsl:when test="starts-with($token, 'http://')">
+        <a href="{$token}">
+          <xsl:value-of select="$token"/>
+        </a>
+      </xsl:when>
+      <xsl:when test="starts-with($token, '&lt;http://') and contains($token, '&gt;')">
+        <xsl:variable name="link"
+                      select="substring(substring-before($token, '&gt;'), 2)"/>
+        <a href="{$link}">
+          <xsl:value-of select="$link"/>
+        </a>
+        <xsl:value-of select="substring-after($token, '&gt;')"/>
+      </xsl:when>
       <xsl:otherwise>
         <xsl:value-of select="$token"/>
       </xsl:otherwise>
@@ -85,6 +163,67 @@
     </xsl:for-each>
   </xsl:template>
 
+
+  <!-- process blocks of text. blocks are separated by two consecutive line -->
+  <!-- breaks.                                                              -->
+  <!--                                                                      -->
+  <!-- blocks indented with at least 2 spaces are considered code blocks.   -->
+  <!--                                                                      -->
+  <!-- consecutive code blocks are collapsed into a single code block.      -->
+  <xsl:template name="formatblock">
+    <xsl:param name="block"/>
+    <xsl:param name="rest"/>
+
+    <xsl:variable name="multipleCodeBlocks"
+                  select="starts-with($block, '  ') and starts-with($rest, '  ')"/>
+
+    <xsl:choose>
+      <xsl:when test="$multipleCodeBlocks">
+        <xsl:call-template name="formatblock">
+          <xsl:with-param name="block">
+            <xsl:choose>
+              <xsl:when test="contains($rest, '&#xA;&#xA;')">
+                <xsl:value-of select="concat($block, '&#xA;  &#xA;',
+                                        substring-before($rest, '&#xA;&#xA;'))" />
+              </xsl:when>
+              <xsl:otherwise>
+                <xsl:value-of select="concat($block, '&#xA;  &#xA;', $rest)" />
+              </xsl:otherwise>
+            </xsl:choose>
+          </xsl:with-param>
+          <xsl:with-param name="rest" select="substring-after($rest, '&#xA;&#xA;')"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:when test="starts-with($block, '  ')">
+        <pre class="code"><xsl:for-each select="str:tokenize($block, '&#xA;')">
+          <xsl:choose>
+            <xsl:when test="starts-with(., '  ')">
+              <xsl:value-of select="substring(., 3)"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="."/>
+            </xsl:otherwise>
+          </xsl:choose>
+          <xsl:if test="position() != last()">
+            <xsl:text>&#xA;</xsl:text>
+          </xsl:if>
+        </xsl:for-each></pre>
+      </xsl:when>
+      <xsl:otherwise>
+        <p>
+          <xsl:call-template name="dumptext">
+            <xsl:with-param name="text" select="$block"/>
+          </xsl:call-template>
+        </p>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:if test="not($multipleCodeBlocks)">
+      <xsl:call-template name="formattext">
+        <xsl:with-param name="text" select="$rest"/>
+      </xsl:call-template>
+    </xsl:if>
+  </xsl:template>
+
   <xsl:template name="formattext">
     <xsl:param name="text" />
 
@@ -92,28 +231,19 @@
       <xsl:variable name="head" select="substring-before($text, '&#xA;&#xA;')"/>
       <xsl:variable name="rest" select="substring-after($text, '&#xA;&#xA;')"/>
 
-      <xsl:choose>
-        <xsl:when test="$head">
-          <p>
-            <xsl:call-template name="dumptext">
-              <xsl:with-param name="text" select="$head"/>
-            </xsl:call-template>
-          </p>
-        </xsl:when>
-        <xsl:when test="not($rest)">
-          <p>
-            <xsl:call-template name="dumptext">
-              <xsl:with-param name="text" select="$text"/>
-            </xsl:call-template>
-          </p>
-        </xsl:when>
-      </xsl:choose>
-
-      <xsl:if test="$rest">
-        <xsl:call-template name="formattext">
-          <xsl:with-param name="text" select="$rest"/>
-        </xsl:call-template>
-      </xsl:if>
+      <xsl:call-template name="formatblock">
+        <xsl:with-param name="block">
+          <xsl:choose>
+            <xsl:when test="contains($text, '&#xA;&#xA;')">
+              <xsl:value-of select="$head"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="$text"/>
+            </xsl:otherwise>
+          </xsl:choose>
+        </xsl:with-param>
+        <xsl:with-param name="rest" select="$rest"/>
+      </xsl:call-template>
     </xsl:if>
   </xsl:template>
 
@@ -299,7 +429,7 @@
     <xsl:variable name="name" select="string(@name)"/>
     <h3><a name="{$name}"><code><xsl:value-of select="$name"/></code></a></h3>
     <pre class="api"><span class="directive">#define</span><xsl:text> </xsl:text><xsl:value-of select="$name"/></pre>
-    <div>
+    <div class="description">
     <xsl:call-template name="formattext">
       <xsl:with-param name="text" select="info"/>
     </xsl:call-template>
@@ -451,7 +581,7 @@
     <xsl:text>)
 </xsl:text>
     </pre>
-    <div>
+    <div class="description">
     <xsl:call-template name="formattext">
       <xsl:with-param name="text" select="info"/>
     </xsl:call-template>
@@ -527,7 +657,7 @@
     </xsl:for-each>
     <xsl:text>)</xsl:text>
     </pre>
-    <div>
+    <div class="description">
     <xsl:call-template name="formattext">
       <xsl:with-param name="text" select="info"/>
     </xsl:call-template>
@@ -553,6 +683,11 @@
         </xsl:if>
       </dl>
     </xsl:if>
+    <div class="acl">
+      <xsl:call-template name="aclinfo">
+        <xsl:with-param name="api" select="$name"/>
+      </xsl:call-template>
+    </div>
   </xsl:template>
 
   <xsl:template match="exports" mode="toc">
@@ -568,7 +703,11 @@
       <h2 style="font-weight:bold;color:red;text-align:center">This module is deprecated</h2>
     </xsl:if>
     <xsl:if test="description">
-      <p><xsl:value-of select="description"/></p>
+      <p>
+        <xsl:call-template name="dumptext">
+          <xsl:with-param name="text" select="description"/>
+        </xsl:call-template>
+      </p>
     </xsl:if>
   </xsl:template>
 

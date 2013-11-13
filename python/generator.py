@@ -136,7 +136,7 @@ class docParser(xml.sax.handler.ContentHandler):
             print "end %s" % tag
         if tag == 'function':
             # fuctions come from source files, hence 'virerror.c'
-            if self.function != None:
+            if self.function is not None:
                 if (self.function_module == "libvirt" or
                     self.function_module == "virevent" or
                     self.function_module == "virerror"):
@@ -250,6 +250,7 @@ lxc_functions_failed = []
 qemu_functions_failed = []
 functions_skipped = [
     "virConnectListDomains",
+    "virConnectGetCPUModelNames",
 ]
 lxc_functions_skipped = []
 qemu_functions_skipped = []
@@ -293,57 +294,46 @@ py_types = {
     'size_t': ('n', None, "size_t", "size_t"),
 
     'virDomainPtr':  ('O', "virDomain", "virDomainPtr", "virDomainPtr"),
-    'const virDomainPtr':  ('O', "virDomain", "virDomainPtr", "virDomainPtr"),
     'virDomain *':  ('O', "virDomain", "virDomainPtr", "virDomainPtr"),
     'const virDomain *':  ('O', "virDomain", "virDomainPtr", "virDomainPtr"),
 
     'virNetworkPtr':  ('O', "virNetwork", "virNetworkPtr", "virNetworkPtr"),
-    'const virNetworkPtr':  ('O', "virNetwork", "virNetworkPtr", "virNetworkPtr"),
     'virNetwork *':  ('O', "virNetwork", "virNetworkPtr", "virNetworkPtr"),
     'const virNetwork *':  ('O', "virNetwork", "virNetworkPtr", "virNetworkPtr"),
 
     'virInterfacePtr':  ('O', "virInterface", "virInterfacePtr", "virInterfacePtr"),
-    'const virInterfacePtr':  ('O', "virInterface", "virInterfacePtr", "virInterfacePtr"),
     'virInterface *':  ('O', "virInterface", "virInterfacePtr", "virInterfacePtr"),
     'const virInterface *':  ('O', "virInterface", "virInterfacePtr", "virInterfacePtr"),
 
     'virStoragePoolPtr':  ('O', "virStoragePool", "virStoragePoolPtr", "virStoragePoolPtr"),
-    'const virStoragePoolPtr':  ('O', "virStoragePool", "virStoragePoolPtr", "virStoragePoolPtr"),
     'virStoragePool *':  ('O', "virStoragePool", "virStoragePoolPtr", "virStoragePoolPtr"),
     'const virStoragePool *':  ('O', "virStoragePool", "virStoragePoolPtr", "virStoragePoolPtr"),
 
     'virStorageVolPtr':  ('O', "virStorageVol", "virStorageVolPtr", "virStorageVolPtr"),
-    'const virStorageVolPtr':  ('O', "virStorageVol", "virStorageVolPtr", "virStorageVolPtr"),
     'virStorageVol *':  ('O', "virStorageVol", "virStorageVolPtr", "virStorageVolPtr"),
     'const virStorageVol *':  ('O', "virStorageVol", "virStorageVolPtr", "virStorageVolPtr"),
 
     'virConnectPtr':  ('O', "virConnect", "virConnectPtr", "virConnectPtr"),
-    'const virConnectPtr':  ('O', "virConnect", "virConnectPtr", "virConnectPtr"),
     'virConnect *':  ('O', "virConnect", "virConnectPtr", "virConnectPtr"),
     'const virConnect *':  ('O', "virConnect", "virConnectPtr", "virConnectPtr"),
 
     'virNodeDevicePtr':  ('O', "virNodeDevice", "virNodeDevicePtr", "virNodeDevicePtr"),
-    'const virNodeDevicePtr':  ('O', "virNodeDevice", "virNodeDevicePtr", "virNodeDevicePtr"),
     'virNodeDevice *':  ('O', "virNodeDevice", "virNodeDevicePtr", "virNodeDevicePtr"),
     'const virNodeDevice *':  ('O', "virNodeDevice", "virNodeDevicePtr", "virNodeDevicePtr"),
 
     'virSecretPtr':  ('O', "virSecret", "virSecretPtr", "virSecretPtr"),
-    'const virSecretPtr':  ('O', "virSecret", "virSecretPtr", "virSecretPtr"),
     'virSecret *':  ('O', "virSecret", "virSecretPtr", "virSecretPtr"),
     'const virSecret *':  ('O', "virSecret", "virSecretPtr", "virSecretPtr"),
 
     'virNWFilterPtr':  ('O', "virNWFilter", "virNWFilterPtr", "virNWFilterPtr"),
-    'const virNWFilterPtr':  ('O', "virNWFilter", "virNWFilterPtr", "virNWFilterPtr"),
     'virNWFilter *':  ('O', "virNWFilter", "virNWFilterPtr", "virNWFilterPtr"),
     'const virNWFilter *':  ('O', "virNWFilter", "virNWFilterPtr", "virNWFilterPtr"),
 
     'virStreamPtr':  ('O', "virStream", "virStreamPtr", "virStreamPtr"),
-    'const virStreamPtr':  ('O', "virStream", "virStreamPtr", "virStreamPtr"),
     'virStream *':  ('O', "virStream", "virStreamPtr", "virStreamPtr"),
     'const virStream *':  ('O', "virStream", "virStreamPtr", "virStreamPtr"),
 
     'virDomainSnapshotPtr':  ('O', "virDomainSnapshot", "virDomainSnapshotPtr", "virDomainSnapshotPtr"),
-    'const virDomainSnapshotPtr':  ('O', "virDomainSnapshot", "virDomainSnapshotPtr", "virDomainSnapshotPtr"),
     'virDomainSnapshot *':  ('O', "virDomainSnapshot", "virDomainSnapshotPtr", "virDomainSnapshotPtr"),
     'const virDomainSnapshot *':  ('O', "virDomainSnapshot", "virDomainSnapshotPtr", "virDomainSnapshotPtr"),
 }
@@ -510,11 +500,11 @@ skip_function = (
     'virStreamRecv', # overridden in libvirt-override-virStream.py
     'virStreamSend', # overridden in libvirt-override-virStream.py
 
-    'virConnectUnregisterCloseCallback', # overriden in virConnect.py
-    'virConnectRegisterCloseCallback', # overriden in virConnect.py
+    'virConnectUnregisterCloseCallback', # overridden in virConnect.py
+    'virConnectRegisterCloseCallback', # overridden in virConnect.py
 
-    'virDomainCreateXMLWithFiles', # overriden in virConnect.py
-    'virDomainCreateWithFiles', # overriden in virDomain.py
+    'virDomainCreateXMLWithFiles', # overridden in virConnect.py
+    'virDomainCreateWithFiles', # overridden in virDomain.py
 
     # 'Ref' functions have no use for bindings users.
     "virConnectRef",
@@ -641,9 +631,9 @@ def print_function_wrapper(module, name, output, export, include):
             (f, t, n, c) = py_types[arg[1]]
             if (f == 'z') and (name in foreign_encoding_args) and (num_bufs == 0):
                 f = 't#'
-            if f != None:
+            if f is not None:
                 format = format + f
-            if t != None:
+            if t is not None:
                 format_args = format_args + ", &pyobj_%s" % (arg[0])
                 c_args = c_args + "    PyObject *pyobj_%s;\n" % (arg[0])
                 c_convert = c_convert + \
@@ -686,7 +676,7 @@ def print_function_wrapper(module, name, output, export, include):
     elif py_types.has_key(ret[0]):
         (f, t, n, c) = py_types[ret[0]]
         c_return = "    %s c_retval;\n" % (ret[0])
-        if file == "python_accessor" and ret[2] != None:
+        if file == "python_accessor" and ret[2] is not None:
             c_call = "\n    c_retval = %s->%s;\n" % (args[0][0], ret[2])
         else:
             c_call = "\n    c_retval = %s(%s);\n" % (name, c_call)
@@ -708,7 +698,7 @@ def print_function_wrapper(module, name, output, export, include):
             unknown_types[ret[0]] = [name]
         return -1
 
-    if cond != None and cond != "":
+    if cond is not None and cond != "":
         include.write("#if %s\n" % cond)
         export.write("#if %s\n" % cond)
         output.write("#if %s\n" % cond)
@@ -729,14 +719,14 @@ def print_function_wrapper(module, name, output, export, include):
 
     if file == "python":
         # Those have been manually generated
-        if cond != None and cond != "":
+        if cond is not None and cond != "":
             include.write("#endif\n")
             export.write("#endif\n")
             output.write("#endif\n")
         return 1
     if file == "python_accessor" and ret[0] != "void" and ret[2] is None:
         # Those have been manually generated
-        if cond != None and cond != "":
+        if cond is not None and cond != "":
             include.write("#endif\n")
             export.write("#endif\n")
             output.write("#endif\n")
@@ -771,7 +761,7 @@ def print_function_wrapper(module, name, output, export, include):
     output.write("    LIBVIRT_END_ALLOW_THREADS;\n")
     output.write(ret_convert)
     output.write("}\n\n")
-    if cond != None and cond != "":
+    if cond is not None and cond != "":
         include.write("#endif /* %s */\n" % cond)
         export.write("#endif /* %s */\n" % cond)
         output.write("#endif /* %s */\n" % cond)
@@ -1313,7 +1303,7 @@ def buildWrappers(module):
     classes.write("#\n")
     classes.write("# WARNING WARNING WARNING WARNING\n")
     classes.write("#\n")
-    if extra != None:
+    if extra is not None:
         classes.writelines(extra.readlines())
     classes.write("#\n")
     classes.write("# WARNING WARNING WARNING WARNING\n")
@@ -1321,7 +1311,7 @@ def buildWrappers(module):
     classes.write("# Automatically written part of python bindings for libvirt\n")
     classes.write("#\n")
     classes.write("# WARNING WARNING WARNING WARNING\n")
-    if extra != None:
+    if extra is not None:
         extra.close()
 
     if function_classes.has_key("None"):
@@ -1455,12 +1445,11 @@ def buildWrappers(module):
                 elif classname in [ "virDomainSnapshot" ]:
                     classes.write("        self._dom = dom\n")
                     classes.write("        self._conn = dom.connect()\n")
-                classes.write("        if _obj != None:self._o = _obj;return\n")
-                classes.write("        self._o = None\n\n")
+                classes.write("        self._o = _obj\n\n")
             destruct=None
             if classes_destructors.has_key(classname):
                 classes.write("    def __del__(self):\n")
-                classes.write("        if self._o != None:\n")
+                classes.write("        if self._o is not None:\n")
                 classes.write("            libvirtmod.%s(self._o)\n" %
                               classes_destructors[classname])
                 classes.write("        self._o = None\n\n")
@@ -1776,7 +1765,7 @@ def qemuBuildWrappers(module):
     fd.write("#\n")
     fd.write("# WARNING WARNING WARNING WARNING\n")
     fd.write("#\n")
-    if extra != None:
+    if extra is not None:
         fd.writelines(extra.readlines())
     fd.write("#\n")
     fd.write("# WARNING WARNING WARNING WARNING\n")
@@ -1784,7 +1773,7 @@ def qemuBuildWrappers(module):
     fd.write("# Automatically written part of python bindings for libvirt\n")
     fd.write("#\n")
     fd.write("# WARNING WARNING WARNING WARNING\n")
-    if extra != None:
+    if extra is not None:
         extra.close()
 
     fd.write("try:\n")
@@ -1888,7 +1877,7 @@ def lxcBuildWrappers(module):
     fd.write("#\n")
     fd.write("# WARNING WARNING WARNING WARNING\n")
     fd.write("#\n")
-    if extra != None:
+    if extra is not None:
         fd.writelines(extra.readlines())
     fd.write("#\n")
     fd.write("# WARNING WARNING WARNING WARNING\n")
@@ -1896,7 +1885,7 @@ def lxcBuildWrappers(module):
     fd.write("# Automatically written part of python bindings for libvirt\n")
     fd.write("#\n")
     fd.write("# WARNING WARNING WARNING WARNING\n")
-    if extra != None:
+    if extra is not None:
         extra.close()
 
     fd.write("try:\n")

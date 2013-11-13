@@ -21,6 +21,7 @@
 # define __VIR_QEMU_MONITOR_TEST_UTILS_H__
 
 # include "domain_conf.h"
+# include "qemu/qemu_conf.h"
 # include "qemu/qemu_monitor.h"
 # include "qemu/qemu_agent.h"
 
@@ -59,8 +60,14 @@ int qemuMonitorTestAddItemParams(qemuMonitorTestPtr test,
                                  ...)
     ATTRIBUTE_SENTINEL;
 
+# define qemuMonitorTestNewSimple(json, xmlopt) \
+    qemuMonitorTestNew(json, xmlopt, NULL, NULL, NULL)
+
 qemuMonitorTestPtr qemuMonitorTestNew(bool json,
-                                      virDomainXMLOptionPtr xmlopt);
+                                      virDomainXMLOptionPtr xmlopt,
+                                      virDomainObjPtr vm,
+                                      virQEMUDriverPtr driver,
+                                      const char *greeting);
 
 qemuMonitorTestPtr qemuMonitorTestNewAgent(virDomainXMLOptionPtr xmlopt);
 

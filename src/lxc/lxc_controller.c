@@ -64,6 +64,7 @@
 #include "virrandom.h"
 #include "virprocess.h"
 #include "virnuma.h"
+#include "virdbus.h"
 #include "rpc/virnetserver.h"
 #include "virstring.h"
 
@@ -76,13 +77,11 @@ struct _virLXCControllerConsole {
     int hostFd;  /* PTY FD in the host OS */
     bool hostClosed;
     int hostEpoll;
-    bool hostBlocking;
 
     int contWatch;
     int contFd;  /* PTY FD in the container */
     bool contClosed;
     int contEpoll;
-    bool contBlocking;
 
     int epollWatch;
     int epollFd; /* epoll FD for dealing with EOF */
@@ -362,6 +361,8 @@ static int virLXCControllerSetupLoopDeviceFS(virDomainFSDefPtr fs)
     if ((lofd = virFileLoopDeviceAssociate(fs->src, &loname)) < 0)
         return -1;
 
+    VIR_DEBUG("Changing fs %s to use type=block for dev %s",
+              fs->src, loname);
     /*
      * We now change it into a block device type, so that
      * the rest of container setup 'just works'
@@ -382,6 +383,9 @@ static int virLXCControllerSetupLoopDeviceDisk(virDomainDiskDefPtr disk)
 
     if ((lofd = virFileLoopDeviceAssociate(disk->src, &loname)) < 0)
         return -1;
+
+    VIR_DEBUG("Changing disk %s to use type=block for dev %s",
+              disk->src, loname);
 
     /*
      * We now change it into a block device type, so that
@@ -412,11 +416,13 @@ static int virLXCControllerSetupNBDDeviceFS(virDomainFSDefPtr fs)
                                   &dev) < 0)
         return -1;
 
+    VIR_DEBUG("Changing fs %s to use type=block for dev %s",
+              fs->src, dev);
     /*
      * We now change it into a block device type, so that
      * the rest of container setup 'just works'
      */
-    fs->type = VIR_DOMAIN_DISK_TYPE_BLOCK;
+    fs->type = VIR_DOMAIN_FS_TYPE_BLOCK;
     VIR_FREE(fs->src);
     fs->src = dev;
 
@@ -440,6 +446,8 @@ static int virLXCControllerSetupNBDDeviceDisk(virDomainDiskDefPtr disk)
                                   &dev) < 0)
         return -1;
 
+    VIR_DEBUG("Changing disk %s to use type=block for dev %s",
+              disk->src, dev);
     /*
      * We now change it into a block device type, so that
      * the rest of container setup 'just works'
@@ -745,6 +753,7 @@ static int virLXCControllerSetupServer(virLXCControllerPtr ctrl)
                                            NULL,
 #endif
                                            false,
+                                           0,
                                            5)))
         goto error;
 
@@ -803,12 +812,15 @@ static void virLXCControllerSignalChildIO(virNetServerPtr server,
     int status;
 
     ret = waitpid(-1, &status, WNOHANG);
+    VIR_DEBUG("Got sig child %d vs %lld", ret, (unsigned long long)ctrl->initpid);
     if (ret == ctrl->initpid) {
         virNetServerQuit(server);
         virMutexLock(&lock);
         if (WIFSIGNALED(status) &&
-            WTERMSIG(status) == SIGHUP)
+            WTERMSIG(status) == SIGHUP) {
+            VIR_DEBUG("Status indicates reboot");
             wantReboot = true;
+        }
         virMutexUnlock(&lock);
     }
 }
@@ -819,28 +831,32 @@ static void virLXCControllerConsoleUpdateWatch(virLXCControllerConsolePtr consol
     int hostEvents = 0;
     int contEvents = 0;
 
-    if (!console->hostClosed || (!console->hostBlocking && console->fromContLen)) {
+    /* If host console is open, then we can look to read/write */
+    if (!console->hostClosed) {
         if (console->fromHostLen < sizeof(console->fromHostBuf))
             hostEvents |= VIR_EVENT_HANDLE_READABLE;
         if (console->fromContLen)
             hostEvents |= VIR_EVENT_HANDLE_WRITABLE;
     }
-    if (!console->contClosed || (!console->contBlocking && console->fromHostLen)) {
+
+    /* If cont console is open, then we can look to read/write */
+    if (!console->contClosed) {
         if (console->fromContLen < sizeof(console->fromContBuf))
             contEvents |= VIR_EVENT_HANDLE_READABLE;
         if (console->fromHostLen)
             contEvents |= VIR_EVENT_HANDLE_WRITABLE;
     }
 
-    VIR_DEBUG("Container watch %d=%d host watch %d=%d",
-              console->contWatch, contEvents,
-              console->hostWatch, hostEvents);
+    VIR_DEBUG("Container watch=%d, events=%d closed=%d; host watch=%d events=%d closed=%d",
+              console->contWatch, contEvents, console->contClosed,
+              console->hostWatch, hostEvents, console->hostClosed);
     virEventUpdateHandle(console->contWatch, contEvents);
     virEventUpdateHandle(console->hostWatch, hostEvents);
 
     if (console->hostClosed) {
+        /* Must setup an epoll to detect when host becomes accessible again */
         int events = EPOLLIN | EPOLLET;
-        if (console->hostBlocking)
+        if (console->fromContLen)
             events |= EPOLLOUT;
 
         if (events != console->hostEpoll) {
@@ -876,8 +892,9 @@ static void virLXCControllerConsoleUpdateWatch(virLXCControllerConsolePtr consol
     }
 
     if (console->contClosed) {
+        /* Must setup an epoll to detect when guest becomes accessible again */
         int events = EPOLLIN | EPOLLET;
-        if (console->contBlocking)
+        if (console->fromHostLen)
             events |= EPOLLOUT;
 
         if (events != console->contEpoll) {
@@ -948,7 +965,7 @@ static void virLXCControllerConsoleEPoll(int watch, int fd, int events, void *op
 
         /* If we get HUP+dead PID, we just re-enable the main loop
          * which will see the PID has died and exit */
-        if ((event.events & EPOLLIN)) {
+        if ((event.events & (EPOLLIN|EPOLLOUT))) {
             if (event.data.fd == console->hostFd) {
                 console->hostClosed = false;
             } else {
@@ -1028,10 +1045,6 @@ static void virLXCControllerConsoleIO(int watch, int fd, int events, void *opaqu
             *len -= done;
         } else {
             VIR_DEBUG("Write fd %d done %d errno %d", fd, (int)done, errno);
-            if (watch == console->hostWatch)
-                console->hostBlocking = true;
-            else
-                console->contBlocking = true;
         }
     }
 
@@ -1695,7 +1708,7 @@ static int virLXCControllerSetupDisk(virLXCControllerPtr ctrl,
         goto cleanup;
 
     /* Labelling normally operates on src, but we need
-     * to actally label the dst here, so hack the config */
+     * to actually label the dst here, so hack the config */
     def->src = dst;
     if (virSecurityManagerSetImageLabel(securityDriver, ctrl->def, def) < 0)
         goto cleanup;
@@ -2010,7 +2023,7 @@ virLXCControllerEventSend(virLXCControllerPtr ctrl,
     virNetMessagePtr msg;
 
     if (!ctrl->client) {
-        VIR_WARN("Dropping event %d becuase libvirtd is not connected", procnr);
+        VIR_WARN("Dropping event %d because libvirtd is not connected", procnr);
         return;
     }
 
@@ -2199,6 +2212,12 @@ virLXCControllerRun(virLXCControllerPtr ctrl)
         if (virLXCControllerConsoleSetNonblocking(&(ctrl->consoles[i])) < 0)
             goto cleanup;
 
+    /* We must not hold open a dbus connection for life
+     * of LXC instance, since dbus-daemon is limited to
+     * only a few 100 connections by default
+     */
+    virDBusCloseSystemBus();
+
     rc = virLXCControllerMain(ctrl);
 
     virLXCControllerEventSendExit(ctrl, rc);
@@ -2222,7 +2241,7 @@ cleanup:
 int main(int argc, char *argv[])
 {
     pid_t pid;
-    int rc = 1;
+    int rc = -1;
     char *name = NULL;
     size_t nveths = 0;
     char **veths = NULL;
@@ -2249,7 +2268,9 @@ int main(int argc, char *argv[])
 
     if (setlocale(LC_ALL, "") == NULL ||
         bindtextdomain(PACKAGE, LOCALEDIR) == NULL ||
-        textdomain(PACKAGE) == NULL) {
+        textdomain(PACKAGE) == NULL ||
+        virThreadInitialize() < 0 ||
+        virErrorInitialize() < 0) {
         fprintf(stderr, _("%s: initialization failed\n"), argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -2343,12 +2364,14 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
-    if (getuid() != 0) {
+    if (geteuid() != 0) {
         fprintf(stderr, "%s: must be run as the 'root' user\n", argv[0]);
         goto cleanup;
     }
 
     virEventRegisterDefaultImpl();
+
+    virDBusSetSharedBus(false);
 
     if (!(ctrl = virLXCControllerNew(name)))
         goto cleanup;

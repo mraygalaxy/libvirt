@@ -474,6 +474,109 @@ cleanup:
 }
 
 
+static const char testQemuAgentArbitraryCommandResponse[] =
+    "{\"return\":\"bla\"}";
+
+static int
+testQemuAgentArbitraryCommand(const void *data)
+{
+    virDomainXMLOptionPtr xmlopt = (virDomainXMLOptionPtr)data;
+    qemuMonitorTestPtr test = qemuMonitorTestNewAgent(xmlopt);
+    int ret = -1;
+    char *reply = NULL;
+
+    if (!test)
+        return -1;
+
+    if (qemuMonitorTestAddAgentSyncResponse(test) < 0)
+        goto cleanup;
+
+    if (qemuMonitorTestAddItem(test, "ble",
+                               testQemuAgentArbitraryCommandResponse) < 0)
+        goto cleanup;
+
+    if (qemuAgentArbitraryCommand(qemuMonitorTestGetAgent(test),
+                                  "{\"execute\":\"ble\"}",
+                                  &reply,
+                                  VIR_DOMAIN_QEMU_AGENT_COMMAND_BLOCK) < 0)
+        goto cleanup;
+
+    if (STRNEQ(reply, testQemuAgentArbitraryCommandResponse)) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       "invalid processing of guest agent reply: "
+                       "got '%s' expected '%s'",
+                       reply, testQemuAgentArbitraryCommandResponse);
+        goto cleanup;
+    }
+
+    ret = 0;
+
+cleanup:
+    VIR_FREE(reply);
+    qemuMonitorTestFree(test);
+    return ret;
+}
+
+
+static int
+qemuAgentTimeoutTestMonitorHandler(qemuMonitorTestPtr test ATTRIBUTE_UNUSED,
+                                   qemuMonitorTestItemPtr item ATTRIBUTE_UNUSED,
+                                   const char *cmdstr ATTRIBUTE_UNUSED)
+{
+    return 0;
+}
+
+
+static int
+testQemuAgentTimeout(const void *data)
+{
+    virDomainXMLOptionPtr xmlopt = (virDomainXMLOptionPtr)data;
+    qemuMonitorTestPtr test = qemuMonitorTestNewAgent(xmlopt);
+    char *reply = NULL;
+    int ret = -1;
+
+    if (!test)
+        return -1;
+
+    if (virTestGetExpensive() == 0)
+        return EXIT_AM_SKIP;
+
+    if (qemuMonitorTestAddHandler(test, qemuAgentTimeoutTestMonitorHandler,
+                                  NULL, NULL) < 0)
+        goto cleanup;
+
+    if (qemuAgentFSFreeze(qemuMonitorTestGetAgent(test)) != -1) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       "agent command should have failed");
+        goto cleanup;
+    }
+
+    /* test timeout */
+    if (qemuMonitorTestAddAgentSyncResponse(test) < 0)
+        goto cleanup;
+
+    if (qemuMonitorTestAddHandler(test, qemuAgentTimeoutTestMonitorHandler,
+                                  NULL, NULL) < 0)
+        goto cleanup;
+
+    if (qemuAgentArbitraryCommand(qemuMonitorTestGetAgent(test),
+                                  "{\"execute\":\"ble\"}",
+                                  &reply,
+                                  1) != -2) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       "agent command didn't time out");
+        goto cleanup;
+    }
+
+    ret = 0;
+
+cleanup:
+    VIR_FREE(reply);
+    qemuMonitorTestFree(test);
+    return ret;
+}
+
+
 static int
 mymain(void)
 {
@@ -491,8 +594,8 @@ mymain(void)
 
     virEventRegisterDefaultImpl();
 
-#define DO_TEST(name) \
-    if (virtTestRun(# name, 1, testQemuAgent ## name, xmlopt) < 0) \
+#define DO_TEST(name)                                           \
+    if (virtTestRun(# name, testQemuAgent ## name, xmlopt) < 0) \
         ret = -1
 
     DO_TEST(FSFreeze);
@@ -501,6 +604,9 @@ mymain(void)
     DO_TEST(Suspend);
     DO_TEST(Shutdown);
     DO_TEST(CPU);
+    DO_TEST(ArbitraryCommand);
+
+    DO_TEST(Timeout); /* Timeout should always be called last */
 
     virObjectUnref(xmlopt);
 

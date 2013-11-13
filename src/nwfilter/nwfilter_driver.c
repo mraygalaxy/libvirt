@@ -174,8 +174,13 @@ nwfilterStateInitialize(bool privileged,
     char *base = NULL;
     DBusConnection *sysbus = NULL;
 
+    if (!privileged)
+        return 0;
+
 #if WITH_DBUS
-    sysbus = virDBusGetSystemBus();
+    if (virDBusHasSystemBus() &&
+        !(sysbus = virDBusGetSystemBus()))
+        return -1;
 #endif /* WITH_DBUS */
 
     if (VIR_ALLOC(driverState) < 0)
@@ -184,11 +189,9 @@ nwfilterStateInitialize(bool privileged,
     if (virMutexInit(&driverState->lock) < 0)
         goto err_free_driverstate;
 
+    /* remember that we are going to use firewalld */
     driverState->watchingFirewallD = (sysbus != NULL);
     driverState->privileged = privileged;
-
-    if (!privileged)
-        return 0;
 
     nwfilterDriverLock(driverState);
 
@@ -201,14 +204,16 @@ nwfilterStateInitialize(bool privileged,
 
     virNWFilterTechDriversInit(privileged);
 
-    if (virNWFilterConfLayerInit(virNWFilterDomainFWUpdateCB) < 0)
+    if (virNWFilterConfLayerInit(virNWFilterDomainFWUpdateCB,
+                                 driverState) < 0)
         goto err_techdrivers_shutdown;
 
     /*
      * startup the DBus late so we don't get a reload signal while
      * initializing
      */
-    if (nwfilterDriverInstallDBusMatches(sysbus) < 0) {
+    if (sysbus &&
+        nwfilterDriverInstallDBusMatches(sysbus) < 0) {
         VIR_ERROR(_("DBus matches could not be installed. Disabling nwfilter "
                   "driver"));
         /*
@@ -216,6 +221,8 @@ nwfilterStateInitialize(bool privileged,
          * may have caused the ebiptables driver to use the firewall tool
          * but now that the watches don't work, we just disable the nwfilter
          * driver
+         *
+         * This may only happen if the system bus is available.
          */
         goto error;
     }
@@ -229,8 +236,7 @@ nwfilterStateInitialize(bool privileged,
 
     VIR_FREE(base);
 
-    if (virNWFilterLoadAllConfigs(NULL,
-                                  &driverState->nwfilters,
+    if (virNWFilterLoadAllConfigs(&driverState->nwfilters,
                                   driverState->configDir) < 0)
         goto error;
 
@@ -266,37 +272,28 @@ err_free_driverstate:
  * files and update its state
  */
 static int
-nwfilterStateReload(void) {
-    virConnectPtr conn;
-
-    if (!driverState) {
+nwfilterStateReload(void)
+{
+    if (!driverState)
         return -1;
-    }
 
     if (!driverState->privileged)
         return 0;
 
-    conn = virConnectOpen("qemu:///system");
+    virNWFilterDHCPSnoopEnd(NULL);
+    /* shut down all threads -- they will be restarted if necessary */
+    virNWFilterLearnThreadsTerminate(true);
 
-    if (conn) {
-        virNWFilterDHCPSnoopEnd(NULL);
-        /* shut down all threads -- they will be restarted if necessary */
-        virNWFilterLearnThreadsTerminate(true);
+    nwfilterDriverLock(driverState);
+    virNWFilterCallbackDriversLock();
 
-        nwfilterDriverLock(driverState);
-        virNWFilterCallbackDriversLock();
+    virNWFilterLoadAllConfigs(&driverState->nwfilters,
+                              driverState->configDir);
 
-        virNWFilterLoadAllConfigs(conn,
-                                  &driverState->nwfilters,
-                                  driverState->configDir);
+    virNWFilterCallbackDriversUnlock();
+    nwfilterDriverUnlock(driverState);
 
-        virNWFilterCallbackDriversUnlock();
-        nwfilterDriverUnlock(driverState);
-
-        virNWFilterInstFiltersOnAllVMs(conn);
-
-        virConnectClose(conn);
-    }
+    virNWFilterInstFiltersOnAllVMs();
 
     return 0;
 }
@@ -561,13 +558,13 @@ nwfilterDefineXML(virConnectPtr conn,
     nwfilterDriverLock(driver);
     virNWFilterCallbackDriversLock();
 
-    if (!(def = virNWFilterDefParseString(conn, xml)))
+    if (!(def = virNWFilterDefParseString(xml)))
         goto cleanup;
 
     if (virNWFilterDefineXMLEnsureACL(conn, def) < 0)
         goto cleanup;
 
-    if (!(nwfilter = virNWFilterObjAssignDef(conn, &driver->nwfilters, def)))
+    if (!(nwfilter = virNWFilterObjAssignDef(&driver->nwfilters, def)))
         goto cleanup;
 
     if (virNWFilterObjSaveDef(driver, nwfilter, def) < 0) {
@@ -611,7 +608,7 @@ nwfilterUndefine(virNWFilterPtr obj) {
     if (virNWFilterUndefineEnsureACL(obj->conn, nwfilter->def) < 0)
         goto cleanup;
 
-    if (virNWFilterTestUnassignDef(obj->conn, nwfilter) < 0) {
+    if (virNWFilterTestUnassignDef(nwfilter) < 0) {
         virReportError(VIR_ERR_OPERATION_INVALID,
                        "%s",
                        _("nwfilter is in use"));
@@ -676,7 +673,7 @@ nwfilterInstantiateFilter(virConnectPtr conn,
                           const unsigned char *vmuuid,
                           virDomainNetDefPtr net)
 {
-    return virNWFilterInstantiateFilter(conn, vmuuid, net);
+    return virNWFilterInstantiateFilter(conn->nwfilterPrivateData, vmuuid, net);
 }
 
 

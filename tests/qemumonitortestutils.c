@@ -27,6 +27,7 @@
 #include "qemumonitortestutils.h"
 
 #include "virthread.h"
+#include "qemu/qemu_processpriv.h"
 #include "qemu/qemu_monitor.h"
 #include "qemu/qemu_agent.h"
 #include "rpc/virnetsocket.h"
@@ -50,6 +51,7 @@ struct _qemuMonitorTest {
     bool json;
     bool quit;
     bool running;
+    bool started;
 
     char *incoming;
     size_t incomingLength;
@@ -353,7 +355,7 @@ qemuMonitorTestFree(qemuMonitorTestPtr test)
 
     virObjectUnref(test->vm);
 
-    if (test->running)
+    if (test->started)
         virThreadJoin(&test->thread);
 
     if (timer != -1)
@@ -484,7 +486,7 @@ qemuMonitorTestProcessCommandDefault(qemuMonitorTestPtr test,
         *tmp = '\0';
     }
 
-    if (STRNEQ(data->command_name, cmdname))
+    if (data->command_name && STRNEQ(data->command_name, cmdname))
         ret = qemuMonitorTestAddUnexpectedErrorResponse(test);
     else
         ret = qemuMonitorTestAddReponse(test, data->response);
@@ -603,7 +605,8 @@ qemuMonitorTestProcessCommandWithArgs(qemuMonitorTestPtr test,
         goto cleanup;
     }
 
-    if (STRNEQ(data->command_name, cmdname)) {
+    if (data->command_name &&
+        STRNEQ(data->command_name, cmdname)) {
         ret = qemuMonitorTestAddUnexpectedErrorResponse(test);
         goto cleanup;
     }
@@ -611,7 +614,7 @@ qemuMonitorTestProcessCommandWithArgs(qemuMonitorTestPtr test,
     if (!(args = virJSONValueObjectGet(val, "arguments"))) {
         ret = qemuMonitorReportError(test,
                                      "Missing arguments section for command '%s'",
-                                     data->command_name);
+                                     NULLSTR(data->command_name));
         goto cleanup;
     }
 
@@ -621,7 +624,8 @@ qemuMonitorTestProcessCommandWithArgs(qemuMonitorTestPtr test,
         if (!(argobj = virJSONValueObjectGet(args, arg->argname))) {
             ret = qemuMonitorReportError(test,
                                          "Missing argument '%s' for command '%s'",
-                                         arg->argname, data->command_name);
+                                         arg->argname,
+                                         NULLSTR(data->command_name));
             goto cleanup;
         }
 
@@ -635,7 +639,8 @@ qemuMonitorTestProcessCommandWithArgs(qemuMonitorTestPtr test,
                                          "Invalid value of argument '%s' "
                                          "of command '%s': "
                                          "expected '%s' got '%s'",
-                                         arg->argname, data->command_name,
+                                         arg->argname,
+                                         NULLSTR(data->command_name),
                                          arg->argval, argstr);
             goto cleanup;
         }
@@ -708,14 +713,16 @@ error:
 
 static void
 qemuMonitorTestEOFNotify(qemuMonitorPtr mon ATTRIBUTE_UNUSED,
-                         virDomainObjPtr vm ATTRIBUTE_UNUSED)
+                         virDomainObjPtr vm ATTRIBUTE_UNUSED,
+                         void *opaque ATTRIBUTE_UNUSED)
 {
 }
 
 
 static void
 qemuMonitorTestErrorNotify(qemuMonitorPtr mon ATTRIBUTE_UNUSED,
-                           virDomainObjPtr vm ATTRIBUTE_UNUSED)
+                           virDomainObjPtr vm ATTRIBUTE_UNUSED,
+                           void *opaque ATTRIBUTE_UNUSED)
 {
 }
 
@@ -723,6 +730,7 @@ qemuMonitorTestErrorNotify(qemuMonitorPtr mon ATTRIBUTE_UNUSED,
 static qemuMonitorCallbacks qemuMonitorTestCallbacks = {
     .eofNotify = qemuMonitorTestEOFNotify,
     .errorNotify = qemuMonitorTestErrorNotify,
+    .domainDeviceDeleted = qemuProcessHandleDeviceDeleted,
 };
 
 
@@ -741,6 +749,7 @@ static qemuAgentCallbacks qemuMonitorTestAgentCallbacks = {
 
 static qemuMonitorTestPtr
 qemuMonitorCommonTestNew(virDomainXMLOptionPtr xmlopt,
+                         virDomainObjPtr vm,
                          virDomainChrSourceDefPtr src)
 {
     qemuMonitorTestPtr test = NULL;
@@ -771,10 +780,16 @@ qemuMonitorCommonTestNew(virDomainXMLOptionPtr xmlopt,
     if (virAsprintf(&path, "%s/qemumonitorjsontest.sock", test->tmpdir) < 0)
         goto error;
 
-    if (!(test->vm = virDomainObjNew(xmlopt)))
-        goto error;
+    if (vm) {
+        virObjectRef(vm);
+        test->vm = vm;
+    } else {
+        test->vm = virDomainObjNew(xmlopt);
+        if (!test->vm)
+            goto error;
+    }
 
-    if (virNetSocketNewListenUNIX(path, 0700, getuid(), getgid(),
+    if (virNetSocketNewListenUNIX(path, 0700, geteuid(), getegid(),
                                   &test->server) < 0)
         goto error;
 
@@ -782,6 +797,7 @@ qemuMonitorCommonTestNew(virDomainXMLOptionPtr xmlopt,
     src->type = VIR_DOMAIN_CHR_TYPE_UNIX;
     src->data.nix.path = (char *)path;
     src->data.nix.listen = false;
+    path = NULL;
 
     if (virNetSocketListen(test->server, 1) < 0)
         goto error;
@@ -790,6 +806,7 @@ cleanup:
     return test;
 
 error:
+    VIR_FREE(path);
     VIR_FREE(tmpdir_template);
     qemuMonitorTestFree(test);
     test = NULL;
@@ -830,13 +847,12 @@ qemuMonitorCommonTestInit(qemuMonitorTestPtr test)
         virMutexUnlock(&test->lock);
         goto error;
     }
-    test->running = true;
+    test->started = test->running = true;
     virMutexUnlock(&test->lock);
 
     return 0;
 
 error:
-    qemuMonitorTestFree(test);
     return -1;
 }
 
@@ -858,26 +874,34 @@ error:
 #define QEMU_TEXT_GREETING "QEMU 1.0,1 monitor - type 'help' for more information"
 
 qemuMonitorTestPtr
-qemuMonitorTestNew(bool json, virDomainXMLOptionPtr xmlopt)
+qemuMonitorTestNew(bool json,
+                   virDomainXMLOptionPtr xmlopt,
+                   virDomainObjPtr vm,
+                   virQEMUDriverPtr driver,
+                   const char *greeting)
 {
     qemuMonitorTestPtr test = NULL;
     virDomainChrSourceDef src;
 
-    if (!(test = qemuMonitorCommonTestNew(xmlopt, &src)))
+    memset(&src, 0, sizeof(src));
+
+    if (!(test = qemuMonitorCommonTestNew(xmlopt, vm, &src)))
         goto error;
 
     test->json = json;
     if (!(test->mon = qemuMonitorOpen(test->vm,
                                       &src,
                                       json,
-                                      &qemuMonitorTestCallbacks)))
+                                      &qemuMonitorTestCallbacks,
+                                      driver)))
         goto error;
 
     virObjectLock(test->mon);
 
-    if (qemuMonitorTestAddReponse(test, json ?
-                                  QEMU_JSON_GREETING :
-                                  QEMU_TEXT_GREETING) < 0)
+    if (!greeting)
+        greeting = json ? QEMU_JSON_GREETING : QEMU_TEXT_GREETING;
+
+    if (qemuMonitorTestAddReponse(test, greeting) < 0)
         goto error;
 
     if (qemuMonitorCommonTestInit(test) < 0)
@@ -899,7 +923,9 @@ qemuMonitorTestNewAgent(virDomainXMLOptionPtr xmlopt)
     qemuMonitorTestPtr test = NULL;
     virDomainChrSourceDef src;
 
-    if (!(test = qemuMonitorCommonTestNew(xmlopt, &src)))
+    memset(&src, 0, sizeof(src));
+
+    if (!(test = qemuMonitorCommonTestNew(xmlopt, NULL, &src)))
         goto error;
 
     if (!(test->agent = qemuAgentOpen(test->vm,

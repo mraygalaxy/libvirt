@@ -38,6 +38,7 @@
 #include "virfile.h"
 #include "virutil.h"
 #include "virxml.h"
+#include "conf/secret_conf.h"
 
 static virSecretPtr
 vshCommandOptSecret(vshControl *ctl, const vshCmd *cmd, const char **name)
@@ -369,7 +370,7 @@ vshSecretListFree(vshSecretListPtr list)
 {
     size_t i;
 
-    if (list && list->nsecrets) {
+    if (list && list->secrets) {
         for (i = 0; i < list->nsecrets; i++) {
             if (list->secrets[i])
                 virSecretFree(list->secrets[i]);
@@ -531,31 +532,27 @@ cmdSecretList(vshControl *ctl, const vshCmd *cmd ATTRIBUTE_UNUSED)
     if (!(list = vshSecretListCollect(ctl, flags)))
         return false;
 
-    vshPrintExtra(ctl, "%-36s %s\n", _("UUID"), _("Usage"));
-    vshPrintExtra(ctl, "-----------------------------------------------------------\n");
+    vshPrintExtra(ctl, " %-36s  %s\n", _("UUID"), _("Usage"));
+    vshPrintExtra(ctl, "----------------------------------------"
+                       "----------------------------------------\n");
 
     for (i = 0; i < list->nsecrets; i++) {
         virSecretPtr sec = list->secrets[i];
-        const char *usageType = NULL;
-
-        switch (virSecretGetUsageType(sec)) {
-        case VIR_SECRET_USAGE_TYPE_VOLUME:
-            usageType = _("Volume");
-            break;
-        }
-
+        int usageType = virSecretGetUsageType(sec);
+        const char *usageStr = virSecretUsageTypeTypeToString(usageType);
         char uuid[VIR_UUID_STRING_BUFLEN];
+
         if (virSecretGetUUIDString(list->secrets[i], uuid) < 0) {
             vshError(ctl, "%s", _("Failed to get uuid of secret"));
             goto cleanup;
         }
 
         if (usageType) {
-            vshPrint(ctl, "%-36s %s %s\n",
-                     uuid, usageType,
+            vshPrint(ctl, " %-36s  %s %s\n",
+                     uuid, usageStr,
                      virSecretGetUsageID(sec));
         } else {
-            vshPrint(ctl, "%-36s %s\n",
+            vshPrint(ctl, " %-36s  %s\n",
                      uuid, _("Unused"));
         }
     }

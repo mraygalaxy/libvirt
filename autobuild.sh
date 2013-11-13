@@ -8,6 +8,13 @@ set -v
 test -n "$1" && RESULTS=$1 || RESULTS=results.log
 : ${AUTOBUILD_INSTALL_ROOT=$HOME/builder}
 
+# If run under the autobuilder, we must use --nodeps with rpmbuild;
+# but this can lead to odd error diagnosis for normal development.
+nodeps=
+if test "${AUTOBUILD_COUNTER+set}"; then
+  nodeps=--nodeps
+fi
+
 test -f Makefile && make -k distclean || :
 rm -rf coverage
 
@@ -18,6 +25,7 @@ cd build
 # Run with options not normally exercised by the rpm build, for
 # more complete code coverage.
 ../autogen.sh --prefix="$AUTOBUILD_INSTALL_ROOT" \
+  --enable-expensive-tests \
   --enable-test-coverage \
   --disable-nls \
   --enable-werror \
@@ -59,7 +67,7 @@ else
 fi
 
 if test -f /usr/bin/rpmbuild ; then
-  rpmbuild --nodeps \
+  rpmbuild $nodeps \
      --define "extra_release $EXTRA_RELEASE" \
      --define "_sourcedir `pwd`" \
      -ba --clean libvirt.spec
@@ -76,6 +84,7 @@ if test -x /usr/bin/i686-w64-mingw32-gcc ; then
     --build=$(uname -m)-w64-linux \
     --host=i686-w64-mingw32 \
     --prefix="$AUTOBUILD_INSTALL_ROOT/i686-w64-mingw32/sys-root/mingw" \
+    --enable-expensive-tests \
     --enable-werror \
     --without-libvirtd \
     --without-python
@@ -96,6 +105,7 @@ if test -x /usr/bin/x86_64-w64-mingw32-gcc ; then
     --build=$(uname -m)-w64-linux \
     --host=x86_64-w64-mingw32 \
     --prefix="$AUTOBUILD_INSTALL_ROOT/x86_64-w64-mingw32/sys-root/mingw" \
+    --enable-expensive-tests \
     --enable-werror \
     --without-libvirtd \
     --without-python
@@ -108,7 +118,7 @@ fi
 
 if test -x /usr/bin/i686-w64-mingw32-gcc && test -x /usr/bin/x86_64-w64-mingw32-gcc ; then
   if test -f /usr/bin/rpmbuild ; then
-    rpmbuild --nodeps \
+    rpmbuild $nodeps \
        --define "extra_release $EXTRA_RELEASE" \
        --define "_sourcedir `pwd`" \
        -ba --clean mingw-libvirt.spec

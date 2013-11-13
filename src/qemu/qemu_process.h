@@ -1,5 +1,5 @@
 /*
- * qemu_process.c: QEMU process management
+ * qemu_process.h: QEMU process management
  *
  * Copyright (C) 2006-2012 Red Hat, Inc.
  *
@@ -100,5 +100,7 @@ bool qemuProcessAutoDestroyActive(virQEMUDriverPtr driver,
                                   virDomainObjPtr vm);
 virBitmapPtr qemuPrepareCpumap(virQEMUDriverPtr driver,
                                virBitmapPtr nodemask);
+
+int qemuProcessReadLog(int fd, char *buf, int buflen, int off, bool skipchar);
 
 #endif /* __QEMU_PROCESS_H__ */

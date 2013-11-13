@@ -51,6 +51,9 @@
 # define QEMU_WEBSOCKET_PORT_MIN  5700
 # define QEMU_WEBSOCKET_PORT_MAX  65535
 
+# define QEMU_MIGRATION_PORT_MIN 49152
+# define QEMU_MIGRATION_PORT_MAX 49215
+
 typedef struct _qemuBuildCommandLineCallbacks qemuBuildCommandLineCallbacks;
 typedef qemuBuildCommandLineCallbacks *qemuBuildCommandLineCallbacksPtr;
 struct _qemuBuildCommandLineCallbacks {
@@ -98,9 +101,11 @@ char * qemuBuildNicStr(virDomainNetDefPtr net,
                        int vlan);
 
 /* Current, best practice */
-char * qemuBuildNicDevStr(virDomainNetDefPtr net,
+char * qemuBuildNicDevStr(virDomainDefPtr def,
+                          virDomainNetDefPtr net,
                           int vlan,
                           int bootindex,
+                          bool multiqueue,
                           virQEMUCapsPtr qemuCaps);
 
 char *qemuDeviceDriveHostAlias(virDomainDiskDefPtr disk,
@@ -119,7 +124,8 @@ char * qemuBuildDriveDevStr(virDomainDefPtr def,
                             virDomainDiskDefPtr disk,
                             int bootindex,
                             virQEMUCapsPtr qemuCaps);
-char * qemuBuildFSDevStr(virDomainFSDefPtr fs,
+char * qemuBuildFSDevStr(virDomainDefPtr domainDef,
+                         virDomainFSDefPtr fs,
                          virQEMUCapsPtr qemuCaps);
 /* Current, best practice */
 char * qemuBuildControllerDevStr(virDomainDefPtr domainDef,
@@ -127,22 +133,27 @@ char * qemuBuildControllerDevStr(virDomainDefPtr domainDef,
                                  virQEMUCapsPtr qemuCaps,
                                  int *nusbcontroller);
 
-char * qemuBuildWatchdogDevStr(virDomainWatchdogDefPtr dev,
+char * qemuBuildWatchdogDevStr(virDomainDefPtr domainDef,
+                               virDomainWatchdogDefPtr dev,
                                virQEMUCapsPtr qemuCaps);
 
-char * qemuBuildMemballoonDevStr(virDomainMemballoonDefPtr dev,
+char * qemuBuildMemballoonDevStr(virDomainDefPtr domainDef,
+                                 virDomainMemballoonDefPtr dev,
                                  virQEMUCapsPtr qemuCaps);
 
-char * qemuBuildUSBInputDevStr(virDomainInputDefPtr dev,
+char * qemuBuildUSBInputDevStr(virDomainDefPtr domainDef,
+                               virDomainInputDefPtr dev,
                                virQEMUCapsPtr qemuCaps);
 
-char * qemuBuildSoundDevStr(virDomainSoundDefPtr sound,
+char * qemuBuildSoundDevStr(virDomainDefPtr domainDef,
+                            virDomainSoundDefPtr sound,
                             virQEMUCapsPtr qemuCaps);
 
 /* Legacy, pre device support */
 char * qemuBuildPCIHostdevPCIDevStr(virDomainHostdevDefPtr dev);
 /* Current, best practice */
-char * qemuBuildPCIHostdevDevStr(virDomainHostdevDefPtr dev,
+char * qemuBuildPCIHostdevDevStr(virDomainDefPtr def,
+                                 virDomainHostdevDefPtr dev,
                                  const char *configfd,
                                  virQEMUCapsPtr qemuCaps);
 
@@ -151,7 +162,8 @@ int qemuOpenPCIConfig(virDomainHostdevDefPtr dev);
 /* Legacy, pre device support */
 char * qemuBuildUSBHostdevUsbDevStr(virDomainHostdevDefPtr dev);
 /* Current, best practice */
-char * qemuBuildUSBHostdevDevStr(virDomainHostdevDefPtr dev,
+char * qemuBuildUSBHostdevDevStr(virDomainDefPtr def,
+                                 virDomainHostdevDefPtr dev,
                                  virQEMUCapsPtr qemuCaps);
 
 char * qemuBuildSCSIHostdevDrvStr(virDomainHostdevDefPtr dev,
@@ -162,7 +174,9 @@ char * qemuBuildSCSIHostdevDevStr(virDomainDefPtr def,
                                   virDomainHostdevDefPtr dev,
                                   virQEMUCapsPtr qemuCaps);
 
-char * qemuBuildHubDevStr(virDomainHubDefPtr dev, virQEMUCapsPtr qemuCaps);
+char * qemuBuildHubDevStr(virDomainDefPtr def,
+                          virDomainHubDefPtr dev,
+                          virQEMUCapsPtr qemuCaps);
 char * qemuBuildRedirdevDevStr(virDomainDefPtr def,
                                virDomainRedirdevDefPtr dev,
                                virQEMUCapsPtr qemuCaps);
@@ -194,13 +208,6 @@ int qemuNetworkPrepareDevices(virDomainDefPtr def);
  * NB: def->name can be NULL upon return and the caller
  * *must* decide how to fill in a name in this case
  */
-virDomainDefPtr qemuParseCommandLine(virCapsPtr qemuCaps,
-                                     virDomainXMLOptionPtr xmlopt,
-                                     const char **progenv,
-                                     const char **progargv,
-                                     char **pidfile,
-                                     virDomainChrSourceDefPtr *monConfig,
-                                     bool *monJSON);
 virDomainDefPtr qemuParseCommandLineString(virCapsPtr qemuCaps,
                                            virDomainXMLOptionPtr xmlopt,
                                            const char *args,
@@ -233,13 +240,19 @@ typedef enum {
 
    QEMU_PCI_CONNECT_TYPE_PCI     = 1 << 2,
    /* PCI devices can connect to this bus */
+   QEMU_PCI_CONNECT_TYPE_PCIE    = 1 << 3,
+   /* PCI Express devices can connect to this bus */
+   QEMU_PCI_CONNECT_TYPE_EITHER_IF_CONFIG = 1 << 4,
+   /* PCI *and* PCIe devices allowed, if the address
+    * was specified in the config by the user
+    */
 } qemuDomainPCIConnectFlags;
 
 /* a combination of all bit that describe the type of connections
  * allowed, e.g. PCI, PCIe, switch
  */
 # define QEMU_PCI_CONNECT_TYPES_MASK \
-    QEMU_PCI_CONNECT_TYPE_PCI
+   (QEMU_PCI_CONNECT_TYPE_PCI | QEMU_PCI_CONNECT_TYPE_PCIE)
 
 
 int qemuDomainAssignPCIAddresses(virDomainDefPtr def,
@@ -253,10 +266,12 @@ int qemuDomainPCIAddressReserveSlot(qemuDomainPCIAddressSetPtr addrs,
                                     qemuDomainPCIConnectFlags flags);
 int qemuDomainPCIAddressReserveAddr(qemuDomainPCIAddressSetPtr addrs,
                                     virDevicePCIAddressPtr addr,
-                                    qemuDomainPCIConnectFlags flags);
-int qemuDomainPCIAddressSetNextAddr(qemuDomainPCIAddressSetPtr addrs,
-                                    virDomainDeviceInfoPtr dev,
-                                    qemuDomainPCIConnectFlags flags);
+                                    qemuDomainPCIConnectFlags flags,
+                                    bool reserveEntireSlot,
+                                    bool fromConfig);
+int qemuDomainPCIAddressReserveNextSlot(qemuDomainPCIAddressSetPtr addrs,
+                                        virDomainDeviceInfoPtr dev,
+                                        qemuDomainPCIConnectFlags flags);
 int qemuDomainPCIAddressEnsureAddr(qemuDomainPCIAddressSetPtr addrs,
                                    virDomainDeviceInfoPtr dev);
 int qemuDomainPCIAddressReleaseAddr(qemuDomainPCIAddressSetPtr addrs,
@@ -288,6 +303,7 @@ int
 qemuParseKeywords(const char *str,
                   char ***retkeywords,
                   char ***retvalues,
+                  int *retnkeywords,
                   int allowEmptyValue);
 
 #endif /* __QEMU_COMMAND_H__*/

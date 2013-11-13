@@ -22,6 +22,11 @@ INCLUDES = \
 	-I$(top_srcdir)						\
 	$(GETTEXT_CPPFLAGS)
 
+AM_LDFLAGS = \
+	$(RELRO_LDFLAGS)					\
+	$(NO_INDIRECT_LDFLAGS)					\
+	$(NULL)
+
 POD2MAN = pod2man -c "Virtualization Support" -r "$(PACKAGE)-$(VERSION)"
 
 ICON_FILES = \
@@ -33,10 +38,12 @@ ICON_FILES = \
 
 EXTRA_DIST = \
 	$(ICON_FILES)					\
+	$(conf_DATA)					\
 	virt-xml-validate.in				\
 	virt-pki-validate.in				\
 	virt-sanlock-cleanup.in				\
 	virt-sanlock-cleanup.8				\
+	virt-login-shell.pod				\
 	virsh.pod					\
 	libvirt-guests.sysconf				\
 	virsh-edit.c					\
@@ -52,6 +59,9 @@ EXTRA_DIST = \
 
 DISTCLEANFILES =
 
+confdir = $(sysconfdir)/libvirt
+conf_DATA =
+
 bin_SCRIPTS = virt-xml-validate virt-pki-validate
 bin_PROGRAMS = virsh virt-host-validate
 libexec_SCRIPTS = libvirt-guests.sh
@@ -59,20 +69,34 @@ libexec_SCRIPTS = libvirt-guests.sh
 if WITH_SANLOCK
 sbin_SCRIPTS = virt-sanlock-cleanup
 DISTCLEANFILES += virt-sanlock-cleanup
-endif
+endif WITH_SANLOCK
+
+if WITH_LXC
+conf_DATA += virt-login-shell.conf
+bin_PROGRAMS += virt-login-shell
+else ! WITH_LXC
+EXTRA_DIST += virt-login-shell.conf
+endif ! WITH_LXC
+
 
 dist_man1_MANS = \
 		virt-host-validate.1 \
 		virt-pki-validate.1 \
 		virt-xml-validate.1 \
 		virsh.1
+if WITH_LXC
+dist_man1_MANS += virt-login-shell.1
+else ! WITH_LXC
+EXTRA_DIST += virt-login-shell.1
+endif ! WITH_LXC
 if WITH_SANLOCK
 dist_man8_MANS = virt-sanlock-cleanup.8
-endif
+endif WITH_SANLOCK
 
 virt-xml-validate: virt-xml-validate.in Makefile
-	$(AM_V_GEN)sed -e 's|[@]schemadir@|$(pkgdatadir)/schemas|' < $< > $@ \
-	    || (rm $@ && exit 1) && chmod +x $@
+	$(AM_V_GEN)sed -e 's|[@]schemadir@|$(pkgdatadir)/schemas|g' \
+		       -e 's|[@]VERSION@|$(VERSION)|g' \
+	  < $< > $@ || (rm $@ && exit 1) && chmod +x $@
 
 virt-xml-validate.1: virt-xml-validate.in $(top_srcdir)/configure.ac
 	$(AM_V_GEN)$(POD2MAN) --name VIRT-XML-VALIDATE $< $(srcdir)/$@ \
@@ -80,8 +104,9 @@ virt-xml-validate.1: virt-xml-validate.in $(top_srcdir)/configure.ac
 		rm $(srcdir)/$@; exit 1; fi
 
 virt-pki-validate: virt-pki-validate.in Makefile
-	$(AM_V_GEN)sed -e 's|[@]sysconfdir@|$(sysconfdir)|' < $< > $@ \
-	    || (rm $@ && exit 1) && chmod +x $@
+	$(AM_V_GEN)sed -e 's|[@]sysconfdir@|$(sysconfdir)|g' \
+		       -e 's|[@]VERSION@|$(VERSION)|g' \
+	  < $< > $@ || (rm $@ && exit 1) && chmod +x $@
 
 virt-pki-validate.1: virt-pki-validate.in $(top_srcdir)/configure.ac
 	$(AM_V_GEN)$(POD2MAN) --name VIRT-PKI-VALIDATE $< $(srcdir)/$@ \
@@ -112,8 +137,8 @@ virt_host_validate_SOURCES = \
 		$(NULL)
 
 virt_host_validate_LDFLAGS = \
+		$(AM_LDFLAGS) \
 		$(PIE_LDFLAGS) \
-		$(RELRO_LDFLAGS) \
 		$(COVERAGE_LDFLAGS) \
 		$(NULL)
 
@@ -128,9 +153,33 @@ virt_host_validate_CFLAGS = \
 		$(COVERAGE_CFLAGS)				\
 		$(NULL)
 
+# Since virt-login-shell will be setuid, we must do everything
+# we can to avoid linking to other libraries. Many of them do
+# unsafe things in functions marked __atttribute__((constructor)).
+# This we statically link to a library containing only the minimal
+# libvirt client code, not libvirt.so itself.
+virt_login_shell_SOURCES =					\
+		virt-login-shell.c
+
+virt_login_shell_LDFLAGS = \
+		$(AM_LDFLAGS) 					\
+		$(COVERAGE_LDFLAGS)				\
+		$(NULL)
+virt_login_shell_LDADD =					\
+		$(STATIC_BINARIES)				\
+		$(PIE_LDFLAGS)					\
+		../src/libvirt-setuid-rpc-client.la		\
+		../gnulib/lib/libgnu.la
+
+virt_login_shell_CFLAGS =					\
+		-DLIBVIRT_SETUID_RPC_CLIENT			\
+		$(WARN_CFLAGS)					\
+		$(PIE_CFLAGS)					\
+		$(COVERAGE_CFLAGS)
+
 virsh_SOURCES =							\
-		console.c console.h				\
 		virsh.c virsh.h					\
+		virsh-console.c virsh-console.h			\
 		virsh-domain.c virsh-domain.h			\
 		virsh-domain-monitor.c virsh-domain-monitor.h	\
 		virsh-host.c virsh-host.h			\
@@ -144,11 +193,13 @@ virsh_SOURCES =							\
 		virsh-volume.c virsh-volume.h			\
 		$(NULL)
 
-virsh_LDFLAGS = $(COVERAGE_LDFLAGS)
+virsh_LDFLAGS = \
+		$(AM_LDFLAGS) 					\
+		$(COVERAGE_LDFLAGS)				\
+		$(NULL)
 virsh_LDADD =							\
 		$(STATIC_BINARIES)				\
 		$(PIE_LDFLAGS)					\
-		$(RELRO_LDFLAGS) \
 		../src/libvirt.la				\
 		../src/libvirt-lxc.la				\
 		../src/libvirt-qemu.la				\
@@ -187,7 +238,12 @@ virsh_win_icon.$(OBJEXT): virsh_win_icon.rc
 	$(AM_V_GEN)$(WINDRES) \
 	  --input-format rc --input $< \
 	  --output-format coff --output $@
-endif
+endif WITH_WIN_ICON
+
+virt-login-shell.1: virt-login-shell.pod $(top_srcdir)/configure.ac
+	$(AM_V_GEN)$(POD2MAN) $< $(srcdir)/$@ \
+	    && if grep 'POD ERROR' $(srcdir)/$@ ; then \
+		rm $(srcdir)/$@; exit 1; fi
 
 virsh.1: virsh.pod $(top_srcdir)/configure.ac
 	$(AM_V_GEN)$(POD2MAN) $< $(srcdir)/$@ \
@@ -223,10 +279,10 @@ if LIBVIRT_INIT_SCRIPT_RED_HAT
 BUILT_SOURCES += libvirt-guests.init
 install-init: install-sysconfig install-initscript
 uninstall-init: uninstall-sysconfig uninstall-initscript
-else
+else ! LIBVIRT_INIT_SCRIPT_RED_HAT
 install-init:
 uninstall-init:
-endif # LIBVIRT_INIT_SCRIPT_RED_HAT
+endif ! LIBVIRT_INIT_SCRIPT_RED_HAT
 
 libvirt-guests.sh: libvirt-guests.sh.in $(top_builddir)/config.status
 	$(AM_V_GEN)sed						\
@@ -264,10 +320,10 @@ uninstall-systemd: uninstall-sysconfig
 
 BUILT_SOURCES += libvirt-guests.service
 
-else
+else ! LIBVIRT_INIT_SCRIPT_SYSTEMD
 install-systemd:
 uninstall-systemd:
-endif # LIBVIRT_INIT_SCRIPT_SYSTEMD
+endif ! LIBVIRT_INIT_SCRIPT_SYSTEMD
 
 libvirt-guests.service: libvirt-guests.service.in $(top_builddir)/config.status
 	$(AM_V_GEN)sed						\

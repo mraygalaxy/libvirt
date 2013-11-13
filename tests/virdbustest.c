@@ -58,8 +58,8 @@ static int testMessageSimple(const void *args ATTRIBUTE_UNUSED)
     unsigned short in_uint16 = 32000, out_uint16 = 0;
     int in_int32 = 100000000, out_int32 = 0;
     unsigned int in_uint32 = 200000000, out_uint32 = 0;
-    long long in_int64 = 1000000000000, out_int64 = 0;
-    unsigned long long in_uint64 = 2000000000000, out_uint64 = 0;
+    long long in_int64 = 1000000000000LL, out_int64 = 0;
+    unsigned long long in_uint64 = 2000000000000LL, out_uint64 = 0;
     double in_double = 3.14159265359, out_double = 0;;
     const char *in_string = "Hello World";
     char *out_string = NULL;
@@ -180,7 +180,7 @@ static int testMessageArray(const void *args ATTRIBUTE_UNUSED)
     const char *in_str1 = "Hello";
     int in_int32a = 1000000000, out_int32a = 0;
     int in_int32b = 2000000000, out_int32b = 0;
-    int in_int32c = 3000000000, out_int32c = 0;
+    int in_int32c = -2000000000, out_int32c = 0;
     const char *in_str2 = "World";
     char *out_str1 = NULL, *out_str2 = NULL;
 
@@ -236,8 +236,8 @@ static int testMessageStruct(const void *args ATTRIBUTE_UNUSED)
     unsigned short in_uint16 = 32000, out_uint16 = 0;
     int in_int32 = 100000000, out_int32 = 0;
     unsigned int in_uint32 = 200000000, out_uint32 = 0;
-    long long in_int64 = 1000000000000, out_int64 = 0;
-    unsigned long long in_uint64 = 2000000000000, out_uint64 = 0;
+    long long in_int64 = -1000000000000LL, out_int64 = 0;
+    unsigned long long in_uint64 = 2000000000000LL, out_uint64 = 0;
     double in_double = 3.14159265359, out_double = 0;;
     const char *in_string = "Hello World";
     char *out_string = NULL;
@@ -377,15 +377,15 @@ mymain(void)
 {
     int ret = 0;
 
-    if (virtTestRun("Test message simple ", 1, testMessageSimple, NULL) < 0)
+    if (virtTestRun("Test message simple ", testMessageSimple, NULL) < 0)
         ret = -1;
-    if (virtTestRun("Test message variant ", 1, testMessageVariant, NULL) < 0)
+    if (virtTestRun("Test message variant ", testMessageVariant, NULL) < 0)
         ret = -1;
-    if (virtTestRun("Test message array ", 1, testMessageArray, NULL) < 0)
+    if (virtTestRun("Test message array ", testMessageArray, NULL) < 0)
         ret = -1;
-    if (virtTestRun("Test message struct ", 1, testMessageStruct, NULL) < 0)
+    if (virtTestRun("Test message struct ", testMessageStruct, NULL) < 0)
         ret = -1;
-    if (virtTestRun("Test message dict ", 1, testMessageDict, NULL) < 0)
+    if (virtTestRun("Test message dict ", testMessageDict, NULL) < 0)
         ret = -1;
     return ret==0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

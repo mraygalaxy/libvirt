@@ -188,7 +188,11 @@ virURIParse(const char *uri)
 
     /* First check: does it even make sense to jump inside */
     
-    if (ret->server != NULL && !STREQ(ret->scheme, "x-rdma") &&
+    /* 
+     * IPv6 rdma over iwarp is broken in linux. Waiting for a 
+     * fix on the kernel side...
+     */
+    if (ret->server != NULL && !STREQ(ret->scheme, "rdma") &&
         ret->server[0] == '[') {
         size_t length = strlen(ret->server);
 

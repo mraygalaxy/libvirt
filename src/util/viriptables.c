@@ -50,19 +50,25 @@
 #include "virstring.h"
 #include "virutil.h"
 
+bool iptables_supports_xlock = false;
+
 #if HAVE_FIREWALLD
 static char *firewall_cmd_path = NULL;
+#endif
 
 static int
 virIpTablesOnceInit(void)
 {
+    virCommandPtr cmd;
+    int status;
+
+#if HAVE_FIREWALLD
     firewall_cmd_path = virFindFileInPath("firewall-cmd");
     if (!firewall_cmd_path) {
         VIR_INFO("firewall-cmd not found on system. "
                  "firewalld support disabled for iptables.");
     } else {
-        virCommandPtr cmd = virCommandNew(firewall_cmd_path);
-        int status;
+        cmd = virCommandNew(firewall_cmd_path);
 
         virCommandAddArgList(cmd, "--state", NULL);
         if (virCommandRun(cmd, &status) < 0 || status != 0) {
@@ -74,12 +80,25 @@ virIpTablesOnceInit(void)
         }
         virCommandFree(cmd);
     }
+
+    if (firewall_cmd_path)
+        return 0;
+
+#endif
+
+    cmd = virCommandNew(IPTABLES_PATH);
+    virCommandAddArgList(cmd, "-w", "-L", "-n", NULL);
+    if (virCommandRun(cmd, &status) < 0 || status != 0) {
+        VIR_INFO("xtables locking not supported by your iptables");
+    } else {
+        VIR_INFO("using xtables locking for iptables");
+        iptables_supports_xlock = true;
+    }
+    virCommandFree(cmd);
     return 0;
 }
 
 VIR_ONCE_GLOBAL_INIT(virIpTables)
-
-#endif
 
 #define VIR_FROM_THIS VIR_FROM_NONE
 
@@ -92,8 +111,8 @@ static virCommandPtr
 iptablesCommandNew(const char *table, const char *chain, int family, int action)
 {
     virCommandPtr cmd = NULL;
-#if HAVE_FIREWALLD
     virIpTablesInitialize();
+#if HAVE_FIREWALLD
     if (firewall_cmd_path) {
         cmd = virCommandNew(firewall_cmd_path);
         virCommandAddArgList(cmd, "--direct", "--passthrough",
@@ -104,6 +123,9 @@ iptablesCommandNew(const char *table, const char *chain, int family, int action)
     if (cmd == NULL) {
         cmd = virCommandNew((family == AF_INET6)
                         ? IP6TABLES_PATH : IPTABLES_PATH);
+
+        if (iptables_supports_xlock)
+            virCommandAddArgList(cmd, "-w", NULL);
     }
 
     virCommandAddArgList(cmd, "--table", table,
@@ -829,6 +851,94 @@ iptablesRemoveForwardMasquerade(virSocketAddr *netaddr,
 {
     return iptablesForwardMasquerade(netaddr, prefix, physdev, addr, port,
                                      protocol, REMOVE);
+}
+
+
+/* Don't masquerade traffic coming from the network associated with the bridge
+ * if said traffic targets @destaddr.
+ */
+static int
+iptablesForwardDontMasquerade(virSocketAddr *netaddr,
+                              unsigned int prefix,
+                              const char *physdev,
+                              const char *destaddr,
+                              int action)
+{
+    int ret = -1;
+    char *networkstr = NULL;
+    virCommandPtr cmd = NULL;
+
+    if (!(networkstr = iptablesFormatNetwork(netaddr, prefix)))
+        return -1;
+
+    if (!VIR_SOCKET_ADDR_IS_FAMILY(netaddr, AF_INET)) {
+        /* Higher level code *should* guaranteee it's impossible to get here. */
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       _("Attempted to NAT '%s'. NAT is only supported for IPv4."),
+                       networkstr);
+        goto cleanup;
+    }
+
+    cmd = iptablesCommandNew("nat", "POSTROUTING", AF_INET, action);
+
+    if (physdev && physdev[0])
+        virCommandAddArgList(cmd, "--out-interface", physdev, NULL);
+
+    virCommandAddArgList(cmd, "--source", networkstr,
+                         "--destination", destaddr, "--jump", "RETURN", NULL);
+    ret = virCommandRun(cmd, NULL);
+cleanup:
+    virCommandFree(cmd);
+    VIR_FREE(networkstr);
+    return ret;
+}
+
+/**
+ * iptablesAddDontMasquerade:
+ * @netaddr: the source network name
+ * @prefix: prefix (# of 1 bits) of netmask to apply to @netaddr
+ * @physdev: the physical output device or NULL
+ * @destaddr: the destination network not to masquerade for
+ *
+ * Add rules to the IP table context to avoid masquerading from
+ * @netaddr/@prefix to @destaddr on @physdev. @destaddr must be in a format
+ * directly consumable by iptables, it must not depend on user input or
+ * configuration.
+ *
+ * Returns 0 in case of success or an error code otherwise.
+ */
+int
+iptablesAddDontMasquerade(virSocketAddr *netaddr,
+                          unsigned int prefix,
+                          const char *physdev,
+                          const char *destaddr)
+{
+    return iptablesForwardDontMasquerade(netaddr, prefix, physdev, destaddr,
+                                         ADD);
+}
+
+/**
+ * iptablesRemoveDontMasquerade:
+ * @netaddr: the source network name
+ * @prefix: prefix (# of 1 bits) of netmask to apply to @netaddr
+ * @physdev: the physical output device or NULL
+ * @destaddr: the destination network not to masquerade for
+ *
+ * Remove rules from the IP table context that prevent masquerading from
+ * @netaddr/@prefix to @destaddr on @physdev. @destaddr must be in a format
+ * directly consumable by iptables, it must not depend on user input or
+ * configuration.
+ *
+ * Returns 0 in case of success or an error code otherwise.
+ */
+int
+iptablesRemoveDontMasquerade(virSocketAddr *netaddr,
+                             unsigned int prefix,
+                             const char *physdev,
+                             const char *destaddr)
+{
+    return iptablesForwardDontMasquerade(netaddr, prefix, physdev, destaddr,
+                                         REMOVE);
 }
 
 

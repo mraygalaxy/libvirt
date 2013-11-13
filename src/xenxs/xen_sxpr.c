@@ -40,30 +40,33 @@
 #include "virstring.h"
 
 /* Get a domain id from a S-expression string */
-int xenGetDomIdFromSxprString(const char *sexpr, int xendConfigVersion)
+int xenGetDomIdFromSxprString(const char *sexpr, int xendConfigVersion, int *id)
 {
     struct sexpr *root = string2sexpr(sexpr);
+    int ret;
+
+    *id = -1;
 
     if (!root)
         return -1;
 
-    int id = xenGetDomIdFromSxpr(root, xendConfigVersion);
+    ret = xenGetDomIdFromSxpr(root, xendConfigVersion, id);
     sexpr_free(root);
-    return id;
+    return ret;
 }
 
 /* Get a domain id from a S-expression */
-int xenGetDomIdFromSxpr(const struct sexpr *root, int xendConfigVersion)
+int xenGetDomIdFromSxpr(const struct sexpr *root, int xendConfigVersion, int *id)
 {
-    int id = -1;
     const char * tmp = sexpr_node(root, "domain/domid");
     if (tmp == NULL && xendConfigVersion < XEND_CONFIG_VERSION_3_0_4) { /* domid was mandatory */
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        "%s", _("domain information incomplete, missing id"));
+        return -1;
     } else {
-      id = tmp ? sexpr_int(root, "domain/domid") : -1;
+        *id = tmp ? sexpr_int(root, "domain/domid") : -1;
+        return 0;
     }
-    return id;
 }
 
 /*****************************************************************
@@ -1052,10 +1055,8 @@ xenParseSxprPCI(virDomainDefPtr def,
         dev->source.subsys.u.pci.addr.slot = slotID;
         dev->source.subsys.u.pci.addr.function = funcID;
 
-        if (VIR_REALLOC_N(def->hostdevs, def->nhostdevs+1) < 0) {
-            virDomainHostdevDefFree(dev);
+        if (VIR_REALLOC_N(def->hostdevs, def->nhostdevs+1) < 0)
             goto error;
-        }
 
         def->hostdevs[def->nhostdevs++] = dev;
     }
@@ -1160,11 +1161,8 @@ xenParseSxpr(const struct sexpr *root,
 
     if (cpus != NULL) {
         if (virBitmapParse(cpus, 0, &def->cpumask,
-                           VIR_DOMAIN_CPUMASK_LEN) < 0) {
-            virReportError(VIR_ERR_INTERNAL_ERROR,
-                           _("invalid CPU mask %s"), cpus);
+                           VIR_DOMAIN_CPUMASK_LEN) < 0)
             goto error;
-        }
     }
 
     def->maxvcpus = sexpr_int(root, "domain/vcpus");
@@ -1204,15 +1202,15 @@ xenParseSxpr(const struct sexpr *root,
 
     if (hvm) {
         if (sexpr_int(root, "domain/image/hvm/acpi"))
-            def->features |= (1 << VIR_DOMAIN_FEATURE_ACPI);
+            def->features[VIR_DOMAIN_FEATURE_ACPI] = VIR_DOMAIN_FEATURE_STATE_ON;
         if (sexpr_int(root, "domain/image/hvm/apic"))
-            def->features |= (1 << VIR_DOMAIN_FEATURE_APIC);
+            def->features[VIR_DOMAIN_FEATURE_APIC] = VIR_DOMAIN_FEATURE_STATE_ON;
         if (sexpr_int(root, "domain/image/hvm/pae"))
-            def->features |= (1 << VIR_DOMAIN_FEATURE_PAE);
+            def->features[VIR_DOMAIN_FEATURE_PAE] = VIR_DOMAIN_FEATURE_STATE_ON;
         if (sexpr_int(root, "domain/image/hvm/hap"))
-            def->features |= (1 << VIR_DOMAIN_FEATURE_HAP);
+            def->features[VIR_DOMAIN_FEATURE_HAP] = VIR_DOMAIN_FEATURE_STATE_ON;
         if (sexpr_int(root, "domain/image/hvm/viridian"))
-            def->features |= (1 << VIR_DOMAIN_FEATURE_VIRIDIAN);
+            def->features[VIR_DOMAIN_FEATURE_VIRIDIAN] = VIR_DOMAIN_FEATURE_STATE_ON;
     }
 
     /* 12aaf4a2486b (3.0.3) added a second low-priority 'localtime' setting */
@@ -1442,9 +1440,9 @@ xenParseSxpr(const struct sexpr *root,
             def->parallels[def->nparallels++] = chr;
         }
     } else if (def->id != 0) {
-        def->nconsoles = 1;
         if (VIR_ALLOC_N(def->consoles, 1) < 0)
             goto error;
+        def->nconsoles = 1;
         /* Fake a paravirt console, since that's not in the sexpr */
         if (!(def->consoles[0] = xenParseSxprChar("pty", tty)))
             goto error;
@@ -2335,15 +2333,15 @@ xenFormatSxpr(virConnectPtr conn,
                 }
             }
 
-            if (def->features & (1 << VIR_DOMAIN_FEATURE_ACPI))
+            if (def->features[VIR_DOMAIN_FEATURE_ACPI] == VIR_DOMAIN_FEATURE_STATE_ON)
                 virBufferAddLit(&buf, "(acpi 1)");
-            if (def->features & (1 << VIR_DOMAIN_FEATURE_APIC))
+            if (def->features[VIR_DOMAIN_FEATURE_APIC] == VIR_DOMAIN_FEATURE_STATE_ON)
                 virBufferAddLit(&buf, "(apic 1)");
-            if (def->features & (1 << VIR_DOMAIN_FEATURE_PAE))
+            if (def->features[VIR_DOMAIN_FEATURE_PAE] == VIR_DOMAIN_FEATURE_STATE_ON)
                 virBufferAddLit(&buf, "(pae 1)");
-            if (def->features & (1 << VIR_DOMAIN_FEATURE_HAP))
+            if (def->features[VIR_DOMAIN_FEATURE_HAP] == VIR_DOMAIN_FEATURE_STATE_ON)
                 virBufferAddLit(&buf, "(hap 1)");
-            if (def->features & (1 << VIR_DOMAIN_FEATURE_VIRIDIAN))
+            if (def->features[VIR_DOMAIN_FEATURE_VIRIDIAN] == VIR_DOMAIN_FEATURE_STATE_ON)
                 virBufferAddLit(&buf, "(viridian 1)");
 
             virBufferAddLit(&buf, "(usb 1)");

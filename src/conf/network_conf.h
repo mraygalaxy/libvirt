@@ -115,12 +115,15 @@ struct _virNetworkDNSHostDef {
 typedef struct _virNetworkDNSDef virNetworkDNSDef;
 typedef virNetworkDNSDef *virNetworkDNSDefPtr;
 struct _virNetworkDNSDef {
+    bool forwardPlainNames;
     size_t ntxts;
     virNetworkDNSTxtDefPtr txts;
     size_t nhosts;
     virNetworkDNSHostDefPtr hosts;
     size_t nsrvs;
     virNetworkDNSSrvDefPtr srvs;
+    size_t nfwds;
+    char **forwarders;
 };
 
 typedef struct _virNetworkIpDef virNetworkIpDef;
@@ -281,14 +284,14 @@ struct _virNetworkObjList {
 };
 
 static inline int
-virNetworkObjIsActive(const virNetworkObjPtr net)
+virNetworkObjIsActive(const virNetworkObj *net)
 {
     return net->active;
 }
 
-virNetworkObjPtr virNetworkFindByUUID(const virNetworkObjListPtr nets,
+virNetworkObjPtr virNetworkFindByUUID(virNetworkObjListPtr nets,
                                       const unsigned char *uuid);
-virNetworkObjPtr virNetworkFindByName(const virNetworkObjListPtr nets,
+virNetworkObjPtr virNetworkFindByName(virNetworkObjListPtr nets,
                                       const char *name);
 
 
@@ -301,10 +304,10 @@ typedef bool (*virNetworkObjListFilter)(virConnectPtr conn,
                                         virNetworkDefPtr def);
 
 virNetworkObjPtr virNetworkAssignDef(virNetworkObjListPtr nets,
-                                     const virNetworkDefPtr def,
+                                     virNetworkDefPtr def,
                                      bool live);
 int virNetworkObjAssignDef(virNetworkObjPtr network,
-                           const virNetworkDefPtr def,
+                           virNetworkDefPtr def,
                            bool live);
 int virNetworkObjSetDefTransient(virNetworkObjPtr network, bool live);
 void virNetworkObjUnsetDefTransient(virNetworkObjPtr network);
@@ -315,16 +318,16 @@ virNetworkDefPtr virNetworkDefCopy(virNetworkDefPtr def, unsigned int flags);
 int virNetworkConfigChangeSetup(virNetworkObjPtr dom, unsigned int flags);
 
 void virNetworkRemoveInactive(virNetworkObjListPtr nets,
-                              const virNetworkObjPtr net);
+                              virNetworkObjPtr net);
 
 virNetworkDefPtr virNetworkDefParseString(const char *xmlStr);
 virNetworkDefPtr virNetworkDefParseFile(const char *filename);
 virNetworkDefPtr virNetworkDefParseNode(xmlDocPtr xml,
                                         xmlNodePtr root);
-char *virNetworkDefFormat(const virNetworkDefPtr def, unsigned int flags);
+char *virNetworkDefFormat(const virNetworkDef *def, unsigned int flags);
 
 static inline const char *
-virNetworkDefForwardIf(const virNetworkDefPtr def, size_t n)
+virNetworkDefForwardIf(const virNetworkDef *def, size_t n)
 {
     return ((def->forward.ifs && (def->forward.nifs > n) &&
              def->forward.ifs[n].type == VIR_NETWORK_FORWARD_HOSTDEV_DEVICE_NETDEV)
@@ -335,10 +338,10 @@ virPortGroupDefPtr virPortGroupFindByName(virNetworkDefPtr net,
                                           const char *portgroup);
 
 virNetworkIpDefPtr
-virNetworkDefGetIpByIndex(const virNetworkDefPtr def,
+virNetworkDefGetIpByIndex(const virNetworkDef *def,
                           int family, size_t n);
-int virNetworkIpDefPrefix(const virNetworkIpDefPtr def);
-int virNetworkIpDefNetmask(const virNetworkIpDefPtr def,
+int virNetworkIpDefPrefix(const virNetworkIpDef *def);
+int virNetworkIpDefNetmask(const virNetworkIpDef *def,
                            virSocketAddrPtr netmask);
 
 int virNetworkSaveXML(const char *configDir,
@@ -374,14 +377,14 @@ int virNetworkDeleteConfig(const char *configDir,
 char *virNetworkConfigFile(const char *dir,
                            const char *name);
 
-int virNetworkBridgeInUse(const virNetworkObjListPtr nets,
+int virNetworkBridgeInUse(virNetworkObjListPtr nets,
                           const char *bridge,
                           const char *skipname);
 
-char *virNetworkAllocateBridge(const virNetworkObjListPtr nets,
+char *virNetworkAllocateBridge(virNetworkObjListPtr nets,
                                const char *template);
 
-int virNetworkSetBridgeName(const virNetworkObjListPtr nets,
+int virNetworkSetBridgeName(virNetworkObjListPtr nets,
                             virNetworkDefPtr def,
                             int check_collision);
 
@@ -426,5 +429,14 @@ int virNetworkObjListExport(virConnectPtr conn,
                             virNetworkPtr **nets,
                             virNetworkObjListFilter filter,
                             unsigned int flags);
+
+/* for testing */
+int
+virNetworkDefUpdateSection(virNetworkDefPtr def,
+                           unsigned int command, /* virNetworkUpdateCommand */
+                           unsigned int section, /* virNetworkUpdateSection */
+                           int parentIndex,
+                           const char *xml,
+                           unsigned int flags);  /* virNetworkUpdateFlags */
 
 #endif /* __NETWORK_CONF_H__ */

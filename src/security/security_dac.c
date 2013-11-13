@@ -47,22 +47,25 @@ struct _virSecurityDACData {
     gid_t *groups;
     int ngroups;
     bool dynamicOwnership;
+    char *baselabel;
 };
 
-void
-virSecurityDACSetUser(virSecurityManagerPtr mgr,
-                      uid_t user)
+/* returns -1 on error, 0 on success */
+int
+virSecurityDACSetUserAndGroup(virSecurityManagerPtr mgr,
+                              uid_t user,
+                              gid_t group)
 {
     virSecurityDACDataPtr priv = virSecurityManagerGetPrivateData(mgr);
     priv->user = user;
-}
-
-void
-virSecurityDACSetGroup(virSecurityManagerPtr mgr,
-                       gid_t group)
-{
-    virSecurityDACDataPtr priv = virSecurityManagerGetPrivateData(mgr);
     priv->group = group;
+
+    if (virAsprintf(&priv->baselabel, "+%u:+%u",
+                    (unsigned int) user,
+                    (unsigned int) group) < 0)
+        return -1;
+
+    return 0;
 }
 
 void
@@ -115,13 +118,13 @@ virSecurityDACGetIds(virDomainDefPtr def, virSecurityDACDataPtr priv,
         return -1;
     }
 
-    if ((ret = virSecurityDACParseIds(def, uidPtr, gidPtr)) <= 0) {
-        if (groups)
-            *groups = NULL;
-        if (ngroups)
-            *ngroups = 0;
+    if (groups)
+        *groups = priv ? priv->groups : NULL;
+    if (ngroups)
+        *ngroups = priv ? priv->ngroups : 0;
+
+    if ((ret = virSecurityDACParseIds(def, uidPtr, gidPtr)) <= 0)
         return ret;
-    }
 
     if (!priv) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
@@ -134,10 +137,6 @@ virSecurityDACGetIds(virDomainDefPtr def, virSecurityDACDataPtr priv,
         *uidPtr = priv->user;
     if (gidPtr)
         *gidPtr = priv->group;
-    if (groups)
-        *groups = priv->groups;
-    if (ngroups)
-        *ngroups = priv->ngroups;
 
     return 0;
 }
@@ -221,6 +220,7 @@ virSecurityDACClose(virSecurityManagerPtr mgr)
 {
     virSecurityDACDataPtr priv = virSecurityManagerGetPrivateData(mgr);
     VIR_FREE(priv->groups);
+    VIR_FREE(priv->baselabel);
     return 0;
 }
 
@@ -1064,7 +1064,7 @@ virSecurityDACGenLabel(virSecurityManagerPtr mgr,
         }
         break;
     case VIR_DOMAIN_SECLABEL_DYNAMIC:
-        if (virAsprintf(&seclabel->label, "%u:%u",
+        if (virAsprintf(&seclabel->label, "+%u:+%u",
                         (unsigned int) priv->user,
                         (unsigned int) priv->group) < 0)
             return rc;
@@ -1174,6 +1174,14 @@ virSecurityDACGetMountOptions(virSecurityManagerPtr mgr ATTRIBUTE_UNUSED,
     return NULL;
 }
 
+static const char *
+virSecurityDACGetBaseLabel(virSecurityManagerPtr mgr,
+                           int virt ATTRIBUTE_UNUSED)
+{
+    virSecurityDACDataPtr priv = virSecurityManagerGetPrivateData(mgr);
+    return priv->baselabel;
+}
+
 virSecurityDriver virSecurityDriverDAC = {
     .privateDataLen                     = sizeof(virSecurityDACData),
     .name                               = SECURITY_DAC_NAME,
@@ -1216,4 +1224,6 @@ virSecurityDriver virSecurityDriverDAC = {
     .domainSetSecurityTapFDLabel        = virSecurityDACSetTapFDLabel,
 
     .domainGetSecurityMountOptions      = virSecurityDACGetMountOptions,
+
+    .getBaseLabel                       = virSecurityDACGetBaseLabel,
 };

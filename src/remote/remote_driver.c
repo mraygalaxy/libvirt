@@ -187,7 +187,7 @@ remoteFindDaemonPath(void)
         NULL
     };
     size_t i;
-    const char *customDaemon = getenv("LIBVIRTD_PATH");
+    const char *customDaemon = virGetEnvBlockSUID("LIBVIRTD_PATH");
 
     if (customDaemon)
         return customDaemon;
@@ -431,7 +431,7 @@ doRemoteOpen(virConnectPtr conn,
         trans_tcp,
     } transport;
 #ifndef WIN32
-    const char *daemonPath;
+    const char *daemonPath = NULL;
 #endif
 
     /* We handle *ALL* URIs here. The caller has rejected any
@@ -486,6 +486,20 @@ doRemoteOpen(virConnectPtr conn,
     } else {
         /* No URI, then must be probing so use UNIX socket */
         transport = trans_unix;
+    }
+
+    /*
+     * We don't want to be executing external programs in setuid mode,
+     * so this rules out 'ext' and 'ssh' transports. Exclude libssh
+     * and tls too, since we're not confident the libraries are safe
+     * for setuid usage. Just allow UNIX sockets, since that does
+     * not require any external libraries or command execution
+     */
+    if (virIsSUID() &&
+        transport != trans_unix) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("Only Unix socket URI transport is allowed in setuid mode"));
+        return VIR_DRV_OPEN_ERROR;
     }
 
     /* Local variables which we will initialize. These can
@@ -699,7 +713,8 @@ doRemoteOpen(virConnectPtr conn,
             VIR_DEBUG("Proceeding with sockname %s", sockname);
         }
 
-        if (!(daemonPath = remoteFindDaemonPath())) {
+        if ((flags & VIR_DRV_OPEN_REMOTE_AUTOSTART) &&
+            !(daemonPath = remoteFindDaemonPath())) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
                            _("Unable to locate libvirtd daemon in %s "
                              "(to override, set $LIBVIRTD_PATH to the "
@@ -955,7 +970,7 @@ remoteConnectOpen(virConnectPtr conn,
 {
     struct private_data *priv;
     int ret, rflags = 0;
-    const char *autostart = getenv("LIBVIRT_AUTOSTART");
+    const char *autostart = virGetEnvBlockSUID("LIBVIRT_AUTOSTART");
 
     if (inside_daemon && (!conn->uri || (conn->uri && !conn->uri->server)))
         return VIR_DRV_OPEN_DECLINED;
@@ -980,11 +995,12 @@ remoteConnectOpen(virConnectPtr conn,
          (strstr(conn->uri->scheme, "+unix") != NULL)) &&
         (STREQ(conn->uri->path, "/session") ||
          STRPREFIX(conn->uri->scheme, "test+")) &&
-        getuid() > 0) {
+        geteuid() > 0) {
         VIR_DEBUG("Auto-spawn user daemon instance");
         rflags |= VIR_DRV_OPEN_REMOTE_USER;
-        if (!autostart ||
-            STRNEQ(autostart, "0"))
+        if (!virIsSUID() &&
+            (!autostart ||
+             STRNEQ(autostart, "0")))
             rflags |= VIR_DRV_OPEN_REMOTE_AUTOSTART;
     }
 
@@ -997,11 +1013,12 @@ remoteConnectOpen(virConnectPtr conn,
     if (!conn->uri) {
         VIR_DEBUG("Auto-probe remote URI");
 #ifndef __sun
-        if (getuid() > 0) {
+        if (geteuid() > 0) {
             VIR_DEBUG("Auto-spawn user daemon instance");
             rflags |= VIR_DRV_OPEN_REMOTE_USER;
-            if (!autostart ||
-                STRNEQ(autostart, "0"))
+            if (!virIsSUID() &&
+                (!autostart ||
+                 STRNEQ(autostart, "0")))
                 rflags |= VIR_DRV_OPEN_REMOTE_AUTOSTART;
         }
 #endif
@@ -1370,10 +1387,10 @@ remoteConnectListDomains(virConnectPtr conn, int *ids, int maxids)
 
     remoteDriverLock(priv);
 
-    if (maxids > REMOTE_DOMAIN_ID_LIST_MAX) {
+    if (maxids > REMOTE_DOMAIN_LIST_MAX) {
         virReportError(VIR_ERR_RPC,
-                       _("too many remote domain IDs: %d > %d"),
-                       maxids, REMOTE_DOMAIN_ID_LIST_MAX);
+                       _("Too many domains '%d' for limit '%d'"),
+                       maxids, REMOTE_DOMAIN_LIST_MAX);
         goto done;
     }
     args.maxids = maxids;
@@ -1386,7 +1403,7 @@ remoteConnectListDomains(virConnectPtr conn, int *ids, int maxids)
 
     if (ret.ids.ids_len > maxids) {
         virReportError(VIR_ERR_RPC,
-                       _("too many remote domain IDs: %d > %d"),
+                       _("Too many domains '%d' for limit '%d'"),
                        ret.ids.ids_len, maxids);
         goto cleanup;
     }
@@ -1432,6 +1449,13 @@ remoteConnectListAllDomains(virConnectPtr conn,
              (xdrproc_t) xdr_remote_connect_list_all_domains_ret,
              (char *) &ret) == -1)
         goto done;
+
+    if (ret.domains.domains_len > REMOTE_DOMAIN_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many domains '%d' for limit '%d'"),
+                       ret.domains.domains_len, REMOTE_DOMAIN_LIST_MAX);
+        goto cleanup;
+    }
 
     if (domains) {
         if (VIR_ALLOC_N(doms, ret.domains.domains_len + 1) < 0)
@@ -2431,6 +2455,7 @@ remoteDomainCreateWithFlags(virDomainPtr dom, unsigned int flags)
     make_nonnull_domain(&args.dom, dom);
     args.flags = flags;
 
+    memset(&ret, 0, sizeof(ret));
     if (call(dom->conn, priv, 0, REMOTE_PROC_DOMAIN_CREATE_WITH_FLAGS,
              (xdrproc_t)xdr_remote_domain_create_with_flags_args, (char *)&args,
              (xdrproc_t)xdr_remote_domain_create_with_flags_ret, (char *)&ret) == -1) {
@@ -2835,6 +2860,13 @@ remoteConnectListAllNetworks(virConnectPtr conn,
              (char *) &ret) == -1)
         goto done;
 
+    if (ret.nets.nets_len > REMOTE_NETWORK_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many networks '%d' for limit '%d'"),
+                       ret.nets.nets_len, REMOTE_NETWORK_LIST_MAX);
+        goto cleanup;
+    }
+
     if (nets) {
         if (VIR_ALLOC_N(tmp_nets, ret.nets.nets_len + 1) < 0)
             goto cleanup;
@@ -2893,6 +2925,13 @@ remoteConnectListAllInterfaces(virConnectPtr conn,
              (xdrproc_t) xdr_remote_connect_list_all_interfaces_ret,
              (char *) &ret) == -1)
         goto done;
+
+    if (ret.ifaces.ifaces_len > REMOTE_INTERFACE_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many interfaces '%d' for limit '%d'"),
+                       ret.ifaces.ifaces_len, REMOTE_INTERFACE_LIST_MAX);
+        goto cleanup;
+    }
 
     if (ifaces) {
         if (VIR_ALLOC_N(tmp_ifaces, ret.ifaces.ifaces_len + 1) < 0)
@@ -2953,6 +2992,13 @@ remoteConnectListAllNodeDevices(virConnectPtr conn,
              (char *) &ret) == -1)
         goto done;
 
+    if (ret.devices.devices_len > REMOTE_NODE_DEVICE_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many node devices '%d' for limit '%d'"),
+                       ret.devices.devices_len, REMOTE_NODE_DEVICE_LIST_MAX);
+        goto cleanup;
+    }
+
     if (devices) {
         if (VIR_ALLOC_N(tmp_devices, ret.devices.devices_len + 1) < 0)
             goto cleanup;
@@ -3012,6 +3058,13 @@ remoteConnectListAllNWFilters(virConnectPtr conn,
              (char *) &ret) == -1)
         goto done;
 
+    if (ret.filters.filters_len > REMOTE_NWFILTER_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many network filters '%d' for limit '%d'"),
+                       ret.filters.filters_len, REMOTE_NWFILTER_LIST_MAX);
+        goto cleanup;
+    }
+
     if (filters) {
         if (VIR_ALLOC_N(tmp_filters, ret.filters.filters_len + 1) < 0)
             goto cleanup;
@@ -3070,6 +3123,13 @@ remoteConnectListAllSecrets(virConnectPtr conn,
              (xdrproc_t) xdr_remote_connect_list_all_secrets_ret,
              (char *) &ret) == -1)
         goto done;
+
+    if (ret.secrets.secrets_len > REMOTE_SECRET_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many secrets '%d' for limit '%d'"),
+                       ret.secrets.secrets_len, REMOTE_SECRET_LIST_MAX);
+        goto cleanup;
+    }
 
     if (secrets) {
         if (VIR_ALLOC_N(tmp_secrets, ret.secrets.secrets_len + 1) < 0)
@@ -3268,6 +3328,13 @@ remoteConnectListAllStoragePools(virConnectPtr conn,
              (char *) &ret) == -1)
         goto done;
 
+    if (ret.pools.pools_len > REMOTE_STORAGE_POOL_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many storage pools '%d' for limit '%d'"),
+                       ret.pools.pools_len, REMOTE_STORAGE_POOL_LIST_MAX);
+        goto cleanup;
+    }
+
     if (pools) {
         if (VIR_ALLOC_N(tmp_pools, ret.pools.pools_len + 1) < 0)
             goto cleanup;
@@ -3327,6 +3394,13 @@ remoteStoragePoolListAllVolumes(virStoragePoolPtr pool,
              (xdrproc_t) xdr_remote_storage_pool_list_all_volumes_ret,
              (char *) &ret) == -1)
         goto done;
+
+    if (ret.vols.vols_len > REMOTE_STORAGE_VOL_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many storage volumes '%d' for limit '%d'"),
+                       ret.vols.vols_len, REMOTE_STORAGE_VOL_LIST_MAX);
+        goto cleanup;
+    }
 
     if (vols) {
         if (VIR_ALLOC_N(tmp_vols, ret.vols.vols_len + 1) < 0)
@@ -3664,7 +3738,7 @@ static int remoteAuthCredSASL2Vir(int vircred)
  *
  * Build up the SASL callback structure. We register one callback for
  * each credential type that the libvirt client indicated they support.
- * We explicitly leav the callback function pointer at NULL though,
+ * We explicitly leave the callback function pointer at NULL though,
  * because we don't actually want to get SASL callbacks triggered.
  * Instead, we want the start/step functions to return SASL_INTERACT.
  * This lets us give the libvirt client a list of all required
@@ -5080,7 +5154,7 @@ static int remoteConnectDomainEventDeregisterAny(virConnectPtr conn,
     /* If that was the last callback for this eventID, we need to disable
      * events on the server */
     if (count == 0) {
-        args.eventID = callbackID;
+        args.eventID = eventID;
 
         if (call(conn, priv, 0, REMOTE_PROC_CONNECT_DOMAIN_EVENT_DEREGISTER_ANY,
                  (xdrproc_t) xdr_remote_connect_domain_event_deregister_any_args, (char *) &args,
@@ -5484,6 +5558,68 @@ done:
 
 
 static int
+remoteConnectGetCPUModelNames(virConnectPtr conn,
+                              const char *arch,
+                              char ***models,
+                              unsigned int flags)
+{
+    int rv = -1;
+    size_t i;
+    char **retmodels = NULL;
+    remote_connect_get_cpu_model_names_args args;
+    remote_connect_get_cpu_model_names_ret ret;
+
+    struct private_data *priv = conn->privateData;
+
+    remoteDriverLock(priv);
+
+    args.arch = (char *) arch;
+    args.need_results = !!models;
+    args.flags = flags;
+
+    memset(&ret, 0, sizeof(ret));
+    if (call(conn, priv, 0, REMOTE_PROC_CONNECT_GET_CPU_MODEL_NAMES,
+             (xdrproc_t) xdr_remote_connect_get_cpu_model_names_args,
+             (char *) &args,
+             (xdrproc_t) xdr_remote_connect_get_cpu_model_names_ret,
+             (char *) &ret) < 0)
+        goto done;
+
+    /* Check the length of the returned list carefully. */
+    if (ret.models.models_len > REMOTE_CONNECT_CPU_MODELS_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many model names '%d' for limit '%d'"),
+                       ret.models.models_len,
+                       REMOTE_CONNECT_CPU_MODELS_MAX);
+        goto cleanup;
+    }
+
+    if (models) {
+        if (VIR_ALLOC_N(retmodels, ret.models.models_len + 1) < 0)
+            goto cleanup;
+
+        for (i = 0; i < ret.models.models_len; i++) {
+            retmodels[i] = ret.models.models_val[i];
+            ret.models.models_val[i] = NULL;
+        }
+        *models = retmodels;
+        retmodels = NULL;
+    }
+
+    rv = ret.ret;
+
+cleanup:
+    virStringFreeList(retmodels);
+
+    xdr_free((xdrproc_t) xdr_remote_connect_get_cpu_model_names_ret, (char *) &ret);
+
+done:
+    remoteDriverUnlock(priv);
+    return rv;
+}
+
+
+static int
 remoteDomainOpenGraphics(virDomainPtr dom,
                          unsigned int idx,
                          int fd,
@@ -5759,6 +5895,14 @@ remoteDomainListAllSnapshots(virDomainPtr dom,
              (char *) &ret) == -1)
         goto done;
 
+    if (ret.snapshots.snapshots_len > REMOTE_DOMAIN_SNAPSHOT_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many domain snapshots '%d' for limit '%d'"),
+                       ret.snapshots.snapshots_len,
+                       REMOTE_DOMAIN_SNAPSHOT_LIST_MAX);
+        goto cleanup;
+    }
+
     if (snapshots) {
         if (VIR_ALLOC_N(snaps, ret.snapshots.snapshots_len + 1) < 0)
             goto cleanup;
@@ -5817,6 +5961,14 @@ remoteDomainSnapshotListAllChildren(virDomainSnapshotPtr parent,
              (xdrproc_t) xdr_remote_domain_snapshot_list_all_children_ret,
              (char *) &ret) == -1)
         goto done;
+
+    if (ret.snapshots.snapshots_len > REMOTE_DOMAIN_SNAPSHOT_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many domain snapshots '%d' for limit '%d'"),
+                       ret.snapshots.snapshots_len,
+                       REMOTE_DOMAIN_SNAPSHOT_LIST_MAX);
+        goto cleanup;
+    }
 
     if (snapshots) {
         if (VIR_ALLOC_N(snaps, ret.snapshots.snapshots_len + 1) < 0)
@@ -5997,6 +6149,14 @@ remoteDomainGetJobStats(virDomainPtr domain,
              (xdrproc_t) xdr_remote_domain_get_job_stats_ret, (char *) &ret) == -1)
         goto done;
 
+    if (ret.params.params_len > REMOTE_DOMAIN_JOB_STATS_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many job stats '%d' for limit '%d'"),
+                       ret.params.params_len,
+                       REMOTE_DOMAIN_JOB_STATS_MAX);
+        goto cleanup;
+    }
+
     *type = ret.type;
 
     if (remoteDeserializeTypedParameters(ret.params.params_val,
@@ -6035,6 +6195,13 @@ remoteDomainMigrateBegin3Params(virDomainPtr domain,
 
     make_nonnull_domain(&args.dom, domain);
     args.flags = flags;
+
+    if (nparams > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
+        goto cleanup;
+    }
 
     if (remoteSerializeTypedParameters(params, nparams,
                                        &args.params.params_val,
@@ -6094,6 +6261,13 @@ remoteDomainMigratePrepare3Params(virConnectPtr dconn,
 
     memset(&args, 0, sizeof(args));
     memset(&ret, 0, sizeof(ret));
+
+    if (nparams > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
+        goto cleanup;
+    }
 
     if (remoteSerializeTypedParameters(params, nparams,
                                        &args.params.params_val,
@@ -6169,6 +6343,13 @@ remoteDomainMigratePrepareTunnel3Params(virConnectPtr dconn,
 
     memset(&args, 0, sizeof(args));
     memset(&ret, 0, sizeof(ret));
+
+    if (nparams > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
+        goto cleanup;
+    }
 
     args.cookie_in.cookie_in_val = (char *)cookiein;
     args.cookie_in.cookie_in_len = cookieinlen;
@@ -6249,6 +6430,13 @@ remoteDomainMigratePerform3Params(virDomainPtr dom,
     memset(&args, 0, sizeof(args));
     memset(&ret, 0, sizeof(ret));
 
+    if (nparams > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
+        goto cleanup;
+    }
+
     make_nonnull_domain(&args.dom, dom);
     args.dconnuri = dconnuri == NULL ? NULL : (char **) &dconnuri;
     args.cookie_in.cookie_in_val = (char *)cookiein;
@@ -6314,6 +6502,13 @@ remoteDomainMigrateFinish3Params(virConnectPtr dconn,
     memset(&args, 0, sizeof(args));
     memset(&ret, 0, sizeof(ret));
 
+    if (nparams > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
+        goto cleanup;
+    }
+
     args.cookie_in.cookie_in_val = (char *)cookiein;
     args.cookie_in.cookie_in_len = cookieinlen;
     args.flags = flags;
@@ -6378,6 +6573,13 @@ remoteDomainMigrateConfirm3Params(virDomainPtr domain,
     remoteDriverLock(priv);
 
     memset(&args, 0, sizeof(args));
+
+    if (nparams > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
+        goto cleanup;
+    }
 
     make_nonnull_domain(&args.dom, domain);
     args.cookie_in.cookie_in_len = cookieinlen;
@@ -6810,6 +7012,7 @@ static virDriver remote_driver = {
     .domainMigratePerform3Params = remoteDomainMigratePerform3Params, /* 1.1.0 */
     .domainMigrateFinish3Params = remoteDomainMigrateFinish3Params, /* 1.1.0 */
     .domainMigrateConfirm3Params = remoteDomainMigrateConfirm3Params, /* 1.1.0 */
+    .connectGetCPUModelNames = remoteConnectGetCPUModelNames, /* 1.1.3 */
 };
 
 static virNetworkDriver network_driver = {

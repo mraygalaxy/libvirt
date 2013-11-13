@@ -1,6 +1,8 @@
-/*---------------------------------------------------------------------------*/
-/*  Copyright (C) 2011-2013 SUSE LINUX Products GmbH, Nuernberg, Germany.
- *  Copyright (C) 2011 Univention GmbH.
+/*
+ * libxl_conf.h: libxl configuration management
+ *
+ * Copyright (C) 2011-2013 SUSE LINUX Products GmbH, Nuernberg, Germany.
+ * Copyright (C) 2011 Univention GmbH.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,7 +22,6 @@
  *     Jim Fehlig <jfehlig@novell.com>
  *     Markus Groß <gross@univention.de>
  */
-/*---------------------------------------------------------------------------*/
 
 #ifndef LIBXL_CONF_H
 # define LIBXL_CONF_H
@@ -51,31 +52,28 @@
 
 typedef struct _libxlDriverPrivate libxlDriverPrivate;
 typedef libxlDriverPrivate *libxlDriverPrivatePtr;
-struct _libxlDriverPrivate {
-    virMutex lock;
-    virCapsPtr caps;
-    virDomainXMLOptionPtr xmlopt;
+
+typedef struct _libxlDriverConfig libxlDriverConfig;
+typedef libxlDriverConfig *libxlDriverConfigPtr;
+
+struct _libxlDriverConfig {
+    virObject parent;
+
+    const libxl_version_info *verInfo;
     unsigned int version;
 
+    /* log stream for driver-wide libxl ctx */
     FILE *logger_file;
     xentoollog_logger *logger;
     /* libxl ctx for driver wide ops; getVersion, getNodeInfo, ... */
     libxl_ctx *ctx;
 
-    virPortAllocatorPtr reservedVNCPorts;
-
     /* Controls automatic ballooning of domain0. If true, attempt to get
      * memory for new domains from domain0. */
     bool autoballoon;
 
-    size_t nactive;
-    virStateInhibitCallback inhibitCallback;
-    void *inhibitOpaque;
-
-    virDomainObjListPtr domains;
-
-    virDomainEventStatePtr domainEventState;
-    virSysinfoDefPtr hostsysinfo;
+    /* Once created, caps are immutable */
+    virCapsPtr caps;
 
     char *configDir;
     char *autostartDir;
@@ -85,23 +83,39 @@ struct _libxlDriverPrivate {
     char *saveDir;
 };
 
+
+struct _libxlDriverPrivate {
+    virMutex lock;
+
+    /* Require lock to get reference on 'config',
+     * then lockless thereafter */
+    libxlDriverConfigPtr config;
+
+    /* Atomic inc/dec only */
+    unsigned int nactive;
+
+    /* Immutable pointers. Caller must provide locking */
+    virStateInhibitCallback inhibitCallback;
+    void *inhibitOpaque;
+
+    /* Immutable pointer, self-locking APIs */
+    virDomainObjListPtr domains;
+
+    /* Immutable pointer, immutable object */
+    virDomainXMLOptionPtr xmlopt;
+
+    /* Immutable pointer, self-locking APIs */
+    virDomainEventStatePtr domainEventState;
+
+    /* Immutable pointer, self-locking APIs */
+    virPortAllocatorPtr reservedVNCPorts;
+
+    /* Immutable pointer, lockless APIs*/
+    virSysinfoDefPtr hostsysinfo;
+};
+
 typedef struct _libxlEventHookInfo libxlEventHookInfo;
 typedef libxlEventHookInfo *libxlEventHookInfoPtr;
-
-typedef struct _libxlDomainObjPrivate libxlDomainObjPrivate;
-typedef libxlDomainObjPrivate *libxlDomainObjPrivatePtr;
-struct _libxlDomainObjPrivate {
-    virObjectLockable parent;
-
-    /* per domain libxl ctx */
-    libxl_ctx *ctx;
-    /* console */
-    virChrdevsPtr devs;
-    libxl_evgen_domain_death *deathW;
-
-    /* list of libxl timeout registrations */
-    libxlEventHookInfoPtr timerRegistrations;
-};
 
 # define LIBXL_SAVE_MAGIC "libvirt-xml\n \0 \r"
 # define LIBXL_SAVE_VERSION 1
@@ -115,6 +129,12 @@ struct _libxlSavefileHeader {
     /* 24 bytes used, pad up to 64 bytes */
     uint32_t unused[10];
 };
+
+libxlDriverConfigPtr
+libxlDriverConfigNew(void);
+
+libxlDriverConfigPtr
+libxlDriverConfigGet(libxlDriverPrivatePtr driver);
 
 virCapsPtr
 libxlMakeCapabilities(libxl_ctx *ctx);
@@ -130,5 +150,17 @@ libxlMakeVfb(libxlDriverPrivatePtr driver,
 int
 libxlBuildDomainConfig(libxlDriverPrivatePtr driver,
                        virDomainObjPtr vm, libxl_domain_config *d_config);
+
+static inline void
+libxlDriverLock(libxlDriverPrivatePtr driver)
+{
+    virMutexLock(&driver->lock);
+}
+
+static inline void
+libxlDriverUnlock(libxlDriverPrivatePtr driver)
+{
+    virMutexUnlock(&driver->lock);
+}
 
 #endif /* LIBXL_CONF_H */

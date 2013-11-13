@@ -666,7 +666,10 @@ void remoteClientFreeFunc(void *data)
 
     /* Deregister event delivery callback */
     if (priv->conn) {
+        virIdentityPtr sysident = virIdentityGetSystem();
         size_t i;
+
+        virIdentitySetCurrent(sysident);
 
         for (i = 0; i < VIR_DOMAIN_EVENT_ID_LAST; i++) {
             if (priv->domainEventCallbackID[i] != -1) {
@@ -678,6 +681,9 @@ void remoteClientFreeFunc(void *data)
         }
 
         virConnectClose(priv->conn);
+
+        virIdentitySetCurrent(NULL);
+        virObjectUnref(sysident);
     }
 
     VIR_FREE(priv);
@@ -1050,6 +1056,13 @@ remoteDispatchConnectListAllDomains(virNetServerPtr server ATTRIBUTE_UNUSED,
                                              args->flags)) < 0)
         goto cleanup;
 
+    if (ndomains > REMOTE_DOMAIN_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many domains '%d' for limit '%d'"),
+                       ndomains, REMOTE_DOMAIN_LIST_MAX);
+        goto cleanup;
+    }
+
     if (doms && ndomains) {
         if (VIR_ALLOC_N(ret->domains.domains_val, ndomains) < 0)
             goto cleanup;
@@ -1139,7 +1152,7 @@ remoteDispatchDomainMemoryStats(virNetServerPtr server ATTRIBUTE_UNUSED,
                                 remote_domain_memory_stats_ret *ret)
 {
     virDomainPtr dom = NULL;
-    struct _virDomainMemoryStat *stats;
+    struct _virDomainMemoryStat *stats = NULL;
     int nr_stats;
     size_t i;
     int rv = -1;
@@ -2735,6 +2748,9 @@ remoteDispatchAuthPolkit(virNetServerPtr server ATTRIBUTE_UNUSED,
     struct daemonClientPrivate *priv =
         virNetServerClientGetPrivateData(client);
     virCommandPtr cmd = NULL;
+# ifndef PKCHECK_SUPPORTS_UID
+    static bool polkitInsecureWarned;
+# endif
 
     virMutexLock(&priv->lock);
     action = virNetServerClientGetReadonly(client) ?
@@ -2756,15 +2772,31 @@ remoteDispatchAuthPolkit(virNetServerPtr server ATTRIBUTE_UNUSED,
         goto authfail;
     }
 
+    if (timestamp == 0) {
+        VIR_WARN("Failing polkit auth due to missing client (pid=%lld) start time",
+                 (long long)callerPid);
+        goto authfail;
+    }
+
     VIR_INFO("Checking PID %lld running as %d",
              (long long) callerPid, callerUid);
 
     virCommandAddArg(cmd, "--process");
-    if (timestamp != 0) {
-        virCommandAddArgFormat(cmd, "%lld,%llu", (long long) callerPid, timestamp);
-    } else {
-        virCommandAddArgFormat(cmd, "%lld", (long long) callerPid);
+
+# ifdef PKCHECK_SUPPORTS_UID
+    virCommandAddArgFormat(cmd, "%lld,%llu,%lu",
+                           (long long) callerPid,
+                           timestamp,
+                           (unsigned long) callerUid);
+# else
+    if (!polkitInsecureWarned) {
+        VIR_WARN("No support for caller UID with pkcheck. "
+                 "This deployment is known to be insecure.");
+        polkitInsecureWarned = true;
     }
+    virCommandAddArgFormat(cmd, "%lld,%llu", (long long) callerPid, timestamp);
+# endif
+
     virCommandAddArg(cmd, "--allow-user-interaction");
 
     if (virAsprintf(&ident, "pid:%lld,uid:%d",
@@ -3845,13 +3877,13 @@ cleanup:
     return rv;
 }
 
-static int remoteDispatchDomainGetDiskErrors(
-    virNetServerPtr server ATTRIBUTE_UNUSED,
-    virNetServerClientPtr client,
-    virNetMessagePtr msg ATTRIBUTE_UNUSED,
-    virNetMessageErrorPtr rerr,
-    remote_domain_get_disk_errors_args *args,
-    remote_domain_get_disk_errors_ret *ret)
+static int
+remoteDispatchDomainGetDiskErrors(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                  virNetServerClientPtr client,
+                                  virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                  virNetMessageErrorPtr rerr,
+                                  remote_domain_get_disk_errors_args *args,
+                                  remote_domain_get_disk_errors_ret *ret)
 {
     int rv = -1;
     virDomainPtr dom = NULL;
@@ -3934,6 +3966,13 @@ remoteDispatchDomainListAllSnapshots(virNetServerPtr server ATTRIBUTE_UNUSED,
                                             args->flags)) < 0)
         goto cleanup;
 
+    if (nsnaps > REMOTE_DOMAIN_SNAPSHOT_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many domain snapshots '%d' for limit '%d'"),
+                       nsnaps, REMOTE_DOMAIN_SNAPSHOT_LIST_MAX);
+        goto cleanup;
+    }
+
     if (snaps && nsnaps) {
         if (VIR_ALLOC_N(ret->snapshots.snapshots_val, nsnaps) < 0)
             goto cleanup;
@@ -3996,6 +4035,13 @@ remoteDispatchDomainSnapshotListAllChildren(virNetServerPtr server ATTRIBUTE_UNU
                                                    args->flags)) < 0)
         goto cleanup;
 
+    if (nsnaps > REMOTE_DOMAIN_SNAPSHOT_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many domain snapshots '%d' for limit '%d'"),
+                       nsnaps, REMOTE_DOMAIN_SNAPSHOT_LIST_MAX);
+        goto cleanup;
+    }
+
     if (snaps && nsnaps) {
         if (VIR_ALLOC_N(ret->snapshots.snapshots_val, nsnaps) < 0)
             goto cleanup;
@@ -4051,6 +4097,13 @@ remoteDispatchConnectListAllStoragePools(virNetServerPtr server ATTRIBUTE_UNUSED
                                                 args->need_results ? &pools : NULL,
                                                 args->flags)) < 0)
         goto cleanup;
+
+    if (npools > REMOTE_STORAGE_POOL_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many storage pools '%d' for limit '%d'"),
+                       npools, REMOTE_STORAGE_POOL_LIST_MAX);
+        goto cleanup;
+    }
 
     if (pools && npools) {
         if (VIR_ALLOC_N(ret->pools.pools_val, npools) < 0)
@@ -4108,6 +4161,13 @@ remoteDispatchStoragePoolListAllVolumes(virNetServerPtr server ATTRIBUTE_UNUSED,
                                               args->flags)) < 0)
         goto cleanup;
 
+    if (nvols > REMOTE_STORAGE_VOL_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many storage volumes '%d' for limit '%d'"),
+                       nvols, REMOTE_STORAGE_VOL_LIST_MAX);
+        goto cleanup;
+    }
+
     if (vols && nvols) {
         if (VIR_ALLOC_N(ret->vols.vols_val, nvols) < 0)
             goto cleanup;
@@ -4162,6 +4222,13 @@ remoteDispatchConnectListAllNetworks(virNetServerPtr server ATTRIBUTE_UNUSED,
                                            args->flags)) < 0)
         goto cleanup;
 
+    if (nnets > REMOTE_NETWORK_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many networks '%d' for limit '%d'"),
+                       nnets, REMOTE_NETWORK_LIST_MAX);
+        goto cleanup;
+    }
+
     if (nets && nnets) {
         if (VIR_ALLOC_N(ret->nets.nets_val, nnets) < 0)
             goto cleanup;
@@ -4213,6 +4280,13 @@ remoteDispatchConnectListAllInterfaces(virNetServerPtr server ATTRIBUTE_UNUSED,
                                                args->need_results ? &ifaces : NULL,
                                                args->flags)) < 0)
         goto cleanup;
+
+    if (nifaces > REMOTE_INTERFACE_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many interfaces '%d' for limit '%d'"),
+                       nifaces, REMOTE_INTERFACE_LIST_MAX);
+        goto cleanup;
+    }
 
     if (ifaces && nifaces) {
         if (VIR_ALLOC_N(ret->ifaces.ifaces_val, nifaces) < 0)
@@ -4266,6 +4340,13 @@ remoteDispatchConnectListAllNodeDevices(virNetServerPtr server ATTRIBUTE_UNUSED,
                                                  args->flags)) < 0)
         goto cleanup;
 
+    if (ndevices > REMOTE_NODE_DEVICE_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many node devices '%d' for limit '%d'"),
+                       ndevices, REMOTE_NODE_DEVICE_LIST_MAX);
+        goto cleanup;
+    }
+
     if (devices && ndevices) {
         if (VIR_ALLOC_N(ret->devices.devices_val, ndevices) < 0)
             goto cleanup;
@@ -4318,6 +4399,13 @@ remoteDispatchConnectListAllNWFilters(virNetServerPtr server ATTRIBUTE_UNUSED,
                                                args->flags)) < 0)
         goto cleanup;
 
+    if (nfilters > REMOTE_NWFILTER_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many network filters '%d' for limit '%d'"),
+                       nfilters, REMOTE_NWFILTER_LIST_MAX);
+        goto cleanup;
+    }
+
     if (filters && nfilters) {
         if (VIR_ALLOC_N(ret->filters.filters_val, nfilters) < 0)
             goto cleanup;
@@ -4369,6 +4457,13 @@ remoteDispatchConnectListAllSecrets(virNetServerPtr server ATTRIBUTE_UNUSED,
                                              args->need_results ? &secrets : NULL,
                                              args->flags)) < 0)
         goto cleanup;
+
+    if (nsecrets > REMOTE_SECRET_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many secrets '%d' for limit '%d'"),
+                       nsecrets, REMOTE_SECRET_LIST_MAX);
+        goto cleanup;
+    }
 
     if (secrets && nsecrets) {
         if (VIR_ALLOC_N(ret->secrets.secrets_val, nsecrets) < 0)
@@ -4548,7 +4643,8 @@ lxcDispatchDomainOpenNamespace(virNetServerPtr server ATTRIBUTE_UNUSED,
 cleanup:
     if (rv < 0)
         virNetMessageSaveError(rerr);
-    virDomainFree(dom);
+    if (dom)
+        virDomainFree(dom);
     return rv;
 }
 
@@ -4579,6 +4675,13 @@ remoteDispatchDomainGetJobStats(virNetServerPtr server ATTRIBUTE_UNUSED,
                              &nparams, args->flags) < 0)
         goto cleanup;
 
+    if (nparams > REMOTE_DOMAIN_JOB_STATS_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many job stats '%d' for limit '%d'"),
+                       nparams, REMOTE_DOMAIN_JOB_STATS_MAX);
+        goto cleanup;
+    }
+
     if (remoteSerializeTypedParameters(params, nparams,
                                        &ret->params.params_val,
                                        &ret->params.params_len,
@@ -4597,13 +4700,12 @@ cleanup:
 }
 
 static int
-remoteDispatchDomainMigrateBegin3Params(
-        virNetServerPtr server ATTRIBUTE_UNUSED,
-        virNetServerClientPtr client ATTRIBUTE_UNUSED,
-        virNetMessagePtr msg ATTRIBUTE_UNUSED,
-        virNetMessageErrorPtr rerr,
-        remote_domain_migrate_begin3_params_args *args,
-        remote_domain_migrate_begin3_params_ret *ret)
+remoteDispatchDomainMigrateBegin3Params(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                        virNetServerClientPtr client ATTRIBUTE_UNUSED,
+                                        virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                        virNetMessageErrorPtr rerr,
+                                        remote_domain_migrate_begin3_params_args *args,
+                                        remote_domain_migrate_begin3_params_ret *ret)
 {
     char *xml = NULL;
     virDomainPtr dom = NULL;
@@ -4617,6 +4719,13 @@ remoteDispatchDomainMigrateBegin3Params(
 
     if (!priv->conn) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (args->params.params_len > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       args->params.params_len, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
         goto cleanup;
     }
 
@@ -4649,13 +4758,12 @@ cleanup:
 }
 
 static int
-remoteDispatchDomainMigratePrepare3Params(
-        virNetServerPtr server ATTRIBUTE_UNUSED,
-        virNetServerClientPtr client ATTRIBUTE_UNUSED,
-        virNetMessagePtr msg ATTRIBUTE_UNUSED,
-        virNetMessageErrorPtr rerr,
-        remote_domain_migrate_prepare3_params_args *args,
-        remote_domain_migrate_prepare3_params_ret *ret)
+remoteDispatchDomainMigratePrepare3Params(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                          virNetServerClientPtr client ATTRIBUTE_UNUSED,
+                                          virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                          virNetMessageErrorPtr rerr,
+                                          remote_domain_migrate_prepare3_params_args *args,
+                                          remote_domain_migrate_prepare3_params_ret *ret)
 {
     virTypedParameterPtr params = NULL;
     int nparams = 0;
@@ -4668,6 +4776,13 @@ remoteDispatchDomainMigratePrepare3Params(
 
     if (!priv->conn) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (args->params.params_len > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       args->params.params_len, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
         goto cleanup;
     }
 
@@ -4703,13 +4818,12 @@ cleanup:
 }
 
 static int
-remoteDispatchDomainMigratePrepareTunnel3Params(
-        virNetServerPtr server ATTRIBUTE_UNUSED,
-        virNetServerClientPtr client,
-        virNetMessagePtr msg,
-        virNetMessageErrorPtr rerr,
-        remote_domain_migrate_prepare_tunnel3_params_args *args,
-        remote_domain_migrate_prepare_tunnel3_params_ret *ret)
+remoteDispatchDomainMigratePrepareTunnel3Params(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                                virNetServerClientPtr client,
+                                                virNetMessagePtr msg,
+                                                virNetMessageErrorPtr rerr,
+                                                remote_domain_migrate_prepare_tunnel3_params_args *args,
+                                                remote_domain_migrate_prepare_tunnel3_params_ret *ret)
 {
     virTypedParameterPtr params = NULL;
     int nparams = 0;
@@ -4723,6 +4837,13 @@ remoteDispatchDomainMigratePrepareTunnel3Params(
 
     if (!priv->conn) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (args->params.params_len > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       args->params.params_len, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
         goto cleanup;
     }
 
@@ -4767,13 +4888,12 @@ cleanup:
 
 
 static int
-remoteDispatchDomainMigratePerform3Params(
-        virNetServerPtr server ATTRIBUTE_UNUSED,
-        virNetServerClientPtr client ATTRIBUTE_UNUSED,
-        virNetMessagePtr msg ATTRIBUTE_UNUSED,
-        virNetMessageErrorPtr rerr,
-        remote_domain_migrate_perform3_params_args *args,
-        remote_domain_migrate_perform3_params_ret *ret)
+remoteDispatchDomainMigratePerform3Params(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                          virNetServerClientPtr client ATTRIBUTE_UNUSED,
+                                          virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                          virNetMessageErrorPtr rerr,
+                                          remote_domain_migrate_perform3_params_args *args,
+                                          remote_domain_migrate_perform3_params_ret *ret)
 {
     virTypedParameterPtr params = NULL;
     int nparams = 0;
@@ -4787,6 +4907,13 @@ remoteDispatchDomainMigratePerform3Params(
 
     if (!priv->conn) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (args->params.params_len > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       args->params.params_len, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
         goto cleanup;
     }
 
@@ -4823,13 +4950,12 @@ cleanup:
 
 
 static int
-remoteDispatchDomainMigrateFinish3Params(
-        virNetServerPtr server ATTRIBUTE_UNUSED,
-        virNetServerClientPtr client ATTRIBUTE_UNUSED,
-        virNetMessagePtr msg ATTRIBUTE_UNUSED,
-        virNetMessageErrorPtr rerr,
-        remote_domain_migrate_finish3_params_args *args,
-        remote_domain_migrate_finish3_params_ret *ret)
+remoteDispatchDomainMigrateFinish3Params(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                         virNetServerClientPtr client ATTRIBUTE_UNUSED,
+                                         virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                         virNetMessageErrorPtr rerr,
+                                         remote_domain_migrate_finish3_params_args *args,
+                                         remote_domain_migrate_finish3_params_ret *ret)
 {
     virTypedParameterPtr params = NULL;
     int nparams = 0;
@@ -4842,6 +4968,13 @@ remoteDispatchDomainMigrateFinish3Params(
 
     if (!priv->conn) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (args->params.params_len > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       args->params.params_len, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
         goto cleanup;
     }
 
@@ -4878,12 +5011,11 @@ cleanup:
 
 
 static int
-remoteDispatchDomainMigrateConfirm3Params(
-        virNetServerPtr server ATTRIBUTE_UNUSED,
-        virNetServerClientPtr client ATTRIBUTE_UNUSED,
-        virNetMessagePtr msg ATTRIBUTE_UNUSED,
-        virNetMessageErrorPtr rerr,
-        remote_domain_migrate_confirm3_params_args *args)
+remoteDispatchDomainMigrateConfirm3Params(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                          virNetServerClientPtr client ATTRIBUTE_UNUSED,
+                                          virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                          virNetMessageErrorPtr rerr,
+                                          remote_domain_migrate_confirm3_params_args *args)
 {
     virTypedParameterPtr params = NULL;
     int nparams = 0;
@@ -4894,6 +5026,13 @@ remoteDispatchDomainMigrateConfirm3Params(
 
     if (!priv->conn) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (args->params.params_len > REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many migration parameters '%d' for limit '%d'"),
+                       args->params.params_len, REMOTE_DOMAIN_MIGRATE_PARAM_LIST_MAX);
         goto cleanup;
     }
 
@@ -4923,13 +5062,65 @@ cleanup:
 }
 
 
-static int remoteDispatchDomainCreateXMLWithFiles(
-    virNetServerPtr server ATTRIBUTE_UNUSED,
-    virNetServerClientPtr client,
-    virNetMessagePtr msg ATTRIBUTE_UNUSED,
-    virNetMessageErrorPtr rerr,
-    remote_domain_create_xml_with_files_args *args,
-    remote_domain_create_xml_with_files_ret *ret)
+static int
+remoteDispatchConnectGetCPUModelNames(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                      virNetServerClientPtr client ATTRIBUTE_UNUSED,
+                                      virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                      virNetMessageErrorPtr rerr,
+                                      remote_connect_get_cpu_model_names_args *args,
+                                      remote_connect_get_cpu_model_names_ret *ret)
+{
+    int len, rv = -1;
+    char **models = NULL;
+    struct daemonClientPrivate *priv =
+        virNetServerClientGetPrivateData(client);
+
+    if (!priv->conn) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    len = virConnectGetCPUModelNames(priv->conn, args->arch,
+                                     args->need_results ? &models : NULL,
+                                     args->flags);
+    if (len < 0)
+        goto cleanup;
+
+    if (len > REMOTE_CONNECT_CPU_MODELS_MAX) {
+        virReportError(VIR_ERR_RPC,
+                       _("Too many CPU models '%d' for limit '%d'"),
+                       len, REMOTE_CONNECT_CPU_MODELS_MAX);
+        goto cleanup;
+    }
+
+    if (len && models) {
+        ret->models.models_val = models;
+        ret->models.models_len = len;
+        models = NULL;
+    } else {
+        ret->models.models_val = NULL;
+        ret->models.models_len = 0;
+    }
+
+    ret->ret = len;
+
+    rv = 0;
+
+cleanup:
+    if (rv < 0)
+        virNetMessageSaveError(rerr);
+    virStringFreeList(models);
+    return rv;
+}
+
+
+static int
+remoteDispatchDomainCreateXMLWithFiles(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                       virNetServerClientPtr client,
+                                       virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                       virNetMessageErrorPtr rerr,
+                                       remote_domain_create_xml_with_files_args *args,
+                                       remote_domain_create_xml_with_files_ret *ret)
 {
     int rv = -1;
     virDomainPtr dom = NULL;
@@ -4973,13 +5164,12 @@ cleanup:
 }
 
 
-static int remoteDispatchDomainCreateWithFiles(
-    virNetServerPtr server ATTRIBUTE_UNUSED,
-    virNetServerClientPtr client,
-    virNetMessagePtr msg ATTRIBUTE_UNUSED,
-    virNetMessageErrorPtr rerr,
-    remote_domain_create_with_files_args *args,
-    remote_domain_create_with_files_ret *ret)
+static int remoteDispatchDomainCreateWithFiles(virNetServerPtr server ATTRIBUTE_UNUSED,
+                                               virNetServerClientPtr client,
+                                               virNetMessagePtr msg ATTRIBUTE_UNUSED,
+                                               virNetMessageErrorPtr rerr,
+                                               remote_domain_create_with_files_args *args,
+                                               remote_domain_create_with_files_ret *ret)
 {
     int rv = -1;
     virDomainPtr dom = NULL;

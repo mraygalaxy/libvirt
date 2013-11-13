@@ -27,6 +27,14 @@
 # include "virbitmap.h"
 # include "virutil.h"
 
+/* Minimum header size required to probe all known formats with
+ * virStorageFileProbeFormat, or obtain metadata from a known format.
+ * Rounded to multiple of 512 (ISO has a 5-byte magic at offset
+ * 32769).  Some formats can be probed with fewer bytes.  Although
+ * some formats theoretically permit metadata that can rely on offsets
+ * beyond this size, in practice that doesn't matter.  */
+# define VIR_STORAGE_MAX_HEADER 0x8200
+
 enum virStorageFileFormat {
     VIR_STORAGE_FILE_AUTO_SAFE = -2,
     VIR_STORAGE_FILE_AUTO = -1,
@@ -80,8 +88,8 @@ struct _virStorageFileMetadata {
 # endif
 
 int virStorageFileProbeFormat(const char *path, uid_t uid, gid_t gid);
-int virStorageFileProbeFormatFromFD(const char *path,
-                                    int fd);
+int virStorageFileProbeFormatFromBuf(const char *path, char *buf,
+                                     size_t buflen);
 
 virStorageFileMetadataPtr virStorageFileGetMetadata(const char *path,
                                                     int format,
@@ -90,6 +98,10 @@ virStorageFileMetadataPtr virStorageFileGetMetadata(const char *path,
 virStorageFileMetadataPtr virStorageFileGetMetadataFromFD(const char *path,
                                                           int fd,
                                                           int format);
+virStorageFileMetadataPtr virStorageFileGetMetadataFromBuf(const char *path,
+                                                           char *buf,
+                                                           size_t len,
+                                                           int format);
 int virStorageFileChainGetBroken(virStorageFileMetadataPtr chain,
                                  char **broken_file);
 
@@ -112,6 +124,8 @@ enum {
     VIR_STORAGE_FILE_SHFS_GFS2 = (1 << 1),
     VIR_STORAGE_FILE_SHFS_OCFS = (1 << 2),
     VIR_STORAGE_FILE_SHFS_AFS = (1 << 3),
+    VIR_STORAGE_FILE_SHFS_SMB = (1 << 4),
+    VIR_STORAGE_FILE_SHFS_CIFS = (1 << 5),
 };
 
 int virStorageFileIsSharedFS(const char *path);

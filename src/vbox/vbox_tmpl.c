@@ -999,7 +999,7 @@ static virDrvOpenStatus vboxConnectOpen(virConnectPtr conn,
                                         unsigned int flags)
 {
     vboxGlobalData *data = NULL;
-    uid_t uid = getuid();
+    uid_t uid = geteuid();
 
     virCheckFlags(VIR_CONNECT_RO, VIR_DRV_OPEN_ERROR);
 
@@ -1912,6 +1912,27 @@ cleanup:
     return ret;
 }
 
+static virDomainState vboxConvertState(enum MachineState state) {
+    switch (state) {
+        case MachineState_Running:
+            return VIR_DOMAIN_RUNNING;
+        case MachineState_Stuck:
+            return VIR_DOMAIN_BLOCKED;
+        case MachineState_Paused:
+            return VIR_DOMAIN_PAUSED;
+        case MachineState_Stopping:
+            return VIR_DOMAIN_SHUTDOWN;
+        case MachineState_PoweredOff:
+        case MachineState_Saved:
+            return VIR_DOMAIN_SHUTOFF;
+        case MachineState_Aborted:
+            return VIR_DOMAIN_CRASHED;
+        case MachineState_Null:
+        default:
+            return VIR_DOMAIN_NOSTATE;
+    }
+}
+
 static int vboxDomainGetInfo(virDomainPtr dom, virDomainInfoPtr info) {
     VBOX_OBJECT_CHECK(dom->conn, int, -1);
     vboxArray machines = VBOX_ARRAY_INITIALIZER;
@@ -1972,30 +1993,7 @@ static int vboxDomainGetInfo(virDomainPtr dom, virDomainInfoPtr info) {
                 info->nrVirtCpu = CPUCount;
                 info->memory = memorySize * 1024;
                 info->maxMem = maxMemorySize * 1024;
-                switch (state) {
-                    case MachineState_Running:
-                        info->state = VIR_DOMAIN_RUNNING;
-                        break;
-                    case MachineState_Stuck:
-                        info->state = VIR_DOMAIN_BLOCKED;
-                        break;
-                    case MachineState_Paused:
-                        info->state = VIR_DOMAIN_PAUSED;
-                        break;
-                    case MachineState_Stopping:
-                        info->state = VIR_DOMAIN_SHUTDOWN;
-                        break;
-                    case MachineState_PoweredOff:
-                        info->state = VIR_DOMAIN_SHUTOFF;
-                        break;
-                    case MachineState_Aborted:
-                        info->state = VIR_DOMAIN_CRASHED;
-                        break;
-                    case MachineState_Null:
-                    default:
-                        info->state = VIR_DOMAIN_NOSTATE;
-                        break;
-                }
+                info->state = vboxConvertState(state);
 
                 ret = 0;
             }
@@ -2038,30 +2036,7 @@ vboxDomainGetState(virDomainPtr dom,
 
     machine->vtbl->GetState(machine, &mstate);
 
-    switch (mstate) {
-    case MachineState_Running:
-        *state = VIR_DOMAIN_RUNNING;
-        break;
-    case MachineState_Stuck:
-        *state = VIR_DOMAIN_BLOCKED;
-        break;
-    case MachineState_Paused:
-        *state = VIR_DOMAIN_PAUSED;
-        break;
-    case MachineState_Stopping:
-        *state = VIR_DOMAIN_SHUTDOWN;
-        break;
-    case MachineState_PoweredOff:
-        *state = VIR_DOMAIN_SHUTOFF;
-        break;
-    case MachineState_Aborted:
-        *state = VIR_DOMAIN_CRASHED;
-        break;
-    case MachineState_Null:
-    default:
-        *state = VIR_DOMAIN_NOSTATE;
-        break;
-    }
+    *state = vboxConvertState(mstate);
 
     if (reason)
         *reason = 0;
@@ -2237,7 +2212,6 @@ static char *vboxDomainGetXMLDesc(virDomainPtr dom, unsigned int flags) {
     vboxIID iid = VBOX_IID_INITIALIZER;
     int gotAllABoutDef   = -1;
     nsresult rc;
-    char *tmp;
 
     /* Flags checked by virDomainDefFormat */
 
@@ -2363,7 +2337,6 @@ static char *vboxDomainGetXMLDesc(virDomainPtr dom, unsigned int flags) {
                 }
             }
 
-            def->features = 0;
 #if VBOX_API_VERSION < 3001
             machine->vtbl->GetPAEEnabled(machine, &PAEEnabled);
 #elif VBOX_API_VERSION == 3001
@@ -2371,21 +2344,18 @@ static char *vboxDomainGetXMLDesc(virDomainPtr dom, unsigned int flags) {
 #elif VBOX_API_VERSION >= 3002
             machine->vtbl->GetCPUProperty(machine, CPUPropertyType_PAE, &PAEEnabled);
 #endif
-            if (PAEEnabled) {
-                def->features = def->features | (1 << VIR_DOMAIN_FEATURE_PAE);
-            }
+            if (PAEEnabled)
+                def->features[VIR_DOMAIN_FEATURE_PAE] = VIR_DOMAIN_FEATURE_STATE_ON;
 
             machine->vtbl->GetBIOSSettings(machine, &bios);
             if (bios) {
                 bios->vtbl->GetACPIEnabled(bios, &ACPIEnabled);
-                if (ACPIEnabled) {
-                    def->features = def->features | (1 << VIR_DOMAIN_FEATURE_ACPI);
-                }
+                if (ACPIEnabled)
+                    def->features[VIR_DOMAIN_FEATURE_ACPI] = VIR_DOMAIN_FEATURE_STATE_ON;
 
                 bios->vtbl->GetIOAPICEnabled(bios, &IOAPICEnabled);
-                if (IOAPICEnabled) {
-                    def->features = def->features | (1 << VIR_DOMAIN_FEATURE_APIC);
-                }
+                if (IOAPICEnabled)
+                    def->features[VIR_DOMAIN_FEATURE_APIC] = VIR_DOMAIN_FEATURE_STATE_ON;
 
                 VBOX_RELEASE(bios);
             }
@@ -2509,8 +2479,9 @@ static char *vboxDomainGetXMLDesc(virDomainPtr dom, unsigned int flags) {
                     }
                 } else if ((vrdpPresent != 1) && (totalPresent == 0) && (VIR_ALLOC_N(def->graphics, 1) >= 0)) {
                     if (VIR_ALLOC(def->graphics[def->ngraphics]) >= 0) {
+                        const char *tmp;
                         def->graphics[def->ngraphics]->type = VIR_DOMAIN_GRAPHICS_TYPE_DESKTOP;
-                        tmp = getenv("DISPLAY");
+                        tmp = virGetEnvBlockSUID("DISPLAY");
                         if (VIR_STRDUP(def->graphics[def->ngraphics]->data.desktop.display, tmp) < 0) {
                             /* just don't go to cleanup yet as it is ok to have
                              * display as NULL
@@ -5101,40 +5072,43 @@ static virDomainPtr vboxDomainDefineXML(virConnectPtr conn, const char *xml) {
     }
 
 #if VBOX_API_VERSION < 3001
-    rc = machine->vtbl->SetPAEEnabled(machine, (def->features) &
-                                      (1 << VIR_DOMAIN_FEATURE_PAE));
+    rc = machine->vtbl->SetPAEEnabled(machine,
+                                      def->features[VIR_DOMAIN_FEATURE_PAE] ==
+                                      VIR_DOMAIN_FEATURE_STATE_ON);
 #elif VBOX_API_VERSION == 3001
     rc = machine->vtbl->SetCpuProperty(machine, CpuPropertyType_PAE,
-                                       (def->features) &
-                                       (1 << VIR_DOMAIN_FEATURE_PAE));
+                                       def->features[VIR_DOMAIN_FEATURE_PAE] ==
+                                       VIR_DOMAIN_FEATURE_STATE_ON);
 #elif VBOX_API_VERSION >= 3002
     rc = machine->vtbl->SetCPUProperty(machine, CPUPropertyType_PAE,
-                                       (def->features) &
-                                       (1 << VIR_DOMAIN_FEATURE_PAE));
+                                       def->features[VIR_DOMAIN_FEATURE_PAE] ==
+                                       VIR_DOMAIN_FEATURE_STATE_ON);
 #endif
     if (NS_FAILED(rc)) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("could not change PAE status to: %s, rc=%08x"),
-                       ((def->features) & (1 << VIR_DOMAIN_FEATURE_PAE))
+                       (def->features[VIR_DOMAIN_FEATURE_PAE] == VIR_DOMAIN_FEATURE_STATE_ON)
                        ? _("Enabled") : _("Disabled"), (unsigned)rc);
     }
 
     machine->vtbl->GetBIOSSettings(machine, &bios);
     if (bios) {
-        rc = bios->vtbl->SetACPIEnabled(bios, (def->features) &
-                                        (1 << VIR_DOMAIN_FEATURE_ACPI));
+        rc = bios->vtbl->SetACPIEnabled(bios,
+                                        def->features[VIR_DOMAIN_FEATURE_ACPI] ==
+                                        VIR_DOMAIN_FEATURE_STATE_ON);
         if (NS_FAILED(rc)) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
                            _("could not change ACPI status to: %s, rc=%08x"),
-                           ((def->features) & (1 << VIR_DOMAIN_FEATURE_ACPI))
+                           (def->features[VIR_DOMAIN_FEATURE_ACPI] == VIR_DOMAIN_FEATURE_STATE_ON)
                            ? _("Enabled") : _("Disabled"), (unsigned)rc);
         }
-        rc = bios->vtbl->SetIOAPICEnabled(bios, (def->features) &
-                                          (1 << VIR_DOMAIN_FEATURE_APIC));
+        rc = bios->vtbl->SetIOAPICEnabled(bios,
+                                          def->features[VIR_DOMAIN_FEATURE_APIC] ==
+                                          VIR_DOMAIN_FEATURE_STATE_ON);
         if (NS_FAILED(rc)) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
                            _("could not change APIC status to: %s, rc=%08x"),
-                           ((def->features) & (1 << VIR_DOMAIN_FEATURE_APIC))
+                           (def->features[VIR_DOMAIN_FEATURE_APIC] == VIR_DOMAIN_FEATURE_STATE_ON)
                            ? _("Enabled") : _("Disabled"), (unsigned)rc);
         }
         VBOX_RELEASE(bios);

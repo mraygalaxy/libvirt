@@ -174,7 +174,7 @@ vshInterfaceListFree(vshInterfaceListPtr list)
 {
     size_t i;
 
-    if (list && list->nifaces) {
+    if (list && list->ifaces) {
         for (i = 0; i < list->nifaces; i++) {
             if (list->ifaces[i])
                 virInterfaceFree(list->ifaces[i]);
@@ -360,14 +360,14 @@ cmdInterfaceList(vshControl *ctl, const vshCmd *cmd ATTRIBUTE_UNUSED)
     if (!(list = vshInterfaceListCollect(ctl, flags)))
         return false;
 
-    vshPrintExtra(ctl, "%-20s %-10s %s\n", _("Name"), _("State"),
+    vshPrintExtra(ctl, " %-20s %-10s %s\n", _("Name"), _("State"),
                   _("MAC Address"));
-    vshPrintExtra(ctl, "--------------------------------------------\n");
+    vshPrintExtra(ctl, "---------------------------------------------------\n");
 
     for (i = 0; i < list->nifaces; i++) {
         virInterfacePtr iface = list->ifaces[i];
 
-        vshPrint(ctl, "%-20s %-10s %s\n",
+        vshPrint(ctl, " %-20s %-10s %s\n",
                  virInterfaceGetName(iface),
                  virInterfaceIsActive(iface) ? _("active") : _("inactive"),
                  virInterfaceGetMACString(iface));

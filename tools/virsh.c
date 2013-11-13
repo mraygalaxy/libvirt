@@ -25,6 +25,7 @@
 #include <config.h>
 #include "virsh.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,7 @@
 #include <libxml/xpath.h>
 #include <libxml/xmlsave.h>
 
-#ifdef HAVE_READLINE_READLINE_H
+#if WITH_READLINE
 # include <readline/readline.h>
 # include <readline/history.h>
 #endif
@@ -56,7 +57,6 @@
 #include "virerror.h"
 #include "base64.h"
 #include "virbuffer.h"
-#include "console.h"
 #include "viralloc.h"
 #include "virxml.h"
 #include <libvirt/libvirt-qemu.h>
@@ -72,6 +72,7 @@
 #include "virtypedparam.h"
 #include "virstring.h"
 
+#include "virsh-console.h"
 #include "virsh-domain.h"
 #include "virsh-domain-monitor.h"
 #include "virsh-host.h"
@@ -163,10 +164,9 @@ vshPrettyCapacity(unsigned long long val, const char **unit)
 }
 
 /*
- * Convert the strings separated by ',' into array. The caller
- * must free the first array element and the returned array after
- * use (all other array elements belong to the memory allocated
- * for the first array element).
+ * Convert the strings separated by ',' into array. The returned
+ * array is a NULL terminated string list. The caller has to free
+ * the array using virStringFreeList or a similar method.
  *
  * Returns the length of the filled array on success, or -1
  * on error.
@@ -196,7 +196,8 @@ vshStringToArray(const char *str,
         str_tok++;
     }
 
-    if (VIR_ALLOC_N(arr, nstr_tokens) < 0) {
+    /* reserve the NULL element at the end */
+    if (VIR_ALLOC_N(arr, nstr_tokens + 1) < 0) {
         VIR_FREE(str_copied);
         return -1;
     }
@@ -212,12 +213,13 @@ vshStringToArray(const char *str,
             continue;
         }
         *tmp++ = '\0';
-        arr[nstr_tokens++] = str_tok;
+        arr[nstr_tokens++] = vshStrdup(NULL, str_tok);
         str_tok = tmp;
     }
-    arr[nstr_tokens++] = str_tok;
+    arr[nstr_tokens++] = vshStrdup(NULL, str_tok);
 
     *array = arr;
+    VIR_FREE(str_copied);
     return nstr_tokens;
 }
 
@@ -231,7 +233,7 @@ virshErrorHandler(void *unused ATTRIBUTE_UNUSED, virErrorPtr error)
 {
     virFreeError(last_error);
     last_error = virSaveLastError();
-    if (getenv("VIRSH_DEBUG") != NULL)
+    if (virGetEnvAllowSUID("VIRSH_DEBUG") != NULL)
         virDefaultErrorFunc(error);
 }
 
@@ -456,14 +458,13 @@ int
 vshAskReedit(vshControl *ctl, const char *msg)
 {
     int c = -1;
-    struct termios ttyattr;
 
     if (!isatty(STDIN_FILENO))
         return -1;
 
     vshReportError(ctl);
 
-    if (vshMakeStdinRaw(&ttyattr, false) < 0)
+    if (vshTTYMakeRaw(ctl, false) < 0)
         return -1;
 
     while (true) {
@@ -486,7 +487,7 @@ vshAskReedit(vshControl *ctl, const char *msg)
         }
     }
 
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ttyattr);
+    vshTTYRestore(ctl);
 
     vshPrint(ctl, "\r\n");
     return c;
@@ -669,7 +670,7 @@ vshEditWriteToTempFile(vshControl *ctl, const char *doc)
     int fd;
     char ebuf[1024];
 
-    tmpdir = getenv("TMPDIR");
+    tmpdir = virGetEnvBlockSUID("TMPDIR");
     if (!tmpdir) tmpdir = "/tmp";
     if (virAsprintf(&ret, "%s/virshXXXXXX.xml", tmpdir) < 0) {
         vshError(ctl, "%s", _("out of memory"));
@@ -716,9 +717,9 @@ vshEditFile(vshControl *ctl, const char *filename)
     int outfd = STDOUT_FILENO;
     int errfd = STDERR_FILENO;
 
-    editor = getenv("VISUAL");
+    editor = virGetEnvBlockSUID("VISUAL");
     if (!editor)
-        editor = getenv("EDITOR");
+        editor = virGetEnvBlockSUID("EDITOR");
     if (!editor)
         editor = "vi"; /* could be cruel & default to ed(1) here */
 
@@ -884,6 +885,10 @@ static const vshCmdOptDef opts_echo[] = {
      .type = VSH_OT_ALIAS,
      .help = "string"
     },
+    {.name = "hi",
+     .type = VSH_OT_ALIAS,
+     .help = "string=hello"
+    },
     {.name = "string",
      .type = VSH_OT_ARGV,
      .help = N_("arguments to echo")
@@ -920,7 +925,7 @@ cmdEcho(vshControl *ctl, const vshCmd *cmd)
 
         if (xml) {
             virBufferEscapeString(&xmlbuf, "%s", arg);
-            if (virBufferError(&buf)) {
+            if (virBufferError(&xmlbuf)) {
                 vshPrint(ctl, "%s", _("Failed to allocate XML buffer"));
                 return false;
             }
@@ -1010,11 +1015,24 @@ vshCmddefOptParse(const vshCmdDef *cmd, uint32_t *opts_need_arg,
         }
         if (opt->type == VSH_OT_ALIAS) {
             size_t j;
+            char *name = (char *)opt->help; /* cast away const */
+            char *p;
+
             if (opt->flags || !opt->help)
                 return -1; /* alias options are tracked by the original name */
+            if ((p = strchr(name, '=')) &&
+                VIR_STRNDUP(name, name, p - name) < 0)
+                return -1;
             for (j = i + 1; cmd->opts[j].name; j++) {
-                if (STREQ(opt->help, cmd->opts[j].name))
+                if (STREQ(name, cmd->opts[j].name) &&
+                    cmd->opts[j].type != VSH_OT_ALIAS)
                     break;
+            }
+            if (name != opt->help) {
+                VIR_FREE(name);
+                /* If alias comes with value, replacement must not be bool */
+                if (cmd->opts[j].type == VSH_OT_BOOL)
+                    return -1;
             }
             if (!cmd->opts[j].name)
                 return -1; /* alias option must map to a later option name */
@@ -1048,9 +1066,11 @@ static vshCmdOptDef helpopt = {
 };
 static const vshCmdOptDef *
 vshCmddefGetOption(vshControl *ctl, const vshCmdDef *cmd, const char *name,
-                   uint32_t *opts_seen, int *opt_index)
+                   uint32_t *opts_seen, int *opt_index, char **optstr)
 {
     size_t i;
+    const vshCmdOptDef *ret = NULL;
+    char *alias = NULL;
 
     if (STREQ(name, helpopt.name)) {
         return &helpopt;
@@ -1061,16 +1081,36 @@ vshCmddefGetOption(vshControl *ctl, const vshCmdDef *cmd, const char *name,
 
         if (STREQ(opt->name, name)) {
             if (opt->type == VSH_OT_ALIAS) {
-                name = opt->help;
+                char *value;
+
+                /* Two types of replacements:
+                   opt->help = "string": straight replacement of name
+                   opt->help = "string=value": treat boolean flag as
+                   alias of option and its default value */
+                sa_assert(!alias);
+                if (VIR_STRDUP(alias, opt->help) < 0)
+                    goto cleanup;
+                name = alias;
+                if ((value = strchr(name, '='))) {
+                    *value = '\0';
+                    if (*optstr) {
+                        vshError(ctl, _("invalid '=' after option --%s"),
+                                 opt->name);
+                        goto cleanup;
+                    }
+                    if (VIR_STRDUP(*optstr, value + 1) < 0)
+                        goto cleanup;
+                }
                 continue;
             }
             if ((*opts_seen & (1 << i)) && opt->type != VSH_OT_ARGV) {
                 vshError(ctl, _("option --%s already seen"), name);
-                return NULL;
+                goto cleanup;
             }
             *opts_seen |= 1 << i;
             *opt_index = i;
-            return opt;
+            ret = opt;
+            goto cleanup;
         }
     }
 
@@ -1078,7 +1118,9 @@ vshCmddefGetOption(vshControl *ctl, const vshCmdDef *cmd, const char *name,
         vshError(ctl, _("command '%s' doesn't support option --%s"),
                  cmd->name, name);
     }
-    return NULL;
+cleanup:
+    VIR_FREE(alias);
+    return ret;
 }
 
 static const vshCmdOptDef *
@@ -1340,39 +1382,45 @@ vshCommandFree(vshCmd *cmd)
  * @cmd: parsed command line to search
  * @name: option name to search for
  * @opt: result of the search
+ * @needData: true if option must be non-boolean
  *
  * Look up an option passed to CMD by NAME.  Returns 1 with *OPT set
  * to the option if found, 0 with *OPT set to NULL if the name is
  * valid and the option is not required, -1 with *OPT set to NULL if
- * the option is required but not present, and -2 if NAME is not valid
- * (-2 indicates a programming error).  No error messages are issued.
+ * the option is required but not present, and assert if NAME is not
+ * valid (which indicates a programming error).  No error messages are
+ * issued if a value is returned.
  */
-int
-vshCommandOpt(const vshCmd *cmd, const char *name, vshCmdOpt **opt)
+static int
+vshCommandOpt(const vshCmd *cmd, const char *name, vshCmdOpt **opt,
+              bool needData)
 {
     vshCmdOpt *candidate = cmd->opts;
     const vshCmdOptDef *valid = cmd->def->opts;
+    int ret = 0;
+
+    /* See if option is valid and/or required.  */
+    *opt = NULL;
+    while (valid) {
+        assert(valid->name);
+        if (STREQ(name, valid->name))
+            break;
+        valid++;
+    }
+    assert(!needData || valid->type != VSH_OT_BOOL);
+    if (valid->flags & VSH_OFLAG_REQ)
+        ret = -1;
 
     /* See if option is present on command line.  */
     while (candidate) {
         if (STREQ(candidate->def->name, name)) {
             *opt = candidate;
-            return 1;
+            ret = 1;
+            break;
         }
         candidate = candidate->next;
     }
-
-    /* Option not present, see if command requires it.  */
-    *opt = NULL;
-    while (valid) {
-        if (!valid->name)
-            break;
-        if (STREQ(name, valid->name))
-            return (valid->flags & VSH_OFLAG_REQ) == 0 ? 0 : -1;
-        valid++;
-    }
-    /* If we got here, the name is unknown.  */
-    return -2;
+    return ret;
 }
 
 /**
@@ -1393,14 +1441,9 @@ vshCommandOptInt(const vshCmd *cmd, const char *name, int *value)
     vshCmdOpt *arg;
     int ret;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     if (ret <= 0)
         return ret;
-    if (!arg->data) {
-        /* only possible on bool, but if name is bool, this is a
-         * programming bug */
-        return -2;
-    }
 
     if (virStrToLong_i(arg->data, NULL, 10, value) < 0)
         return -1;
@@ -1423,14 +1466,9 @@ vshCommandOptUInt(const vshCmd *cmd, const char *name, unsigned int *value)
     vshCmdOpt *arg;
     int ret;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     if (ret <= 0)
         return ret;
-    if (!arg->data) {
-        /* only possible on bool, but if name is bool, this is a
-         * programming bug */
-        return -2;
-    }
 
     if (virStrToLong_ui(arg->data, NULL, 10, value) < 0)
         return -1;
@@ -1453,14 +1491,9 @@ vshCommandOptUL(const vshCmd *cmd, const char *name, unsigned long *value)
     vshCmdOpt *arg;
     int ret;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     if (ret <= 0)
         return ret;
-    if (!arg->data) {
-        /* only possible on bool, but if name is bool, this is a
-         * programming bug */
-        return -2;
-    }
 
     if (virStrToLong_ul(arg->data, NULL, 10, value) < 0)
         return -1;
@@ -1485,14 +1518,9 @@ vshCommandOptString(const vshCmd *cmd, const char *name, const char **value)
     vshCmdOpt *arg;
     int ret;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     if (ret <= 0)
         return ret;
-    if (!arg->data) {
-        /* only possible on bool, but if name is bool, this is a
-         * programming bug */
-        return -2;
-    }
 
     if (!*arg->data && !(arg->def->flags & VSH_OFLAG_EMPTY_OK)) {
         return -1;
@@ -1527,21 +1555,14 @@ vshCommandOptStringReq(vshControl *ctl,
     /* clear out the value */
     *value = NULL;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     /* option is not required and not present */
     if (ret == 0)
         return 0;
     /* this should not be propagated here, just to be sure */
     if (ret == -1)
         error = N_("Mandatory option not present");
-
-    if (ret == -2)
-        error = N_("Programming error: Invalid option name");
-
-    if (!arg->data)
-        error = N_("Programming error: Requested option is a boolean");
-
-    if (arg->data && !*arg->data && !(arg->def->flags & VSH_OFLAG_EMPTY_OK))
+    else if (!*arg->data && !(arg->def->flags & VSH_OFLAG_EMPTY_OK))
         error = N_("Option argument is empty");
 
     if (error) {
@@ -1569,14 +1590,9 @@ vshCommandOptLongLong(const vshCmd *cmd, const char *name,
     vshCmdOpt *arg;
     int ret;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     if (ret <= 0)
         return ret;
-    if (!arg->data) {
-        /* only possible on bool, but if name is bool, this is a
-         * programming bug */
-        return -2;
-    }
 
     if (virStrToLong_ll(arg->data, NULL, 10, value) < 0)
         return -1;
@@ -1599,14 +1615,9 @@ vshCommandOptULongLong(const vshCmd *cmd, const char *name,
     vshCmdOpt *arg;
     int ret;
 
-    ret = vshCommandOpt(cmd, name, &arg);
+    ret = vshCommandOpt(cmd, name, &arg, true);
     if (ret <= 0)
         return ret;
-    if (!arg->data) {
-        /* only possible on bool, but if name is bool, this is a
-         * programming bug */
-        return -2;
-    }
 
     if (virStrToLong_ull(arg->data, NULL, 10, value) < 0)
         return -1;
@@ -1659,7 +1670,7 @@ vshCommandOptBool(const vshCmd *cmd, const char *name)
 {
     vshCmdOpt *dummy;
 
-    return vshCommandOpt(cmd, name, &dummy) == 1;
+    return vshCommandOpt(cmd, name, &dummy, false) == 1;
 }
 
 /**
@@ -1875,7 +1886,8 @@ vshCommandParse(vshControl *ctl, vshCommandParser *parser)
                 }
                 /* Special case 'help' to ignore all spurious options */
                 if (!(opt = vshCmddefGetOption(ctl, cmd, tkdata + 2,
-                                               &opts_seen, &opt_index))) {
+                                               &opts_seen, &opt_index,
+                                               &optstr))) {
                     VIR_FREE(optstr);
                     if (STREQ(cmd->name, "help"))
                         continue;
@@ -1905,7 +1917,7 @@ vshCommandParse(vshControl *ctl, vshCommandParser *parser)
                     tkdata = NULL;
                     if (optstr) {
                         vshError(ctl, _("invalid '=' after option --%s"),
-                                opt->name);
+                                 opt->name);
                         VIR_FREE(optstr);
                         goto syntaxError;
                     }
@@ -2242,6 +2254,112 @@ vshPrintExtra(vshControl *ctl, const char *format, ...)
 }
 
 
+bool
+vshTTYIsInterruptCharacter(vshControl *ctl ATTRIBUTE_UNUSED,
+                           const char chr ATTRIBUTE_UNUSED)
+{
+#ifndef WIN32
+    if (ctl->istty &&
+        ctl->termattr.c_cc[VINTR] == chr)
+        return true;
+#endif
+
+    return false;
+}
+
+
+bool
+vshTTYAvailable(vshControl *ctl)
+{
+    return ctl->istty;
+}
+
+
+int
+vshTTYDisableInterrupt(vshControl *ctl ATTRIBUTE_UNUSED)
+{
+#ifndef WIN32
+    struct termios termset = ctl->termattr;
+
+    if (!ctl->istty)
+        return -1;
+
+    /* check if we need to set the terminal */
+    if (termset.c_cc[VINTR] == _POSIX_VDISABLE)
+        return 0;
+
+    termset.c_cc[VINTR] = _POSIX_VDISABLE;
+    termset.c_lflag &= ~ICANON;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &termset) < 0)
+        return -1;
+#endif
+
+    return 0;
+}
+
+
+int
+vshTTYRestore(vshControl *ctl ATTRIBUTE_UNUSED)
+{
+#ifndef WIN32
+    if (!ctl->istty)
+        return 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &ctl->termattr) < 0)
+        return -1;
+#endif
+
+    return 0;
+}
+
+
+#if !defined(WIN32) && !defined(HAVE_CFMAKERAW)
+/* provide fallback in case cfmakeraw isn't available */
+static void
+cfmakeraw(struct termios *attr)
+{
+    attr->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+                         | INLCR | IGNCR | ICRNL | IXON);
+    attr->c_oflag &= ~OPOST;
+    attr->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+    attr->c_cflag &= ~(CSIZE | PARENB);
+    attr->c_cflag |= CS8;
+}
+#endif /* !WIN32 && !HAVE_CFMAKERAW */
+
+
+int
+vshTTYMakeRaw(vshControl *ctl ATTRIBUTE_UNUSED,
+              bool report_errors ATTRIBUTE_UNUSED)
+{
+#ifndef WIN32
+    struct termios rawattr = ctl->termattr;
+    char ebuf[1024];
+
+    if (!ctl->istty) {
+        if (report_errors) {
+            vshError(ctl, "%s",
+                     _("unable to make terminal raw: console isn't a tty"));
+        }
+
+        return -1;
+    }
+
+    cfmakeraw(&rawattr);
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &rawattr) < 0) {
+        if (report_errors)
+            vshError(ctl, _("unable to set tty attributes: %s"),
+                     virStrerror(errno, ebuf, sizeof(ebuf)));
+        return -1;
+    }
+#endif
+
+    return 0;
+}
+
+
 void
 vshError(vshControl *ctl, const char *format, ...)
 {
@@ -2293,19 +2411,16 @@ vshEventLoop(void *opaque)
 
 
 /*
- * Initialize connection.
+ * Initialize debug settings.
  */
-static bool
-vshInit(vshControl *ctl)
+static void
+vshInitDebug(vshControl *ctl)
 {
-    char *debugEnv;
-
-    if (ctl->conn)
-        return false;
+    const char *debugEnv;
 
     if (ctl->debug == VSH_DEBUG_DEFAULT) {
         /* log level not set from commandline, check env variable */
-        debugEnv = getenv("VIRSH_DEBUG");
+        debugEnv = virGetEnvAllowSUID("VIRSH_DEBUG");
         if (debugEnv) {
             int debug;
             if (virStrToLong_i(debugEnv, NULL, 10, &debug) < 0 ||
@@ -2320,13 +2435,26 @@ vshInit(vshControl *ctl)
 
     if (ctl->logfile == NULL) {
         /* log file not set from cmdline */
-        debugEnv = getenv("VIRSH_LOG_FILE");
+        debugEnv = virGetEnvBlockSUID("VIRSH_LOG_FILE");
         if (debugEnv && *debugEnv) {
             ctl->logfile = vshStrdup(ctl, debugEnv);
+            vshOpenLogFile(ctl);
         }
     }
+}
 
-    vshOpenLogFile(ctl);
+/*
+ * Initialize connection.
+ */
+static bool
+vshInit(vshControl *ctl)
+{
+    /* Since we have the commandline arguments parsed, we need to
+     * re-initialize all the debugging to make it work properly */
+    vshInitDebug(ctl);
+
+    if (ctl->conn)
+        return false;
 
     /* set up the library error handler */
     virSetErrorFunc(NULL, virshErrorHandler);
@@ -2468,6 +2596,7 @@ vshOutputLogFile(vshControl *ctl, int log_level, const char *msg_format,
     if (safewrite(ctl->log_fd, str, len) < 0)
         goto error;
 
+    VIR_FREE(str);
     return;
 
 error:
@@ -2500,7 +2629,7 @@ vshCloseLogFile(vshControl *ctl)
     }
 }
 
-#ifdef USE_READLINE
+#if WITH_READLINE
 
 /* -----------------
  * Readline stuff
@@ -2619,11 +2748,14 @@ vshReadlineCompletion(const char *text, int start,
     return matches;
 }
 
+# define VIRSH_HISTSIZE_MAX 500000
 
 static int
 vshReadlineInit(vshControl *ctl)
 {
     char *userdir = NULL;
+    int max_history = 500;
+    const char *histsize_str;
 
     /* Allow conditional parsing of the ~/.inputrc file. */
     rl_readline_name = "virsh";
@@ -2632,7 +2764,19 @@ vshReadlineInit(vshControl *ctl)
     rl_attempted_completion_function = vshReadlineCompletion;
 
     /* Limit the total size of the history buffer */
-    stifle_history(500);
+    if ((histsize_str = virGetEnvBlockSUID("VIRSH_HISTSIZE"))) {
+        if (virStrToLong_i(histsize_str, NULL, 10, &max_history) < 0) {
+            vshError(ctl, "%s", _("Bad $VIRSH_HISTSIZE value."));
+            VIR_FREE(userdir);
+            return -1;
+        } else if (max_history > VIRSH_HISTSIZE_MAX || max_history < 0) {
+            vshError(ctl, _("$VIRSH_HISTSIZE value should be between 0 and %d"),
+                     VIRSH_HISTSIZE_MAX);
+            VIR_FREE(userdir);
+            return -1;
+        }
+    }
+    stifle_history(max_history);
 
     /* Prepare to read/write history from/to the $XDG_CACHE_HOME/virsh/history file */
     userdir = virGetUserCacheDirectory();
@@ -2685,7 +2829,7 @@ vshReadline(vshControl *ctl ATTRIBUTE_UNUSED, const char *prompt)
     return readline(prompt);
 }
 
-#else /* !USE_READLINE */
+#else /* !WITH_READLINE */
 
 static int
 vshReadlineInit(vshControl *ctl ATTRIBUTE_UNUSED)
@@ -2719,7 +2863,7 @@ vshReadline(vshControl *ctl, const char *prompt)
     return vshStrdup(ctl, r);
 }
 
-#endif /* !USE_READLINE */
+#endif /* !WITH_READLINE */
 
 static void
 vshDeinitTimer(int timer ATTRIBUTE_UNUSED, void *opaque ATTRIBUTE_UNUSED)
@@ -2946,7 +3090,7 @@ vshShowVersion(vshControl *ctl ATTRIBUTE_UNUSED)
 #ifdef WITH_DTRACE_PROBES
     vshPrint(ctl, " DTrace");
 #endif
-#ifdef USE_READLINE
+#if WITH_READLINE
     vshPrint(ctl, " Readline");
 #endif
 #ifdef WITH_DRIVER_MODULES
@@ -3016,6 +3160,7 @@ vshParseArgv(vshControl *ctl, int argc, char **argv)
             ctl->timing = true;
             break;
         case 'c':
+            VIR_FREE(ctl->name);
             ctl->name = vshStrdup(ctl, optarg);
             break;
         case 'v':
@@ -3031,7 +3176,9 @@ vshParseArgv(vshControl *ctl, int argc, char **argv)
             ctl->readonly = true;
             break;
         case 'l':
+            vshCloseLogFile(ctl);
             ctl->logfile = vshStrdup(ctl, optarg);
+            vshOpenLogFile(ctl);
             break;
         case 'e':
             len = strlen(optarg);
@@ -3149,7 +3296,7 @@ int
 main(int argc, char **argv)
 {
     vshControl _ctl, *ctl = &_ctl;
-    char *defaultConn;
+    const char *defaultConn;
     bool ret = true;
 
     memset(ctl, 0, sizeof(vshControl));
@@ -3172,6 +3319,15 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    if (isatty(STDIN_FILENO)) {
+        ctl->istty = true;
+
+#ifndef WIN32
+        if (tcgetattr(STDIN_FILENO, &ctl->termattr) < 0)
+            ctl->istty = false;
+#endif
+    }
+
     if (virMutexInit(&ctl->lock) < 0) {
         vshError(ctl, "%s", _("Failed to initialize mutex"));
         return EXIT_FAILURE;
@@ -3187,16 +3343,14 @@ main(int argc, char **argv)
     else
         progname++;
 
-    if ((defaultConn = getenv("VIRSH_DEFAULT_CONNECT_URI"))) {
+    if ((defaultConn = virGetEnvBlockSUID("VIRSH_DEFAULT_CONNECT_URI"))) {
         ctl->name = vshStrdup(ctl, defaultConn);
     }
 
-    if (!vshInit(ctl)) {
-        vshDeinit(ctl);
-        exit(EXIT_FAILURE);
-    }
+    vshInitDebug(ctl);
 
-    if (!vshParseArgv(ctl, argc, argv)) {
+    if (!vshParseArgv(ctl, argc, argv) ||
+        !vshInit(ctl)) {
         vshDeinit(ctl);
         exit(EXIT_FAILURE);
     }
@@ -3226,7 +3380,7 @@ main(int argc, char **argv)
             if (ctl->cmdstr == NULL)
                 break;          /* EOF */
             if (*ctl->cmdstr) {
-#if USE_READLINE
+#if WITH_READLINE
                 add_history(ctl->cmdstr);
 #endif
                 if (vshCommandStringParse(ctl, ctl->cmdstr))

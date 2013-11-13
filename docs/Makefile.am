@@ -25,8 +25,6 @@ DOC_SOURCE_DIR=../src
 
 DEVHELP_DIR=$(datadir)/gtk-doc/html/libvirt
 
-BUILT_SOURCES=hvsupport.html.in
-
 apihtml =			\
   html/index.html		\
   html/libvirt-libvirt.html	\
@@ -89,6 +87,12 @@ internals_html_in = \
   $(patsubst $(srcdir)/%,%,$(wildcard $(srcdir)/internals/*.html.in))
 internals_html = $(internals_html_in:%.html.in=%.html)
 
+# todo.html is special - it is shipped in the tarball, but we
+# have a dedicated 'todo' target to rebuild it from a proper
+# config file, all other users are able to build it locally.
+# For all other files, since we ship pre-built html in the
+# tarball, we must also ship the sources, even when those
+# sources are themselves generated.
 dot_html_in = $(notdir $(wildcard $(srcdir)/*.html.in)) \
   todo.html.in \
   hvsupport.html.in
@@ -128,7 +132,7 @@ fig = \
   migration-unmanaged-direct.fig
 
 EXTRA_DIST=					\
-  apibuild.py \
+  apibuild.py genaclperms.pl \
   site.xsl newapi.xsl news.xsl page.xsl \
   hacking1.xsl hacking2.xsl wrapstring.xsl \
   $(dot_html) $(dot_html_in) $(gif) $(apihtml) $(apipng) \
@@ -136,15 +140,22 @@ EXTRA_DIST=					\
   $(xml) $(qemu_xml) $(lxc_xml) $(fig) $(png) $(css) \
   $(patches) $(dot_php_in) $(dot_php_code_in) $(dot_php)\
   $(internals_html_in) $(internals_html) \
-  sitemap.html.in \
+  sitemap.html.in aclperms.htmlinc \
   todo.pl hvsupport.pl todo.cfg-example
+
+acl.html:: $(srcdir)/aclperms.htmlinc
+
+$(srcdir)/aclperms.htmlinc: $(top_srcdir)/src/access/viraccessperm.h \
+        $(srcdir)/genaclperms.pl Makefile.am
+	$(AM_V_GEN)$(PERL) $(srcdir)/genaclperms.pl $< > $@
 
 MAINTAINERCLEANFILES = \
   $(addprefix $(srcdir)/,$(dot_html)) \
   $(addprefix $(srcdir)/,$(apihtml)) \
   $(addprefix $(srcdir)/,$(devhelphtml)) \
   $(addprefix $(srcdir)/,$(internals_html)) \
-  $(addprefix $(srcdir)/,$(dot_php))
+  $(addprefix $(srcdir)/,$(dot_php)) \
+  $(srcdir)/hvsupport.html.in $(srcdir)/aclperms.htmlinc
 
 all-am: web
 
@@ -173,7 +184,9 @@ todo:
 	rm -f todo.html.in
 	$(MAKE) todo.html
 
-hvsupport.html.in: $(srcdir)/hvsupport.pl \
+hvsupport.html:: $(srcdir)/hvsupport.html.in
+
+$(srcdir)/hvsupport.html.in: $(srcdir)/hvsupport.pl \
 		$(srcdir)/../src/libvirt_public.syms \
 	$(srcdir)/../src/libvirt_qemu.syms $(srcdir)/../src/libvirt_lxc.syms \
 	$(srcdir)/../src/driver.h
@@ -222,13 +235,14 @@ internals/%.html.tmp: internals/%.html.in subsite.xsl page.xsl sitemap.html.in
 %.php: %.php.tmp %.php.code.in
 	@if [ -x $(XSLTPROC) ] ; then \
 	  echo "Scripting $@"; \
-	    sed -e '/<a id="php_placeholder"><\/a>/r '"$(srcdir)/$@.code.in" \
+	    sed -e '/<span id="php_placeholder"><\/span>/r '"$(srcdir)/$@.code.in" \
 	    -e /php_placeholder/d < $@.tmp > $(srcdir)/$@ \
 	    || { rm $(srcdir)/$@ && exit 1; }; fi
 
 html/index.html: libvirt-api.xml newapi.xsl page.xsl sitemap.html.in
 	$(AM_V_GEN)if [ -x $(XSLTPROC) ] ; then \
 	  $(XSLTPROC) --nonet -o $(srcdir)/ \
+	  --stringparam builddir '$(abs_top_builddir)' \
 	  $(srcdir)/newapi.xsl $(srcdir)/libvirt-api.xml ; fi && \
 	if test -x $(XMLLINT) && test -x $(XMLCATALOG) ; then \
 	  if $(XMLCATALOG) '$(XML_CATALOG_FILE)' "-//W3C//DTD XHTML 1.0 Strict//EN" \
@@ -278,13 +292,14 @@ $(APIBUILD_STAMP): $(srcdir)/apibuild.py \
 
 
 check-local: all
+dist-local: all
 
 clean-local:
 	rm -f *~ *.bak *.hierarchy *.signals *-unused.txt *.html
 
 maintainer-clean-local: clean-local
 	rm -rf $(srcdir)/libvirt-api.xml $(srcdir)/libvirt-refs.xml \
-		todo.html.in hvsupport.html.in
+		todo.html.in
 	rm -rf $(srcdir)/libvirt-qemu-api.xml $(srcdir)/libvirt-qemu-refs.xml
 	rm -rf $(srcdir)/libvirt-lxc-api.xml $(srcdir)/libvirt-lxc-refs.xml
 	rm -rf $(APIBUILD_STAMP)

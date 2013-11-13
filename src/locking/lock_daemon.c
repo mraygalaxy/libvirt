@@ -128,7 +128,7 @@ static void virLockDaemonLockSpaceDataFree(void *data,
 }
 
 static virLockDaemonPtr
-virLockDaemonNew(bool privileged)
+virLockDaemonNew(virLockDaemonConfigPtr config, bool privileged)
 {
     virLockDaemonPtr lockd;
 
@@ -142,7 +142,7 @@ virLockDaemonNew(bool privileged)
         return NULL;
     }
 
-    if (!(lockd->srv = virNetServerNew(1, 1, 0, 20,
+    if (!(lockd->srv = virNetServerNew(1, 1, 0, config->max_clients,
                                        -1, 0,
                                        false, NULL,
                                        virLockDaemonClientNew,
@@ -605,7 +605,7 @@ virLockDaemonSetupNetworkingSystemD(virNetServerPtr srv)
 
     VIR_DEBUG("Setting up networking from systemd");
 
-    if (!(pidstr = getenv("LISTEN_PID"))) {
+    if (!(pidstr = virGetEnvAllowSUID("LISTEN_PID"))) {
         VIR_DEBUG("No LISTEN_FDS from systemd");
         return 0;
     }
@@ -621,7 +621,7 @@ virLockDaemonSetupNetworkingSystemD(virNetServerPtr srv)
         return 0;
     }
 
-    if (!(fdstr = getenv("LISTEN_FDS"))) {
+    if (!(fdstr = virGetEnvAllowSUID("LISTEN_FDS"))) {
         VIR_DEBUG("No LISTEN_FDS from systemd");
         return 0;
     }
@@ -671,7 +671,7 @@ virLockDaemonSetupNetworkingNative(virNetServerPtr srv, const char *sock_path)
 #if WITH_GNUTLS
                                            NULL,
 #endif
-                                           false, 1)))
+                                           false, 0, 1)))
         return -1;
 
     if (virNetServerAddService(srv, svc, NULL) < 0) {
@@ -1096,10 +1096,11 @@ virLockDaemonUsage(const char *argv0, bool privileged)
               "  %s [options]\n"
               "\n"
               "Options:\n"
+              "  -h | --help            Display program help:\n"
               "  -v | --verbose         Verbose messages.\n"
               "  -d | --daemon          Run as a daemon & write PID file.\n"
               "  -f | --config <file>   Configuration file.\n"
-              "     | --version         Display version information.\n"
+              "  -V | --version         Display version information.\n"
               "  -p | --pid-file <file> Change name of PID file.\n"
               "\n"
               "libvirt lock management daemon:\n"), argv0);
@@ -1138,10 +1139,6 @@ virLockDaemonUsage(const char *argv0, bool privileged)
     }
 }
 
-enum {
-    OPT_VERSION = 129
-};
-
 #define MAX_LISTEN 5
 int main(int argc, char **argv) {
     virNetServerProgramPtr lockProgram = NULL;
@@ -1161,16 +1158,16 @@ int main(int argc, char **argv) {
     int rv;
 
     struct option opts[] = {
-        { "verbose", no_argument, &verbose, 1},
-        { "daemon", no_argument, &godaemon, 1},
+        { "verbose", no_argument, &verbose, 'v'},
+        { "daemon", no_argument, &godaemon, 'd'},
         { "config", required_argument, NULL, 'f'},
         { "pid-file", required_argument, NULL, 'p'},
-        { "version", no_argument, NULL, OPT_VERSION },
-        { "help", no_argument, NULL, '?' },
+        { "version", no_argument, NULL, 'V' },
+        { "help", no_argument, NULL, 'h' },
         {0, 0, 0, 0}
     };
 
-    privileged = getuid() == 0;
+    privileged = geteuid() == 0;
 
     if (setlocale(LC_ALL, "") == NULL ||
         bindtextdomain(PACKAGE, LOCALEDIR) == NULL ||
@@ -1185,7 +1182,7 @@ int main(int argc, char **argv) {
         int optidx = 0;
         int c;
 
-        c = getopt_long(argc, argv, "ldf:p:t:v", opts, &optidx);
+        c = getopt_long(argc, argv, "ldf:p:t:vVh", opts, &optidx);
 
         if (c == -1) {
             break;
@@ -1218,17 +1215,17 @@ int main(int argc, char **argv) {
             }
             break;
 
-        case OPT_VERSION:
+        case 'V':
             virLockDaemonVersion(argv[0]);
-            return 0;
+            exit(EXIT_SUCCESS);
+
+        case 'h':
+            virLockDaemonUsage(argv[0], privileged);
+            exit(EXIT_SUCCESS);
 
         case '?':
-            virLockDaemonUsage(argv[0], privileged);
-            return 2;
-
         default:
-            fprintf(stderr, _("%s: internal error: unknown flag: %c\n"),
-                    argv[0], c);
+            virLockDaemonUsage(argv[0], privileged);
             exit(EXIT_FAILURE);
         }
     }
@@ -1338,7 +1335,7 @@ int main(int argc, char **argv) {
     /* rv == 1, means we setup everything from saved state,
      * so we only setup stuff from scratch if rv == 0 */
     if (rv == 0) {
-        if (!(lockDaemon = virLockDaemonNew(privileged))) {
+        if (!(lockDaemon = virLockDaemonNew(config, privileged))) {
             ret = VIR_LOCK_DAEMON_ERR_INIT;
             goto cleanup;
         }

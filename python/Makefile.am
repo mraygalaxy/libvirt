@@ -20,6 +20,7 @@ INCLUDES = \
 	$(PYTHON_INCLUDES) \
 	-I$(top_builddir)/gnulib/lib \
 	-I$(top_srcdir)/gnulib/lib \
+	-I$(top_srcdir) \
 	-I$(top_builddir)/src \
 	-I$(top_srcdir)/src \
 	-I$(top_srcdir)/src/util \
@@ -28,6 +29,10 @@ INCLUDES = \
 	$(GETTEXT_CPPFLAGS)
 
 AM_CFLAGS = $(WARN_CFLAGS)
+AM_LDFLAGS = \
+	$(RELRO_LDFLAGS)				\
+	$(NO_INDIRECT_LDFLAGS)				\
+	$(NULL)
 
 CLASSES_EXTRA = \
 	libvirt-override-virConnect.py \
@@ -74,6 +79,7 @@ libvirtmod_la_CFLAGS = $(WARN_CFLAGS) $(WARN_PYTHON_CFLAGS)
 
 libvirtmod_la_LDFLAGS = -module -avoid-version -shared \
 	-L$(top_builddir)/src/.libs \
+	$(AM_LDFLAGS) \
 	$(CYGWIN_EXTRA_LDFLAGS)
 libvirtmod_la_LIBADD = $(mylibs) \
 	$(CYGWIN_EXTRA_LIBADD) $(CYGWIN_EXTRA_PYTHON_LIBADD)
@@ -86,6 +92,7 @@ libvirtmod_qemu_la_CFLAGS = $(WARN_PYTHON_CFLAGS)
 
 libvirtmod_qemu_la_LDFLAGS = -module -avoid-version -shared \
 	-L$(top_builddir)/src/.libs \
+	$(AM_LDFLAGS) \
 	$(CYGWIN_EXTRA_LDFLAGS)
 libvirtmod_qemu_la_LIBADD = $(myqemulibs) \
 	$(CYGWIN_EXTRA_LIBADD) $(CYGWIN_EXTRA_PYTHON_LIBADD)
@@ -98,6 +105,7 @@ libvirtmod_lxc_la_CFLAGS = $(WARN_PYTHON_CFLAGS)
 
 libvirtmod_lxc_la_LDFLAGS = -module -avoid-version -shared \
 	-L$(top_builddir)/src/.libs \
+	$(AM_LDFLAGS) \
 	$(CYGWIN_EXTRA_LDFLAGS)
 libvirtmod_lxc_la_LIBADD = $(mylxclibs) \
 	$(CYGWIN_EXTRA_LIBADD) $(CYGWIN_EXTRA_PYTHON_LIBADD)
@@ -155,9 +163,9 @@ uninstall-local:
 CLEANFILES= $(GENERATED) $(QEMU_GENERATED) $(LXC_GENERATED) $(GENERATE).stamp \
 	*.pyc
 
-else
+else ! WITH_PYTHON
 all:
-endif
+endif ! WITH_PYTHON
 
 dummy:
 

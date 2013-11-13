@@ -460,6 +460,7 @@ virSecuritySELinuxLXCInitialize(virSecurityManagerPtr mgr)
 error:
 # if HAVE_SELINUX_LABEL_H
     selabel_close(data->label_handle);
+    data->label_handle = NULL;
 # endif
     virConfFree(selinux_conf);
     VIR_FREE(data->domain_context);
@@ -547,6 +548,7 @@ virSecuritySELinuxQEMUInitialize(virSecurityManagerPtr mgr)
 error:
 #if HAVE_SELINUX_LABEL_H
     selabel_close(data->label_handle);
+    data->label_handle = NULL;
 #endif
     VIR_FREE(data->domain_context);
     VIR_FREE(data->alt_domain_context);
@@ -808,7 +810,8 @@ virSecuritySELinuxSecurityDriverClose(virSecurityManagerPtr mgr)
         return 0;
 
 #if HAVE_SELINUX_LABEL_H
-    selabel_close(data->label_handle);
+    if (data->label_handle)
+        selabel_close(data->label_handle);
 #endif
 
     virHashFree(data->mcs);
@@ -917,10 +920,10 @@ virSecuritySELinuxSetFileconHelper(const char *path, char *tcon, bool optional)
                 security_get_boolean_active("virt_use_nfs") != 1) {
                 msg = _("Setting security context '%s' on '%s' not supported. "
                         "Consider setting virt_use_nfs");
-               if (security_getenforce() == 1)
-                   VIR_WARN(msg, tcon, path);
-               else
-                   VIR_INFO(msg, tcon, path);
+                if (security_getenforce() == 1)
+                    VIR_WARN(msg, tcon, path);
+                else
+                    VIR_INFO(msg, tcon, path);
             } else {
                 VIR_INFO("Setting security context '%s' on '%s' not supported",
                          tcon, path);
@@ -1135,6 +1138,14 @@ virSecuritySELinuxRestoreSecurityImageLabelInt(virSecurityManagerPtr mgr,
     if (seclabel->norelabel || (disk_seclabel && disk_seclabel->norelabel))
         return 0;
 
+    /* If labelskip is true and there are no backing files, then we
+     * know it is safe to skip the restore.  FIXME - backing files should
+     * be tracked in domain XML, at which point labelskip should be a
+     * per-file attribute instead of a disk attribute.  */
+    if (disk_seclabel && disk_seclabel->labelskip &&
+        !disk->backingChain)
+        return 0;
+
     /* Don't restore labels on readoly/shared disks, because
      * other VMs may still be accessing these
      * Alternatively we could iterate over all running
@@ -1187,7 +1198,7 @@ virSecuritySELinuxSetSecurityFileLabel(virDomainDiskDefPtr disk,
     int ret;
     virSecurityDeviceLabelDefPtr disk_seclabel;
     virSecuritySELinuxCallbackDataPtr cbdata = opaque;
-    const virSecurityLabelDefPtr secdef = cbdata->secdef;
+    virSecurityLabelDefPtr secdef = cbdata->secdef;
     virSecuritySELinuxDataPtr data = virSecurityManagerGetPrivateData(cbdata->manager);
 
     disk_seclabel = virDomainDiskDefGetSecurityLabelDef(disk,
@@ -1219,7 +1230,7 @@ virSecuritySELinuxSetSecurityFileLabel(virDomainDiskDefPtr disk,
         disk_seclabel = virDomainDiskDefGenSecurityLabelDef(SECURITY_SELINUX_NAME);
         if (!disk_seclabel)
             return -1;
-        disk_seclabel->norelabel = true;
+        disk_seclabel->labelskip = true;
         if (VIR_APPEND_ELEMENT(disk->seclabels, disk->nseclabels,
                                disk_seclabel) < 0) {
             virSecurityDeviceLabelDefFree(disk_seclabel);
@@ -1816,6 +1827,17 @@ virSecuritySELinuxRestoreSecuritySmartcardCallback(virDomainDefPtr def,
     }
 
     return 0;
+}
+
+
+static const char *
+virSecuritySELinuxGetBaseLabel(virSecurityManagerPtr mgr, int virtType)
+{
+    virSecuritySELinuxDataPtr priv = virSecurityManagerGetPrivateData(mgr);
+    if (virtType == VIR_DOMAIN_VIRT_QEMU && priv->alt_domain_context)
+        return priv->alt_domain_context;
+    else
+        return priv->domain_context;
 }
 
 
@@ -2466,4 +2488,5 @@ virSecurityDriver virSecurityDriverSELinux = {
     .domainSetSecurityTapFDLabel        = virSecuritySELinuxSetTapFDLabel,
 
     .domainGetSecurityMountOptions      = virSecuritySELinuxGetSecurityMountOptions,
+    .getBaseLabel                       = virSecuritySELinuxGetBaseLabel,
 };

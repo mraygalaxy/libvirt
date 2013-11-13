@@ -29,6 +29,7 @@
 
 # include "qemu_monitor.h"
 # include "virbitmap.h"
+# include "cpu/cpu.h"
 
 int qemuMonitorJSONIOProcess(qemuMonitorPtr mon,
                              const char *data,
@@ -250,7 +251,7 @@ int qemuMonitorJSONDrivePivot(qemuMonitorPtr mon,
                               const char *device,
                               const char *file,
                               const char *format)
-    ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(2) ATTRIBUTE_NONNULL(3);
+    ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(2);
 
 int qemuMonitorJSONBlockCommit(qemuMonitorPtr mon,
                                const char *device,
@@ -426,4 +427,7 @@ int qemuMonitorJSONDetachCharDev(qemuMonitorPtr mon,
 int qemuMonitorJSONGetDeviceAliases(qemuMonitorPtr mon,
                                     char ***aliases);
 
+int qemuMonitorJSONGetGuestCPU(qemuMonitorPtr mon,
+                               virArch arch,
+                               virCPUDataPtr *data);
 #endif /* QEMU_MONITOR_JSON_H */

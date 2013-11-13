@@ -1,7 +1,7 @@
 /*
  * snapshot_conf.h: domain snapshot XML processing
  *
- * Copyright (C) 2006-2012 Red Hat, Inc.
+ * Copyright (C) 2006-2013 Red Hat, Inc.
  * Copyright (C) 2006-2008 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -104,6 +104,12 @@ virDomainSnapshotDefPtr virDomainSnapshotDefParseString(const char *xmlStr,
                                                         virDomainXMLOptionPtr xmlopt,
                                                         unsigned int expectedVirtTypes,
                                                         unsigned int flags);
+virDomainSnapshotDefPtr virDomainSnapshotDefParseNode(xmlDocPtr xml,
+                                                      xmlNodePtr root,
+                                                      virCapsPtr caps,
+                                                      virDomainXMLOptionPtr xmlopt,
+                                                      unsigned int expectedVirtTypes,
+                                                      unsigned int flags);
 void virDomainSnapshotDefFree(virDomainSnapshotDefPtr def);
 char *virDomainSnapshotDefFormat(const char *domain_uuid,
                                  virDomainSnapshotDefPtr def,
@@ -113,7 +119,7 @@ int virDomainSnapshotAlignDisks(virDomainSnapshotDefPtr snapshot,
                                 int default_snapshot,
                                 bool require_match);
 virDomainSnapshotObjPtr virDomainSnapshotAssignDef(virDomainSnapshotObjListPtr snapshots,
-                                                   const virDomainSnapshotDefPtr def);
+                                                   virDomainSnapshotDefPtr def);
 
 int virDomainSnapshotObjListGetNames(virDomainSnapshotObjListPtr snapshots,
                                      virDomainSnapshotObjPtr from,
@@ -122,7 +128,7 @@ int virDomainSnapshotObjListGetNames(virDomainSnapshotObjListPtr snapshots,
 int virDomainSnapshotObjListNum(virDomainSnapshotObjListPtr snapshots,
                                 virDomainSnapshotObjPtr from,
                                 unsigned int flags);
-virDomainSnapshotObjPtr virDomainSnapshotFindByName(const virDomainSnapshotObjListPtr snapshots,
+virDomainSnapshotObjPtr virDomainSnapshotFindByName(virDomainSnapshotObjListPtr snapshots,
                                                     const char *name);
 void virDomainSnapshotObjListRemove(virDomainSnapshotObjListPtr snapshots,
                                     virDomainSnapshotObjPtr snapshot);
@@ -169,6 +175,13 @@ int virDomainListSnapshots(virDomainSnapshotObjListPtr snapshots,
 
 bool virDomainSnapshotDefIsExternal(virDomainSnapshotDefPtr def);
 bool virDomainSnapshotIsExternal(virDomainSnapshotObjPtr snap);
+
+int virDomainSnapshotRedefinePrep(virDomainPtr domain,
+                                  virDomainObjPtr vm,
+                                  virDomainSnapshotDefPtr *def,
+                                  virDomainSnapshotObjPtr *snap,
+                                  bool *update_current,
+                                  unsigned int flags);
 
 VIR_ENUM_DECL(virDomainSnapshotLocation)
 VIR_ENUM_DECL(virDomainSnapshotState)

@@ -30,6 +30,7 @@ testCompareXMLToXMLFiles(const char *inxml, const char *outxml, bool live)
     char *actual = NULL;
     int ret = -1;
     virDomainDefPtr def = NULL;
+    unsigned int flags = live ? 0 : VIR_DOMAIN_XML_INACTIVE;
 
     if (virtTestLoadFile(inxml, &inXmlData) < 0)
         goto fail;
@@ -37,11 +38,10 @@ testCompareXMLToXMLFiles(const char *inxml, const char *outxml, bool live)
         goto fail;
 
     if (!(def = virDomainDefParseString(inXmlData, driver.caps, driver.xmlopt,
-                                        QEMU_EXPECTED_VIRT_TYPES,
-                                        live ? 0 : VIR_DOMAIN_XML_INACTIVE)))
+                                        QEMU_EXPECTED_VIRT_TYPES, flags)))
         goto fail;
 
-    if (!(actual = virDomainDefFormat(def, VIR_DOMAIN_XML_SECURE)))
+    if (!(actual = virDomainDefFormat(def, VIR_DOMAIN_XML_SECURE | flags)))
         goto fail;
 
     if (STRNEQ(outXmlData, actual)) {
@@ -84,16 +84,19 @@ testCompareXMLToXMLHelper(const void *data)
                     abs_srcdir, info->name) < 0)
         goto cleanup;
 
-    if (info->when & WHEN_INACTIVE) {
-        ret = testCompareXMLToXMLFiles(xml_in,
-                                       info->different ? xml_out : xml_in,
-                                       false);
-    }
-    if (info->when & WHEN_ACTIVE) {
-        ret = testCompareXMLToXMLFiles(xml_in,
-                                       info->different ? xml_out : xml_in,
-                                       true);
-    }
+    if ((info->when & WHEN_INACTIVE) &&
+        testCompareXMLToXMLFiles(xml_in,
+                                 info->different ? xml_out : xml_in,
+                                 false) < 0)
+        goto cleanup;
+
+    if ((info->when & WHEN_ACTIVE) &&
+        testCompareXMLToXMLFiles(xml_in,
+                                 info->different ? xml_out : xml_in,
+                                 true) < 0)
+        goto cleanup;
+
+    ret = 0;
 
 cleanup:
     VIR_FREE(xml_in);
@@ -117,7 +120,7 @@ mymain(void)
     do {                                                                \
         const struct testInfo info = {name, is_different, when};        \
         if (virtTestRun("QEMU XML-2-XML " name,                         \
-                        1, testCompareXMLToXMLHelper, &info) < 0)       \
+                        testCompareXMLToXMLHelper, &info) < 0)          \
             ret = -1;                                                   \
     } while (0)
 
@@ -156,6 +159,8 @@ mymain(void)
     DO_TEST("cpu-eoi-enabled");
     DO_TEST("eoi-disabled");
     DO_TEST("eoi-enabled");
+    DO_TEST("pv-spinlock-disabled");
+    DO_TEST("pv-spinlock-enabled");
 
     DO_TEST("hyperv");
     DO_TEST("hyperv-off");
@@ -257,7 +262,10 @@ mymain(void)
 
     DO_TEST_FULL("seclabel-dynamic-baselabel", false, WHEN_INACTIVE);
     DO_TEST_FULL("seclabel-dynamic-override", false, WHEN_INACTIVE);
+    DO_TEST_FULL("seclabel-dynamic-labelskip", true, WHEN_INACTIVE);
+    DO_TEST_FULL("seclabel-dynamic-relabel", false, WHEN_INACTIVE);
     DO_TEST("seclabel-static");
+    DO_TEST_FULL("seclabel-static-labelskip", false, WHEN_ACTIVE);
     DO_TEST("seclabel-none");
     DO_TEST("numad-static-vcpu-no-numatune");
     DO_TEST("disk-scsi-lun-passthrough-sgio");
@@ -294,6 +302,8 @@ mymain(void)
     DO_TEST_DIFFERENT("pci-bridge-many-disks");
     DO_TEST_DIFFERENT("pci-autoadd-addr");
     DO_TEST_DIFFERENT("pci-autoadd-idx");
+    DO_TEST_DIFFERENT("pcie-root");
+    DO_TEST_DIFFERENT("q35");
 
     DO_TEST("hostdev-scsi-lsi");
     DO_TEST("hostdev-scsi-virtio-scsi");
@@ -306,6 +316,11 @@ mymain(void)
     DO_TEST_DIFFERENT("hostdev-scsi-autogen-address");
 
     DO_TEST_DIFFERENT("s390-defaultconsole");
+
+    DO_TEST("pcihole64");
+    DO_TEST_DIFFERENT("pcihole64-gib");
+    DO_TEST("pcihole64-none");
+    DO_TEST("pcihole64-q35");
 
     virObjectUnref(driver.caps);
     virObjectUnref(driver.xmlopt);

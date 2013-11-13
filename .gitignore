@@ -19,6 +19,7 @@
 *~
 .#*
 .deps
+.dirstamp
 .gdb_history
 .git
 .git-module-status
@@ -58,6 +59,7 @@
 /daemon/libvirtd.policy
 /daemon/libvirtd.service
 /daemon/test_libvirtd.aug
+/docs/aclperms.htmlinc
 /docs/apibuild.py.stamp
 /docs/devhelp/libvirt.devhelp
 /docs/hvsupport.html.in
@@ -115,8 +117,11 @@
 /src/libvirt*.def
 /src/libvirt.syms
 /src/libvirt_access.syms
+/src/libvirt_access.xml
 /src/libvirt_access_lxc.syms
+/src/libvirt_access_lxc.xml
 /src/libvirt_access_qemu.syms
+/src/libvirt_access_qemu.xml
 /src/libvirt_*.stp
 /src/libvirt_*helper
 /src/libvirt_*probes.h
@@ -138,9 +143,12 @@
 /src/rpc/virkeepaliveprotocol.[ch]
 /src/rpc/virnetprotocol.[ch]
 /src/test_libvirt*.aug
+/src/test_virtlockd.aug
 /src/util/virkeymaps.h
 /src/virt-aa-helper
 /src/virtlockd
+/src/virtlockd.8
+/src/virtlockd.8.in
 /src/virtlockd.init
 /tests/*.log
 /tests/*.pid
@@ -158,6 +166,7 @@
 /tests/hashtest
 /tests/jsontest
 /tests/libvirtdconftest
+/tests/metadatatest
 /tests/networkxml2argvtest
 /tests/nodeinfotest
 /tests/nwfilterxml2xmltest
@@ -167,6 +176,7 @@
 /tests/openvzutilstest
 /tests/qemuagenttest
 /tests/qemuargv2xmltest
+/tests/qemucapabilitiestest
 /tests/qemuhelptest
 /tests/qemuhotplugtest
 /tests/qemumonitorjsontest
@@ -200,7 +210,9 @@
 /tests/virkeycodetest
 /tests/virkeyfiletest
 /tests/virlockspacetest
+/tests/virlogtest
 /tests/virnet*test
+/tests/virpcitest
 /tests/virportallocatortest
 /tests/virshtest
 /tests/virstoragetest
@@ -208,6 +220,7 @@
 /tests/virsystemdtest
 /tests/virtimetest
 /tests/viruritest
+/tests/vmwarevertest
 /tests/vmx2xmltest
 /tests/xencapstest
 /tests/xmconfigtest
@@ -215,11 +228,15 @@
 /tools/libvirt-guests.init
 /tools/libvirt-guests.service
 /tools/libvirt-guests.sh
+/tools/virt-login-shell
 /tools/virsh
 /tools/virsh-*-edit.c
 /tools/virt-*-validate
 /tools/virt-sanlock-cleanup
 /update.log
+GPATH
+GRTAGS
+GTAGS
 Makefile
 Makefile.in
 TAGS

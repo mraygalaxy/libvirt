@@ -33,12 +33,7 @@
 #include <sched.h>
 #include "conf/domain_conf.h"
 
-#if WITH_NUMACTL
-# define NUMA_VERSION1_COMPATIBILITY 1
-# include <numa.h>
-#endif
-
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__APPLE__)
 # include <sys/types.h>
 # include <sys/sysctl.h>
 #endif
@@ -55,12 +50,13 @@
 #include "virfile.h"
 #include "virtypedparam.h"
 #include "virstring.h"
+#include "virnuma.h"
 
 #define VIR_FROM_THIS VIR_FROM_NONE
 
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__APPLE__)
 static int
-freebsdNodeGetCPUCount(void)
+appleFreebsdNodeGetCPUCount(void)
 {
     int ncpu_mib[2] = { CTL_HW, HW_NCPU };
     unsigned long ncpu;
@@ -72,6 +68,33 @@ freebsdNodeGetCPUCount(void)
     }
 
     return ncpu;
+}
+
+/* VIR_HW_PHYSMEM - the resulting value of HW_PHYSMEM of FreeBSD
+ * is 64 bits while that of Mac OS X is still 32 bits.
+ * Mac OS X provides HW_MEMSIZE for 64 bits version of HW_PHYSMEM
+ * since 10.6.8 (Snow Leopard) at least.
+ */
+# ifdef HW_MEMSIZE
+#  define VIR_HW_PHYSMEM HW_MEMSIZE
+# else
+#  define VIR_HW_PHYSMEM HW_PHYSMEM
+# endif
+static int
+appleFreebsdNodeGetMemorySize(unsigned long *memory)
+{
+    int mib[2] = { CTL_HW, VIR_HW_PHYSMEM };
+    unsigned long physmem;
+    size_t len = sizeof(physmem);
+
+    if (sysctl(mib, 2, &physmem, &len, NULL, 0) == -1) {
+        virReportSystemError(errno, "%s", _("cannot obtain memory size"));
+        return -1;
+    }
+
+    *memory = (unsigned long)(physmem / 1024);
+
+    return 0;
 }
 #endif
 
@@ -92,15 +115,6 @@ freebsdNodeGetCPUCount(void)
 int linuxNodeInfoCPUPopulate(FILE *cpuinfo,
                              const char *sysfs_dir,
                              virNodeInfoPtr nodeinfo);
-
-static int linuxNodeGetCPUStats(FILE *procstat,
-                                int cpuNum,
-                                virNodeCPUStatsPtr params,
-                                int *nparams);
-static int linuxNodeGetMemoryStats(FILE *meminfo,
-                                   int cellNum,
-                                   virNodeMemoryStatsPtr params,
-                                   int *nparams);
 
 /* Return the positive decimal contents of the given
  * DIR/cpu%u/FILE, or -1 on error.  If DEFAULT_VALUE is non-negative
@@ -205,7 +219,8 @@ virNodeParseSocket(const char *dir, unsigned int cpu)
 # if defined(__powerpc__) || \
     defined(__powerpc64__) || \
     defined(__s390__) || \
-    defined(__s390x__)
+    defined(__s390x__) || \
+    defined(__aarch64__)
     /* ppc and s390(x) has -1 */
     if (ret < 0)
         ret = 0;
@@ -441,7 +456,7 @@ int linuxNodeInfoCPUPopulate(FILE *cpuinfo,
              * and parsed in next iteration, because it is not in expected
              * format and thus lead to error. */
         }
-# elif defined(__arm__)
+# elif defined(__arm__) || defined(__aarch64__)
         char *buf = line;
         if (STRPREFIX(buf, "BogoMIPS")) {
             char *p;
@@ -588,10 +603,11 @@ cleanup:
 
 # define TICK_TO_NSEC (1000ull * 1000ull * 1000ull / sysconf(_SC_CLK_TCK))
 
-int linuxNodeGetCPUStats(FILE *procstat,
-                         int cpuNum,
-                         virNodeCPUStatsPtr params,
-                         int *nparams)
+static int
+linuxNodeGetCPUStats(FILE *procstat,
+                     int cpuNum,
+                     virNodeCPUStatsPtr params,
+                     int *nparams)
 {
     int ret = -1;
     char line[1024];
@@ -691,10 +707,11 @@ cleanup:
     return ret;
 }
 
-int linuxNodeGetMemoryStats(FILE *meminfo,
-                            int cellNum,
-                            virNodeMemoryStatsPtr params,
-                            int *nparams)
+static int
+linuxNodeGetMemoryStats(FILE *meminfo,
+                        int cellNum,
+                        virNodeMemoryStatsPtr params,
+                        int *nparams)
 {
     int ret = -1;
     size_t i = 0, j = 0, k = 0;
@@ -850,6 +867,30 @@ error:
     virBitmapFree(map);
     return NULL;
 }
+
+
+static virBitmapPtr
+virNodeGetSiblingsList(const char *dir, int cpu_id)
+{
+    char *path = NULL;
+    char *buf = NULL;
+    virBitmapPtr ret = NULL;
+
+    if (virAsprintf(&path, "%s/cpu%u/topology/thread_siblings_list",
+                    dir, cpu_id) < 0)
+        goto cleanup;
+
+    if (virFileReadAll(path, SYSFS_THREAD_SIBLINGS_LIST_LENGTH_MAX, &buf) < 0)
+        goto cleanup;
+
+    if (virBitmapParse(buf, 0, &ret, virNumaGetMaxCPUs()) < 0)
+        goto cleanup;
+
+cleanup:
+    VIR_FREE(buf);
+    VIR_FREE(path);
+    return ret;
+}
 #endif
 
 int nodeGetInfo(virNodeInfoPtr nodeinfo)
@@ -882,13 +923,13 @@ cleanup:
     VIR_FORCE_FCLOSE(cpuinfo);
     return ret;
     }
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__APPLE__)
     {
     nodeinfo->nodes = 1;
     nodeinfo->sockets = 1;
     nodeinfo->threads = 1;
 
-    nodeinfo->cpus = freebsdNodeGetCPUCount();
+    nodeinfo->cpus = appleFreebsdNodeGetCPUCount();
     if (nodeinfo->cpus == -1)
         return -1;
 
@@ -897,24 +938,24 @@ cleanup:
     unsigned long cpu_freq;
     size_t cpu_freq_len = sizeof(cpu_freq);
 
+# ifdef __FreeBSD__
     if (sysctlbyname("dev.cpu.0.freq", &cpu_freq, &cpu_freq_len, NULL, 0) < 0) {
         virReportSystemError(errno, "%s", _("cannot obtain CPU freq"));
         return -1;
     }
 
     nodeinfo->mhz = cpu_freq;
-
-    /* get memory information */
-    int mib[2] = { CTL_HW, HW_PHYSMEM };
-    unsigned long physmem;
-    size_t len = sizeof(physmem);
-
-    if (sysctl(mib, 2, &physmem, &len, NULL, 0) == -1) {
-        virReportSystemError(errno, "%s", _("cannot obtain memory size"));
+# else
+    if (sysctlbyname("hw.cpufrequency", &cpu_freq, &cpu_freq_len, NULL, 0) < 0) {
+        virReportSystemError(errno, "%s", _("cannot obtain CPU freq"));
         return -1;
     }
 
-    nodeinfo->memory = (unsigned long)(physmem / 1024);
+    nodeinfo->mhz = cpu_freq / 1000000;
+# endif
+
+    if (appleFreebsdNodeGetMemorySize(&nodeinfo->memory) < 0)
+        return -1;
 
     return 0;
     }
@@ -966,29 +1007,21 @@ int nodeGetMemoryStats(int cellNum ATTRIBUTE_UNUSED,
         int ret;
         char *meminfo_path = NULL;
         FILE *meminfo;
+        int max_node;
 
         if (cellNum == VIR_NODE_MEMORY_STATS_ALL_CELLS) {
             if (VIR_STRDUP(meminfo_path, MEMINFO_PATH) < 0)
                 return -1;
         } else {
-# if WITH_NUMACTL
-            if (numa_available() < 0) {
-# endif
-                virReportError(VIR_ERR_INTERNAL_ERROR,
-                               "%s", _("NUMA not supported on this host"));
+            if ((max_node = virNumaGetMaxNode()) < 0)
                 return -1;
-# if WITH_NUMACTL
-            }
-# endif
 
-# if WITH_NUMACTL
-            if (cellNum > numa_max_node()) {
+            if (cellNum > max_node) {
                 virReportInvalidArg(cellNum,
                                     _("cellNum in %s must be less than or equal to %d"),
-                                    __FUNCTION__, numa_max_node());
+                                    __FUNCTION__, max_node);
                 return -1;
             }
-# endif
 
             if (virAsprintf(&meminfo_path, "%s/node/node%d/meminfo",
                             SYSFS_SYSTEM_PATH, cellNum) < 0)
@@ -1047,8 +1080,8 @@ nodeGetCPUCount(void)
 
     VIR_FREE(cpupath);
     return ncpu;
-#elif defined(__FreeBSD__)
-    return freebsdNodeGetCPUCount();
+#elif defined(__FreeBSD__) || defined(__APPLE__)
+    return appleFreebsdNodeGetCPUCount();
 #else
     virReportError(VIR_ERR_NO_SUPPORT, "%s",
                    _("host cpu counting not implemented on this platform"));
@@ -1520,49 +1553,12 @@ nodeGetFreeMemoryFake(void)
     return ret;
 }
 
-#if WITH_NUMACTL
-# if LIBNUMA_API_VERSION <= 1
-#  define NUMA_MAX_N_CPUS 4096
-# else
-#  define NUMA_MAX_N_CPUS (numa_all_cpus_ptr->size)
-# endif
-
-# define n_bits(var) (8 * sizeof(var))
-# define MASK_CPU_ISSET(mask, cpu) \
-  (((mask)[((cpu) / n_bits(*(mask)))] >> ((cpu) % n_bits(*(mask)))) & 1)
-
-static unsigned long long nodeGetCellMemory(int cell);
-
-static virBitmapPtr
-virNodeGetSiblingsList(const char *dir, int cpu_id)
-{
-    char *path = NULL;
-    char *buf = NULL;
-    virBitmapPtr ret = NULL;
-
-    if (virAsprintf(&path, "%s/cpu%u/topology/thread_siblings_list",
-                    dir, cpu_id) < 0)
-        goto cleanup;
-
-    if (virFileReadAll(path, SYSFS_THREAD_SIBLINGS_LIST_LENGTH_MAX, &buf) < 0)
-        goto cleanup;
-
-    if (virBitmapParse(buf, 0, &ret, NUMA_MAX_N_CPUS) < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                       _("Failed to parse thread siblings"));
-        goto cleanup;
-    }
-
-cleanup:
-    VIR_FREE(buf);
-    VIR_FREE(path);
-    return ret;
-}
-
 /* returns 1 on success, 0 if the detection failed and -1 on hard error */
 static int
-virNodeCapsFillCPUInfo(int cpu_id, virCapsHostNUMACellCPUPtr cpu)
+virNodeCapsFillCPUInfo(int cpu_id ATTRIBUTE_UNUSED,
+                       virCapsHostNUMACellCPUPtr cpu ATTRIBUTE_UNUSED)
 {
+#ifdef __linux__
     int tmp;
     cpu->id = cpu_id;
 
@@ -1582,67 +1578,67 @@ virNodeCapsFillCPUInfo(int cpu_id, virCapsHostNUMACellCPUPtr cpu)
         return -1;
 
     return 0;
+#else
+    virReportError(VIR_ERR_NO_SUPPORT, "%s",
+                   _("node cpu info not implemented on this platform"));
+    return -1;
+#endif
 }
 
 int
 nodeCapsInitNUMA(virCapsPtr caps)
 {
     int n;
-    unsigned long *mask = NULL;
-    unsigned long *allonesmask = NULL;
     unsigned long long memory;
     virCapsHostNUMACellCPUPtr cpus = NULL;
+    virBitmapPtr cpumap = NULL;
     int ret = -1;
-    int max_n_cpus = NUMA_MAX_N_CPUS;
     int ncpus = 0;
+    int cpu;
     bool topology_failed = false;
+    int max_node;
 
-    if (numa_available() < 0)
+    if (!virNumaIsAvailable())
         return nodeCapsInitNUMAFake(caps);
 
-    int mask_n_bytes = max_n_cpus / 8;
-    if (VIR_ALLOC_N(mask, mask_n_bytes / sizeof(*mask)) < 0)
+    if ((max_node = virNumaGetMaxNode()) < 0)
         goto cleanup;
-    if (VIR_ALLOC_N(allonesmask, mask_n_bytes / sizeof(*mask)) < 0)
-        goto cleanup;
-    memset(allonesmask, 0xff, mask_n_bytes);
 
-    for (n = 0; n <= numa_max_node(); n++) {
+    for (n = 0; n <= max_node; n++) {
         size_t i;
-        /* The first time this returns -1, ENOENT if node doesn't exist... */
-        if (numa_node_to_cpus(n, mask, mask_n_bytes) < 0) {
-            VIR_WARN("NUMA topology for cell %d of %d not available, ignoring",
-                     n, numa_max_node()+1);
-            continue;
-        }
-        /* second, third... times it returns an all-1's mask */
-        if (memcmp(mask, allonesmask, mask_n_bytes) == 0) {
-            VIR_DEBUG("NUMA topology for cell %d of %d is all ones, ignoring",
-                      n, numa_max_node()+1);
-            continue;
-        }
 
-        /* Detect the amount of memory in the numa cell */
-        memory = nodeGetCellMemory(n);
+        if ((ncpus = virNumaGetNodeCPUs(n, &cpumap)) < 0) {
+            if (ncpus == -2)
+                continue;
 
-        for (ncpus = 0, i = 0; i < max_n_cpus; i++)
-            if (MASK_CPU_ISSET(mask, i))
-                ncpus++;
+            goto cleanup;
+        }
 
         if (VIR_ALLOC_N(cpus, ncpus) < 0)
             goto cleanup;
+        cpu = 0;
 
-        for (ncpus = 0, i = 0; i < max_n_cpus; i++) {
-            if (MASK_CPU_ISSET(mask, i)) {
-                if (virNodeCapsFillCPUInfo(i, cpus + ncpus++) < 0) {
+        for (i = 0; i < virBitmapSize(cpumap); i++) {
+            bool cpustate;
+            if (virBitmapGetBit(cpumap, i, &cpustate) < 0)
+                continue;
+
+            if (cpustate) {
+                if (virNodeCapsFillCPUInfo(i, cpus + cpu++) < 0) {
                     topology_failed = true;
                     virResetLastError();
                 }
             }
         }
 
+        /* Detect the amount of memory in the numa cell in KiB */
+        virNumaGetNodeMemory(n, &memory, NULL);
+        memory >>= 10;
+
         if (virCapabilitiesAddHostNUMACell(caps, n, ncpus, memory, cpus) < 0)
             goto cleanup;
+
+        cpus = NULL;
     }
 
     ret = 0;
@@ -1651,11 +1647,12 @@ cleanup:
     if (topology_failed || ret < 0)
         virCapabilitiesClearHostNUMACellCPUTopology(cpus, ncpus);
 
+    virBitmapFree(cpumap);
+    VIR_FREE(cpus);
+
     if (ret < 0)
         VIR_FREE(cpus);
 
-    VIR_FREE(mask);
-    VIR_FREE(allonesmask);
     return ret;
 }
 
@@ -1665,15 +1662,18 @@ nodeGetCellsFreeMemory(unsigned long long *freeMems,
                        int startCell,
                        int maxCells)
 {
+    unsigned long long mem;
     int n, lastCell, numCells;
     int ret = -1;
     int maxCell;
 
-    if (numa_available() < 0)
+    if (!virNumaIsAvailable())
         return nodeGetCellsFreeMemoryFake(freeMems,
                                           startCell, maxCells);
 
-    maxCell = numa_max_node();
+    if ((maxCell = virNumaGetMaxNode()) < 0)
+        return 0;
+
     if (startCell > maxCell) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("start cell %d out of range (0-%d)"),
@@ -1685,9 +1685,7 @@ nodeGetCellsFreeMemory(unsigned long long *freeMems,
         lastCell = maxCell;
 
     for (numCells = 0, n = startCell; n <= lastCell; n++) {
-        long long mem;
-        if (numa_node_size64(n, &mem) < 0)
-            mem = 0;
+        virNumaGetNodeMemory(n, NULL, &mem);
 
         freeMems[numCells++] = mem;
     }
@@ -1700,81 +1698,22 @@ cleanup:
 unsigned long long
 nodeGetFreeMemory(void)
 {
+    unsigned long long mem;
     unsigned long long freeMem = 0;
+    int max_node;
     int n;
 
-    if (numa_available() < 0)
+    if (!virNumaIsAvailable())
         return nodeGetFreeMemoryFake();
 
+    if ((max_node = virNumaGetMaxNode()) < 0)
+        return 0;
 
-    for (n = 0; n <= numa_max_node(); n++) {
-        long long mem;
-        if (numa_node_size64(n, &mem) < 0)
-            continue;
+    for (n = 0; n <= max_node; n++) {
+        virNumaGetNodeMemory(n, NULL, &mem);
 
         freeMem += mem;
     }
 
     return freeMem;
 }
-
-/**
- * nodeGetCellMemory
- * @cell: The number of the numa cell to get memory info for.
- *
- * Will call the numa_node_size64() function from libnuma to get
- * the amount of total memory in bytes. It is then converted to
- * KiB and returned.
- *
- * Returns 0 if unavailable, amount of memory in KiB on success.
- */
-static unsigned long long nodeGetCellMemory(int cell)
-{
-    long long mem;
-    unsigned long long memKiB = 0;
-    int maxCell;
-
-    /* Make sure the provided cell number is valid. */
-    maxCell = numa_max_node();
-    if (cell > maxCell) {
-        virReportError(VIR_ERR_INTERNAL_ERROR,
-                       _("cell %d out of range (0-%d)"),
-                       cell, maxCell);
-        goto cleanup;
-    }
-
-    /* Get the amount of memory(bytes) in the node */
-    mem = numa_node_size64(cell, NULL);
-    if (mem < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR,
-                       _("Failed to query NUMA total memory for node: %d"),
-                       cell);
-        goto cleanup;
-    }
-
-    /* Convert the memory from bytes to KiB */
-    memKiB = mem >> 10;
-
-cleanup:
-    return memKiB;
-}
-
-
-#else
-int nodeCapsInitNUMA(virCapsPtr caps) {
-    return nodeCapsInitNUMAFake(caps);
-}
-
-int nodeGetCellsFreeMemory(unsigned long long *freeMems,
-                           int startCell,
-                           int maxCells)
-{
-    return nodeGetCellsFreeMemoryFake(freeMems,
-                                      startCell, maxCells);
-}
-
-unsigned long long nodeGetFreeMemory(void)
-{
-    return nodeGetFreeMemoryFake();
-}
-#endif

@@ -1,7 +1,7 @@
 /*
  * nwfilter_ebiptables_driver.c: driver for ebtables/iptables on tap devices
  *
- * Copyright (C) 2011-2012 Red Hat, Inc.
+ * Copyright (C) 2011-2013 Red Hat, Inc.
  * Copyright (C) 2010-2012 IBM Corp.
  * Copyright (C) 2010-2012 Stefan Berger
  *
@@ -188,6 +188,9 @@ static const char ebiptables_script_set_ifs[] =
 
 static const char *m_state_out_str   = "-m state --state NEW,ESTABLISHED";
 static const char *m_state_in_str    = "-m state --state ESTABLISHED";
+static const char *m_state_out_str_new = "-m conntrack --ctstate NEW,ESTABLISHED";
+static const char *m_state_in_str_new  = "-m conntrack --ctstate ESTABLISHED";
+
 static const char *m_physdev_in_str  = "-m physdev " PHYSDEV_IN;
 static const char *m_physdev_out_str = "-m physdev " PHYSDEV_OUT;
 static const char *m_physdev_out_old_str = "-m physdev " PHYSDEV_OUT_OLD;
@@ -3232,7 +3235,7 @@ ebiptablesCanApplyBasicRules(void) {
  */
 static int
 ebtablesApplyBasicRules(const char *ifname,
-                        const virMacAddrPtr macaddr)
+                        const virMacAddr *macaddr)
 {
     virBuffer buf = VIR_BUFFER_INITIALIZER;
     char chain[MAX_CHAINNAME_LENGTH];
@@ -3325,7 +3328,7 @@ tear_down_tmpebchains:
  */
 static int
 ebtablesApplyDHCPOnlyRules(const char *ifname,
-                           const virMacAddrPtr macaddr,
+                           const virMacAddr *macaddr,
                            virNWFilterVarValuePtr dhcpsrvrs,
                            bool leaveTemporary)
 {
@@ -3561,8 +3564,8 @@ static int ebtablesCleanAll(const char *ifname)
 static int
 ebiptablesRuleOrderSort(const void *a, const void *b)
 {
-    const ebiptablesRuleInstPtr insta = (const ebiptablesRuleInstPtr)a;
-    const ebiptablesRuleInstPtr instb = (const ebiptablesRuleInstPtr)b;
+    const ebiptablesRuleInst *insta = a;
+    const ebiptablesRuleInst *instb = b;
     const char *root = virNWFilterChainSuffixTypeToString(
                                      VIR_NWFILTER_CHAINSUFFIX_ROOT);
     bool root_a = STREQ(insta->neededProtocolChain, root);
@@ -3587,14 +3590,14 @@ normal:
 static int
 ebiptablesRuleOrderSortPtr(const void *a, const void *b)
 {
-    const ebiptablesRuleInstPtr *insta = a;
-    const ebiptablesRuleInstPtr *instb = b;
+    ebiptablesRuleInst * const *insta = a;
+    ebiptablesRuleInst * const *instb = b;
     return ebiptablesRuleOrderSort(*insta, *instb);
 }
 
 static int
-ebiptablesFilterOrderSort(const virHashKeyValuePairPtr a,
-                          const virHashKeyValuePairPtr b)
+ebiptablesFilterOrderSort(const virHashKeyValuePair *a,
+                          const virHashKeyValuePair *b)
 {
     /* elements' values has been limited to range [-1000, 1000] */
     return *(virNWFilterChainPriority *)a->value -
@@ -4338,6 +4341,49 @@ ebiptablesDriverProbeCtdir(void)
         iptables_ctdir_corrected = CTDIR_STATUS_OLD;
 }
 
+static void
+ebiptablesDriverProbeStateMatch(void)
+{
+    virBuffer buf = VIR_BUFFER_INITIALIZER;
+    char *cmdout = NULL, *version;
+    unsigned long thisversion;
+
+    NWFILTER_SET_IPTABLES_SHELLVAR(&buf);
+
+    virBufferAsprintf(&buf,
+                      "$IPT --version");
+
+    if (ebiptablesExecCLI(&buf, NULL, &cmdout) < 0) {
+        VIR_ERROR(_("Testing of iptables command failed: %s"),
+                  cmdout);
+        return;
+    }
+
+    /*
+     * we expect output in the format
+     * iptables v1.4.16
+     */
+    if (!(version = strchr(cmdout, 'v')) ||
+        virParseVersionString(version + 1, &thisversion, true) < 0) {
+        VIR_ERROR(_("Could not determine iptables version from string %s"),
+                  cmdout);
+        goto cleanup;
+    }
+
+    /*
+     * since version 1.4.16 '-m state --state ...' will be converted to
+     * '-m conntrack --ctstate ...'
+     */
+    if (thisversion >= 1 * 1000000 + 4 * 1000 + 16) {
+        m_state_out_str = m_state_out_str_new;
+        m_state_in_str = m_state_in_str_new;
+    }
+
+cleanup:
+    VIR_FREE(cmdout);
+    return;
+}
+
 static int
 ebiptablesDriverInit(bool privileged)
 {
@@ -4375,8 +4421,10 @@ ebiptablesDriverInit(bool privileged)
         return -ENOTSUP;
     }
 
-    if (iptables_cmd_path)
+    if (iptables_cmd_path) {
         ebiptablesDriverProbeCtdir();
+        ebiptablesDriverProbeStateMatch();
+    }
 
     ebiptables_driver.flags = TECHDRV_FLAG_INITIALIZED;
 

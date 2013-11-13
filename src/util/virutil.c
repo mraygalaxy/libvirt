@@ -692,10 +692,15 @@ virGetUserEnt(uid_t uid, char **name, gid_t *group, char **dir)
         if (VIR_RESIZE_N(strbuf, strbuflen, strbuflen, strbuflen) < 0)
             goto cleanup;
     }
-    if (rc != 0 || pw == NULL) {
+    if (rc != 0) {
         virReportSystemError(rc,
                              _("Failed to find user record for uid '%u'"),
                              (unsigned int) uid);
+        goto cleanup;
+    } else if (pw == NULL) {
+        virReportError(VIR_ERR_SYSTEM_ERROR,
+                       _("Failed to find user record for uid '%u'"),
+                       (unsigned int) uid);
         goto cleanup;
     }
 
@@ -746,9 +751,16 @@ static char *virGetGroupEnt(gid_t gid)
         }
     }
     if (rc != 0 || gr == NULL) {
-        virReportSystemError(rc,
-                             _("Failed to find group record for gid '%u'"),
-                             (unsigned int) gid);
+        if (rc != 0) {
+            virReportSystemError(rc,
+                                 _("Failed to find group record for gid '%u'"),
+                                 (unsigned int) gid);
+        } else {
+            virReportError(VIR_ERR_SYSTEM_ERROR,
+                           _("Failed to find group record for gid '%u'"),
+                           (unsigned int) gid);
+        }
+
         VIR_FREE(strbuf);
         return NULL;
     }
@@ -770,7 +782,7 @@ virGetUserDirectoryByUID(uid_t uid)
 
 static char *virGetXDGDirectory(const char *xdgenvname, const char *xdgdefdir)
 {
-    const char *path = getenv(xdgenvname);
+    const char *path = virGetEnvBlockSUID(xdgenvname);
     char *ret = NULL;
     char *home = NULL;
 
@@ -798,7 +810,7 @@ char *virGetUserCacheDirectory(void)
 
 char *virGetUserRuntimeDirectory(void)
 {
-    const char *path = getenv("XDG_RUNTIME_DIR");
+    const char *path = virGetEnvBlockSUID("XDG_RUNTIME_DIR");
 
     if (!path || !path[0]) {
         return virGetUserCacheDirectory();
@@ -983,29 +995,49 @@ virGetGroupID(const char *group, gid_t *gid)
 }
 
 
-/* Compute the list of supplementary groups associated with @uid, and
- * including @gid in the list (unless it is -1), storing a malloc'd
- * result into @list.  Return the size of the list on success, or -1
- * on failure with error reported and errno set. May not be called
- * between fork and exec. */
+/* Compute the list of primary and supplementary groups associated
+ * with @uid, and including @gid in the list (unless it is -1),
+ * storing a malloc'd result into @list. Return the size of the list
+ * on success, or -1 on failure with error reported and errno set. May
+ * not be called between fork and exec. */
 int
 virGetGroupList(uid_t uid, gid_t gid, gid_t **list)
 {
     int ret = -1;
     char *user = NULL;
+    gid_t primary;
 
     *list = NULL;
     if (uid == (uid_t)-1)
         return 0;
 
-    if (virGetUserEnt(uid, &user,
-                      gid == (gid_t)-1 ? &gid : NULL, NULL) < 0)
+    if (virGetUserEnt(uid, &user, &primary, NULL) < 0)
         return -1;
 
-    ret = mgetgroups(user, gid, list);
-    if (ret < 0)
+    ret = mgetgroups(user, primary, list);
+    if (ret < 0) {
         virReportSystemError(errno,
                              _("cannot get group list for '%s'"), user);
+        goto cleanup;
+    }
+
+    if (gid != (gid_t)-1) {
+        size_t i;
+
+        for (i = 0; i < ret; i++) {
+            if ((*list)[i] == gid)
+                goto cleanup;
+        }
+        if (VIR_APPEND_ELEMENT(*list, i, gid) < 0) {
+            ret = -1;
+            VIR_FREE(*list);
+            goto cleanup;
+        } else {
+            ret = i;
+        }
+    }
+
+cleanup:
     VIR_FREE(user);
     return ret;
 }
@@ -1111,7 +1143,7 @@ virGetUserDirectoryByUID(uid_t uid ATTRIBUTE_UNUSED)
     const char *dir;
     char *ret;
 
-    dir = getenv("HOME");
+    dir = virGetEnvBlockSUID("HOME");
 
     /* Only believe HOME if it is an absolute path and exists */
     if (dir) {
@@ -1131,7 +1163,7 @@ virGetUserDirectoryByUID(uid_t uid ATTRIBUTE_UNUSED)
 
     if (!dir)
         /* USERPROFILE is probably the closest equivalent to $HOME? */
-        dir = getenv("USERPROFILE");
+        dir = virGetEnvBlockSUID("USERPROFILE");
 
     if (VIR_STRDUP(ret, dir) < 0)
         return NULL;
@@ -1679,7 +1711,7 @@ virIsCapableFCHost(const char *sysfs_prefix,
                     host) < 0)
         return false;
 
-    if (access(sysfs_path, F_OK) == 0)
+    if (virFileExists(sysfs_path))
         ret = true;
 
     VIR_FREE(sysfs_path);
@@ -1708,8 +1740,8 @@ virIsCapableVport(const char *sysfs_prefix,
                     "vport_create") < 0)
         goto cleanup;
 
-    if ((access(fc_host_path, F_OK) == 0) ||
-        (access(scsi_host_path, F_OK) == 0))
+    if (virFileExists(fc_host_path) ||
+        virFileExists(scsi_host_path))
         ret = true;
 
 cleanup:
@@ -2030,10 +2062,13 @@ virFindFCHostCapableVport(const char *sysfs_prefix ATTRIBUTE_UNUSED)
  * Returns 0 if the numbers are equal, -1 if b is greater, 1 if a is greater.
  */
 int
-virCompareLimitUlong(unsigned long long a, unsigned long b)
+virCompareLimitUlong(unsigned long long a, unsigned long long b)
 {
     if (a == b)
         return 0;
+
+    if (!b)
+        return -1;
 
     if (a == 0 || a > b)
         return 1;
@@ -2095,4 +2130,43 @@ cleanup:
     VIR_FREE(tmp_label);
 
     return rc;
+}
+
+
+/**
+ * virGetEnvBlockSUID:
+ * @name: the environment variable name
+ *
+ * Obtain an environment variable which is unsafe to
+ * use when running setuid. If running setuid, a NULL
+ * value will be returned
+ */
+const char *virGetEnvBlockSUID(const char *name)
+{
+    return secure_getenv(name); /* exempt from syntax-check-rules */
+}
+
+
+/**
+ * virGetEnvBlockSUID:
+ * @name: the environment variable name
+ *
+ * Obtain an environment variable which is safe to
+ * use when running setuid. The value will be returned
+ * even when running setuid
+ */
+const char *virGetEnvAllowSUID(const char *name)
+{
+    return getenv(name); /* exempt from syntax-check-rules */
+}
+
+
+/**
+ * virIsSUID:
+ * Return a true value if running setuid. Does not
+ * check for elevated capabilities bits.
+ */
+bool virIsSUID(void)
+{
+    return getuid() != geteuid();
 }

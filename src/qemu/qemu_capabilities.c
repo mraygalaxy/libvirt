@@ -234,8 +234,17 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
 
               "vnc-share-policy", /* 150 */
               "device-del-event",
+              "dmi-to-pci-bridge",
+              "i440fx-pci-hole64-size",
+              "q35-pci-hole64-size",
 
-              "x-rdma", /* 152 */
+              "usb-storage", /* 155 */
+              "usb-storage.removable",
+              "virtio-mmio",
+              "ich9-intel-hda",
+              "kvm-pit-lost-tick-policy",
+
+              "rdma", /* 160 */
     );
 
 struct _virQEMUCaps {
@@ -726,13 +735,13 @@ virQEMUCapsInitGuest(virCapsPtr caps,
     if (!binary)
         return 0;
 
-    if (access("/dev/kvm", F_OK) == 0 &&
+    if (virFileExists("/dev/kvm") &&
         (virQEMUCapsGet(qemubinCaps, QEMU_CAPS_KVM) ||
          virQEMUCapsGet(qemubinCaps, QEMU_CAPS_ENABLE_KVM) ||
          kvmbin))
         haskvm = true;
 
-    if (access("/dev/kqemu", F_OK) == 0 &&
+    if (virFileExists("/dev/kqemu") &&
         virQEMUCapsGet(qemubinCaps, QEMU_CAPS_KQEMU))
         haskqemu = true;
 
@@ -900,7 +909,7 @@ virCapsPtr virQEMUCapsInit(virQEMUCapsCachePtr cache)
                                            "tcp");
 
     virCapabilitiesAddHostMigrateTransport(caps,
-                                           "x-rdma");
+                                           "rdma");
 
     /* QEMU can support pretty much every arch that exists,
      * so just probe for them all - we gracefully fail
@@ -1106,7 +1115,7 @@ virQEMUCapsComputeCmdFlags(const char *help,
      *  -incoming unix   (qemu >= 0.12.0)
      *  -incoming fd     (qemu >= 0.12.0)
      *  -incoming stdio  (all earlier kvm)
-     *  -incoming x-rdma (qemu >= 1.6.0)
+     *  -incoming rdma   (qemu >= 1.7.0)
      *
      * NB, there was a pre-kvm-79 'tcp' support, but it
      * was broken, because it blocked the monitor console
@@ -1387,6 +1396,10 @@ struct virQEMUCapsStringFlags virQEMUCapsObjectTypes[] = {
     { "pci-bridge", QEMU_CAPS_DEVICE_PCI_BRIDGE },
     { "vfio-pci", QEMU_CAPS_DEVICE_VFIO_PCI },
     { "scsi-generic", QEMU_CAPS_DEVICE_SCSI_GENERIC },
+    { "i82801b11-bridge", QEMU_CAPS_DEVICE_DMI_TO_PCI_BRIDGE },
+    { "usb-storage", QEMU_CAPS_DEVICE_USB_STORAGE },
+    { "virtio-mmio", QEMU_CAPS_DEVICE_VIRTIO_MMIO },
+    { "ich9-intel-hda", QEMU_CAPS_DEVICE_ICH9_INTEL_HDA },
 };
 
 static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsVirtioBlk[] = {
@@ -1440,6 +1453,22 @@ static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsScsiGeneric[] = {
     { "bootindex", QEMU_CAPS_DEVICE_SCSI_GENERIC_BOOTINDEX },
 };
 
+static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsI440FXPciHost[] = {
+    { "pci-hole64-size", QEMU_CAPS_I440FX_PCI_HOLE64_SIZE },
+};
+
+static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsQ35PciHost[] = {
+    { "pci-hole64-size", QEMU_CAPS_Q35_PCI_HOLE64_SIZE },
+};
+
+static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsUsbStorage[] = {
+    { "removable", QEMU_CAPS_USB_STORAGE_REMOVABLE },
+};
+
+static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsKVMPit[] = {
+    { "lost_tick_policy", QEMU_CAPS_KVM_PIT_TICK_POLICY },
+};
+
 struct virQEMUCapsObjectTypeProps {
     const char *type;
     struct virQEMUCapsStringFlags *props;
@@ -1477,6 +1506,14 @@ static struct virQEMUCapsObjectTypeProps virQEMUCapsObjectProps[] = {
       ARRAY_CARDINALITY(virQEMUCapsObjectPropsUsbHost) },
     { "scsi-generic", virQEMUCapsObjectPropsScsiGeneric,
       ARRAY_CARDINALITY(virQEMUCapsObjectPropsScsiGeneric) },
+    { "i440FX-pcihost", virQEMUCapsObjectPropsI440FXPciHost,
+      ARRAY_CARDINALITY(virQEMUCapsObjectPropsI440FXPciHost) },
+    { "q35-pcihost", virQEMUCapsObjectPropsQ35PciHost,
+      ARRAY_CARDINALITY(virQEMUCapsObjectPropsQ35PciHost) },
+    { "usb-storage", virQEMUCapsObjectPropsUsbStorage,
+      ARRAY_CARDINALITY(virQEMUCapsObjectPropsUsbStorage) },
+    { "kvm-pit", virQEMUCapsObjectPropsKVMPit,
+      ARRAY_CARDINALITY(virQEMUCapsObjectPropsKVMPit) },
 };
 
 
@@ -1667,6 +1704,7 @@ virQEMUCapsExtractDeviceStr(const char *qemu,
                          "-device", "ide-drive,?",
                          "-device", "usb-host,?",
                          "-device", "scsi-generic,?",
+                         "-device", "usb-storage,?",
                          NULL);
     /* qemu -help goes to stdout, but qemu -device ? goes to stderr.  */
     virCommandSetErrorBuffer(cmd, &output);
@@ -2105,14 +2143,19 @@ virQEMUCapsProbeQMPMachineTypes(virQEMUCapsPtr qemuCaps,
         goto cleanup;
 
     for (i = 0; i < nmachines; i++) {
-        if (VIR_STRDUP(qemuCaps->machineAliases[i], machines[i]->alias) < 0 ||
-            VIR_STRDUP(qemuCaps->machineTypes[i], machines[i]->name) < 0)
+        if (STREQ(machines[i]->name, "none"))
+            continue;
+        qemuCaps->nmachineTypes++;
+        if (VIR_STRDUP(qemuCaps->machineAliases[qemuCaps->nmachineTypes -1],
+                       machines[i]->alias) < 0 ||
+            VIR_STRDUP(qemuCaps->machineTypes[qemuCaps->nmachineTypes - 1],
+                       machines[i]->name) < 0)
             goto cleanup;
         if (machines[i]->isDefault)
             defIdx = i;
-        qemuCaps->machineMaxCpus[i] = machines[i]->maxCpus;
+        qemuCaps->machineMaxCpus[qemuCaps->nmachineTypes - 1] =
+            machines[i]->maxCpus;
     }
-    qemuCaps->nmachineTypes = nmachines;
 
     if (defIdx)
         virQEMUCapsSetDefaultMachine(qemuCaps, defIdx);
@@ -2358,7 +2401,8 @@ cleanup:
 
 
 static void virQEMUCapsMonitorNotify(qemuMonitorPtr mon ATTRIBUTE_UNUSED,
-                                     virDomainObjPtr vm ATTRIBUTE_UNUSED)
+                                     virDomainObjPtr vm ATTRIBUTE_UNUSED,
+                                     void *opaque ATTRIBUTE_UNUSED)
 {
 }
 
@@ -2440,8 +2484,8 @@ virQEMUCapsInitArchQMPBasic(virQEMUCapsPtr qemuCaps,
     char *archstr = NULL;
     int ret = -1;
 
-    if (qemuCaps->version >= MIN_X_RDMA_VERSION) {
-        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_X_RDMA);
+    if (qemuCaps->version >= MIN_RDMA_VERSION) {
+        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
     }
 
     if (!(archstr = qemuMonitorGetTargetArch(mon)))
@@ -2471,95 +2515,15 @@ cleanup:
     return ret;
 }
 
-static int
-virQEMUCapsInitQMP(virQEMUCapsPtr qemuCaps,
-                   const char *libDir,
-                   uid_t runUid,
-                   gid_t runGid)
+int
+virQEMUCapsInitQMPMonitor(virQEMUCapsPtr qemuCaps,
+                          qemuMonitorPtr mon)
 {
     int ret = -1;
-    virCommandPtr cmd = NULL;
-    qemuMonitorPtr mon = NULL;
     int major, minor, micro;
     char *package = NULL;
-    int status = 0;
-    virDomainChrSourceDef config;
-    char *monarg = NULL;
-    char *monpath = NULL;
-    char *pidfile = NULL;
-    pid_t pid = 0;
-    virDomainObj vm;
 
-    /* the ".sock" sufix is important to avoid a possible clash with a qemu
-     * domain called "capabilities"
-     */
-    if (virAsprintf(&monpath, "%s/%s", libDir, "capabilities.monitor.sock") < 0)
-        goto cleanup;
-    if (virAsprintf(&monarg, "unix:%s,server,nowait", monpath) < 0)
-        goto cleanup;
-
-    /* ".pidfile" suffix is used rather than ".pid" to avoid a possible clash
-     * with a qemu domain called "capabilities"
-     * Normally we'd use runDir for pid files, but because we're using
-     * -daemonize we need QEMU to be allowed to create them, rather
-     * than libvirtd. So we're using libDir which QEMU can write to
-     */
-    if (virAsprintf(&pidfile, "%s/%s", libDir, "capabilities.pidfile") < 0)
-        goto cleanup;
-
-    memset(&config, 0, sizeof(config));
-    config.type = VIR_DOMAIN_CHR_TYPE_UNIX;
-    config.data.nix.path = monpath;
-    config.data.nix.listen = false;
-
-    VIR_DEBUG("Try to get caps via QMP qemuCaps=%p", qemuCaps);
-
-    /*
-     * We explicitly need to use -daemonize here, rather than
-     * virCommandDaemonize, because we need to synchronize
-     * with QEMU creating its monitor socket API. Using
-     * daemonize guarantees control won't return to libvirt
-     * until the socket is present.
-     */
-    cmd = virCommandNewArgList(qemuCaps->binary,
-                               "-S",
-                               "-no-user-config",
-                               "-nodefaults",
-                               "-nographic",
-                               "-M", "none",
-                               "-qmp", monarg,
-                               "-pidfile", pidfile,
-                               "-daemonize",
-                               NULL);
-    virCommandAddEnvPassCommon(cmd);
-    virCommandClearCaps(cmd);
-    virCommandSetGID(cmd, runGid);
-    virCommandSetUID(cmd, runUid);
-
-    if (virCommandRun(cmd, &status) < 0)
-        goto cleanup;
-
-    if (status != 0) {
-        ret = 0;
-        VIR_DEBUG("QEMU %s exited with status %d", qemuCaps->binary, status);
-        goto cleanup;
-    }
-
-    if (virPidFileReadPath(pidfile, &pid) < 0) {
-        VIR_DEBUG("Failed to read pidfile %s", pidfile);
-        ret = 0;
-        goto cleanup;
-    }
-
-    memset(&vm, 0, sizeof(vm));
-    vm.pid = pid;
-
-    if (!(mon = qemuMonitorOpen(&vm, &config, true, &callbacks))) {
-        ret = 0;
-        goto cleanup;
-    }
-
-    virObjectLock(mon);
+    /* @mon is supposed to be locked by callee */
 
     if (qemuMonitorSetCapabilities(mon) < 0) {
         virErrorPtr err = virGetLastError();
@@ -2625,6 +2589,107 @@ virQEMUCapsInitQMP(virQEMUCapsPtr qemuCaps,
         goto cleanup;
 
     ret = 0;
+cleanup:
+    VIR_FREE(package);
+    return ret;
+}
+
+static int
+virQEMUCapsInitQMP(virQEMUCapsPtr qemuCaps,
+                   const char *libDir,
+                   uid_t runUid,
+                   gid_t runGid)
+{
+    int ret = -1;
+    virCommandPtr cmd = NULL;
+    qemuMonitorPtr mon = NULL;
+    int status = 0;
+    virDomainChrSourceDef config;
+    char *monarg = NULL;
+    char *monpath = NULL;
+    char *pidfile = NULL;
+    pid_t pid = 0;
+    virDomainObjPtr vm = NULL;
+    virDomainXMLOptionPtr xmlopt = NULL;
+
+    /* the ".sock" sufix is important to avoid a possible clash with a qemu
+     * domain called "capabilities"
+     */
+    if (virAsprintf(&monpath, "%s/%s", libDir, "capabilities.monitor.sock") < 0)
+        goto cleanup;
+    if (virAsprintf(&monarg, "unix:%s,server,nowait", monpath) < 0)
+        goto cleanup;
+
+    /* ".pidfile" suffix is used rather than ".pid" to avoid a possible clash
+     * with a qemu domain called "capabilities"
+     * Normally we'd use runDir for pid files, but because we're using
+     * -daemonize we need QEMU to be allowed to create them, rather
+     * than libvirtd. So we're using libDir which QEMU can write to
+     */
+    if (virAsprintf(&pidfile, "%s/%s", libDir, "capabilities.pidfile") < 0)
+        goto cleanup;
+
+    memset(&config, 0, sizeof(config));
+    config.type = VIR_DOMAIN_CHR_TYPE_UNIX;
+    config.data.nix.path = monpath;
+    config.data.nix.listen = false;
+
+    VIR_DEBUG("Try to get caps via QMP qemuCaps=%p", qemuCaps);
+
+    /*
+     * We explicitly need to use -daemonize here, rather than
+     * virCommandDaemonize, because we need to synchronize
+     * with QEMU creating its monitor socket API. Using
+     * daemonize guarantees control won't return to libvirt
+     * until the socket is present.
+     */
+    cmd = virCommandNewArgList(qemuCaps->binary,
+                               "-S",
+                               "-no-user-config",
+                               "-nodefaults",
+                               "-nographic",
+                               "-M", "none",
+                               "-qmp", monarg,
+                               "-pidfile", pidfile,
+                               "-daemonize",
+                               NULL);
+    virCommandAddEnvPassCommon(cmd);
+    virCommandClearCaps(cmd);
+    virCommandSetGID(cmd, runGid);
+    virCommandSetUID(cmd, runUid);
+
+    if (virCommandRun(cmd, &status) < 0)
+        goto cleanup;
+
+    if (status != 0) {
+        ret = 0;
+        VIR_DEBUG("QEMU %s exited with status %d", qemuCaps->binary, status);
+        goto cleanup;
+    }
+
+    if (virPidFileReadPath(pidfile, &pid) < 0) {
+        VIR_DEBUG("Failed to read pidfile %s", pidfile);
+        ret = 0;
+        goto cleanup;
+    }
+
+    if (!(xmlopt = virDomainXMLOptionNew(NULL, NULL, NULL)) ||
+        !(vm = virDomainObjNew(xmlopt)))
+        goto cleanup;
+
+    vm->pid = pid;
+
+    if (!(mon = qemuMonitorOpen(vm, &config, true, &callbacks, NULL))) {
+        ret = 0;
+        goto cleanup;
+    }
+
+    virObjectLock(mon);
+
+    if (virQEMUCapsInitQMPMonitor(qemuCaps, mon) < 0)
+        goto cleanup;
+
+    ret = 0;
 
 cleanup:
     if (mon)
@@ -2634,7 +2699,8 @@ cleanup:
     virCommandFree(cmd);
     VIR_FREE(monarg);
     VIR_FREE(monpath);
-    VIR_FREE(package);
+    virObjectUnref(vm);
+    virObjectUnref(xmlopt);
 
     if (pid != 0) {
         char ebuf[1024];
@@ -2819,4 +2885,24 @@ bool
 virQEMUCapsUsedQMP(virQEMUCapsPtr qemuCaps)
 {
     return qemuCaps->usedQMP;
+}
+
+bool
+virQEMUCapsSupportsChardev(virDomainDefPtr def,
+                           virQEMUCapsPtr qemuCaps,
+                           virDomainChrDefPtr chr)
+{
+    if (!virQEMUCapsGet(qemuCaps, QEMU_CAPS_CHARDEV) ||
+        !virQEMUCapsGet(qemuCaps, QEMU_CAPS_DEVICE))
+        return false;
+
+    if (def->os.arch != VIR_ARCH_ARMV7L)
+        return true;
+
+    /* This may not be true for all ARM machine types, but at least
+     * the only supported non-virtio serial devices of vexpress and versatile
+     * don't have the -chardev property wired up. */
+    return (chr->info.type == VIR_DOMAIN_DEVICE_ADDRESS_TYPE_VIRTIO_MMIO ||
+            (chr->deviceType == VIR_DOMAIN_CHR_DEVICE_TYPE_CONSOLE &&
+             chr->targetType == VIR_DOMAIN_CHR_CONSOLE_TARGET_TYPE_VIRTIO));
 }
