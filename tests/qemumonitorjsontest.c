@@ -1671,19 +1671,23 @@ testQemuMonitorJSONqemuMonitorJSONGetMigrationStatus(const void *data)
 
     expectedStatus.status = QEMU_MONITOR_MIGRATION_STATUS_ACTIVE;
     expectedStatus.total_time = 47;
+    expectedStatus.setup_time = 100;
     expectedStatus.ram_total = 1611038720;
     expectedStatus.ram_remaining = 1605013504;
     expectedStatus.ram_transferred = 3625548;
+    expectedStatus.mbps = 345;
 
     if (qemuMonitorTestAddItem(test, "query-migrate",
                                "{"
                                "    \"return\": {"
                                "        \"status\": \"active\","
                                "        \"total-time\": 47,"
+                               "        \"setup-time\": 100,"
                                "        \"ram\": {"
                                "            \"total\": 1611038720,"
                                "            \"remaining\": 1605013504,"
-                               "            \"transferred\": 3625548"
+                               "            \"transferred\": 3625548,"
+                               "            \"mbps\": 345"
                                "        }"
                                "    },"
                                "    \"id\": \"libvirt-13\""

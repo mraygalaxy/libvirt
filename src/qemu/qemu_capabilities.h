@@ -203,8 +203,6 @@ enum virQEMUCapsFlags {
     QEMU_CAPS_LAST,                   /* this must always be the last item */
 };
 
-#define MIN_RDMA_VERSION 1005000
-
 typedef struct _virQEMUCaps virQEMUCaps;
 typedef virQEMUCaps *virQEMUCapsPtr;
 

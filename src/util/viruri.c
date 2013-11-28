@@ -187,9 +187,9 @@ virURIParse(const char *uri)
         goto error;
 
     /* First check: does it even make sense to jump inside */
-    
-    /* 
-     * IPv6 rdma over iwarp is broken in linux. Waiting for a 
+
+    /*
+     * IPv6 rdma over iwarp is broken in linux. Waiting for a
      * fix on the kernel side...
      */
     if (ret->server != NULL && !STREQ(ret->scheme, "rdma") &&

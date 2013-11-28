@@ -244,7 +244,7 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
               "ich9-intel-hda",
               "kvm-pit-lost-tick-policy",
 
-              "rdma", /* 160 */
+              "migrate-qemu-rdma", /* 160 */
     );
 
 struct _virQEMUCaps {
@@ -1135,6 +1135,9 @@ virQEMUCapsComputeCmdFlags(const char *help,
     } else if (kvm_version > 0) {
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_KVM_STDIO);
     }
+
+    if (version >= 1007000)
+        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
 
     if (version >= 10000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_0_10);
@@ -2484,10 +2487,6 @@ virQEMUCapsInitArchQMPBasic(virQEMUCapsPtr qemuCaps,
     char *archstr = NULL;
     int ret = -1;
 
-    if (qemuCaps->version >= MIN_RDMA_VERSION) {
-        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
-    }
-
     if (!(archstr = qemuMonitorGetTargetArch(mon)))
         return -1;
 
@@ -2570,6 +2569,10 @@ virQEMUCapsInitQMPMonitor(virQEMUCapsPtr qemuCaps,
 
     if (qemuCaps->version >= 1006000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_DEVICE_VIDEO_PRIMARY);
+
+    if (qemuCaps->version >= 1007000)
+        virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
+
 
     if (virQEMUCapsProbeQMPCommands(qemuCaps, mon) < 0)
         goto cleanup;

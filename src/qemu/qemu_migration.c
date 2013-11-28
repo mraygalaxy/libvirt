@@ -2657,19 +2657,27 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
         if (virAsprintf(uri_out, "tcp:%s:%d", hostname, port) < 0)
             goto cleanup;
     } else {
+        char * protocol_save = NULL;
+        char * uri_save = NULL;
+
         /* Check the URI starts with a valid prefix.  We will escape the
          * URI when passing it to the qemu monitor, so bad
          * characters in hostname part don't matter.
          */
 
-        protocol = strtok(strdup(uri_in), ":");
+        if (VIR_STRDUP(uri_save, uri_in) <= 0) {
+            goto cleanup;
+        }
+
+        protocol = strtok_r(uri_save, ":", &protocol_save);
+        VIR_FREE(uri_save);
         if (protocol) {
             if (virAsprintf(&well_formed_protocol, "%s://", protocol) < 0)
                 goto cleanup;
         }
 
         /* Make sure it's a valid protocol */
-        if (!(p = STRSKIP(uri_in, "tcp:")) && 
+        if (!(p = STRSKIP(uri_in, "tcp:")) &&
             !(p = STRSKIP(uri_in, "rdma:"))) {
             virReportError(VIR_ERR_INVALID_ARG, _("URI %s (%s) not supported"
                             " for KVM/QEMU migrations"), protocol, uri_in);
@@ -3467,6 +3475,8 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
     char *tmp = NULL;
     qemuMigrationSpec spec;
     char *well_formed_proto = NULL;
+    char * protocol_save = NULL;
+    char * uri_save = NULL;
 
     VIR_DEBUG("driver=%p, vm=%p, uri=%s, cookiein=%s, cookieinlen=%d, "
               "cookieout=%p, cookieoutlen=%p, flags=%lx, resource=%lu, "
@@ -3475,15 +3485,20 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
               cookieout, cookieoutlen, flags, resource,
               NULLSTR(graphicsuri));
 
+    ret = VIR_STRDUP(uri_save, uri);
+    if (ret <= 0) {
+        return -1;
+    }
 
-    spec.dest.host.proto = strtok(strdup(uri), ":"); 
+    spec.dest.host.proto = strtok_r(uri_save, ":", &protocol_save);
+    VIR_FREE(uri_save);
 
     /* HACK: source host generates bogus URIs, so fix them up */
     if (spec.dest.host.proto) {
         ret = virAsprintf(&well_formed_proto, "%s://",
                             spec.dest.host.proto);
         if (ret < 0)
-            goto err;
+            return ret;
     }
 
     /* HACK: source host generates bogus URIs, so fix them up */
@@ -3501,10 +3516,12 @@ static int doNativeMigrate(virQEMUDriverPtr driver,
         VIR_FREE(tmp);
     }
 
-    if (!uribits)
-        return -1;
+    if (!uribits) {
+        ret = -1;
+        goto err;
+    }
 
-    if (virQEMUCapsGet(priv->qemuCaps, QEMU_CAPS_MIGRATE_QEMU_FD) && 
+    if (virQEMUCapsGet(priv->qemuCaps, QEMU_CAPS_MIGRATE_QEMU_FD) &&
             !STREQ(spec.dest.host.proto, "rdma"))
         spec.destType = MIGRATION_DEST_CONNECT_HOST;
     else
