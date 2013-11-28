@@ -1711,9 +1711,6 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
 
         ret = 0;
         break;
-    case QEMU_MONITOR_MIGRATION_STATUS_SETUP:
-        ret = 0;
-        break;
 
     case QEMU_MONITOR_MIGRATION_STATUS_COMPLETED:
         priv->job.info.type = VIR_DOMAIN_JOB_COMPLETED;
