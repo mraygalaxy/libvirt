@@ -1467,6 +1467,22 @@ VIR_EXPORT_VAR virConnectAuthPtr virConnectAuthPtrDefault;
 
 #define LIBVIR_VERSION_NUMBER @LIBVIRT_VERSION_NUMBER@
 
+/**
+ * LIBVIR_CHECK_VERSION:
+ * @major: major component of the version number
+ * @minor: minor component of the version number
+ * @micro: micro component of the version number
+ *
+ * Macro for developers to easily check what version of the library
+ * their code is compiling against.
+ * e.g.
+ *   #if LIBVIR_CHECK_VERSION(1,1,3)
+ *     // some code that only works in 1.1.3 and newer
+ *   #endif
+ */
+#define LIBVIR_CHECK_VERSION(major, minor, micro) \
+    ((major) * 1000000 + (minor) * 1000 + (micro) <= LIBVIR_VERSION_NUMBER)
+
 int                     virGetVersion           (unsigned long *libVer,
                                                  const char *type,
                                                  unsigned long *typeVer);
@@ -2936,6 +2952,8 @@ typedef enum {
     VIR_STORAGE_VOL_BLOCK = 1,    /* Block based volumes */
     VIR_STORAGE_VOL_DIR = 2,      /* Directory-passthrough based volume */
     VIR_STORAGE_VOL_NETWORK = 3,  /* Network volumes like RBD (RADOS Block Device) */
+    VIR_STORAGE_VOL_NETDIR = 4,   /* Network accessible directory that can
+                                   * contain other network volumes */
 
 #ifdef VIR_ENUM_SENTINELS
     VIR_STORAGE_VOL_LAST
@@ -4068,22 +4086,22 @@ struct _virDomainJobInfo {
     /* One of virDomainJobType */
     int type;
 
-    /* Time is measured in mill-seconds */
+    /* Time is measured in milliseconds */
     unsigned long long timeElapsed;    /* Always set */
     unsigned long long timeRemaining;  /* Only for VIR_DOMAIN_JOB_BOUNDED */
     unsigned long long setupTime;      /* length of the SETUP phase */
     double mbps;                       /* Migration throughput in Mbps */
 
     /* Data is measured in bytes unless otherwise specified
-     * and is measuring the job as a whole
+     * and is measuring the job as a whole.
      *
      * For VIR_DOMAIN_JOB_UNBOUNDED, dataTotal may be less
      * than the final sum of dataProcessed + dataRemaining
      * in the event that the hypervisor has to repeat some
-     * data eg due to dirtied pages during migration
+     * data, such as due to dirtied pages during migration.
      *
      * For VIR_DOMAIN_JOB_BOUNDED, dataTotal shall always
-     * equal sum of dataProcessed + dataRemaining
+     * equal the sum of dataProcessed + dataRemaining.
      */
     unsigned long long dataTotal;
     unsigned long long dataProcessed;

@@ -3434,6 +3434,11 @@ error:
  * To use guest agent (VIR_DOMAIN_REBOOT_GUEST_AGENT) the domain XML
  * must have <channel> configured.
  *
+ * Due to implementation limitations in some drivers (the qemu driver,
+ * for instance) it is not advised to migrate or save a guest that is
+ * rebooting as a result of this API. Migrating such a guest can lead
+ * to a plain shutdown on the destination.
+ *
  * Returns 0 in case of success and -1 in case of failure.
  */
 int
@@ -12801,7 +12806,7 @@ error:
  * interface was defined (that is, if virInterfaceChangeBegin() had
  * been called), the interface will be brought back down (and then
  * undefined) if virInterfaceChangeRollback() is called.
-p *
+ *
  * Returns 0 in case of success, -1 in case of error
  */
 int
@@ -18666,6 +18671,9 @@ error:
  * Extract information about progress of a background job on a domain.
  * Will return an error if the domain is not active.
  *
+ * This function returns a limited amount of information in comparison
+ * to virDomainGetJobStats().
+ *
  * Returns 0 in case of success and -1 in case of failure.
  */
 int
@@ -21452,6 +21460,7 @@ int virConnectRegisterCloseCallback(virConnectPtr conn,
         goto error;
     }
 
+    conn->closeCallback->conn = conn;
     conn->closeCallback->callback = cb;
     conn->closeCallback->opaque = opaque;
     conn->closeCallback->freeCallback = freecb;

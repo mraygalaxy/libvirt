@@ -114,7 +114,7 @@ VIR_ONCE_GLOBAL_INIT(qemuMonitor)
 
 VIR_ENUM_IMPL(qemuMonitorMigrationStatus,
               QEMU_MONITOR_MIGRATION_STATUS_LAST,
-              "inactive", "setup", "active", "completed", "failed", "cancelled")
+              "inactive", "active", "completed", "failed", "cancelled", "setup")
 
 VIR_ENUM_IMPL(qemuMonitorMigrationCaps,
               QEMU_MONITOR_MIGRATION_CAPS_LAST,
@@ -239,8 +239,8 @@ static char * qemuMonitorEscapeNonPrintable(const char *text)
     for (i = 0; text[i] != '\0'; i++) {
         if (c_isprint(text[i]) ||
             text[i] == '\n' ||
-            (text[i] == '\r' && text[i+1] == '\n'))
-            virBufferAsprintf(&buf,"%c", text[i]);
+            (text[i] == '\r' && text[i + 1] == '\n'))
+            virBufferAddChar(&buf, text[i]);
         else
             virBufferAsprintf(&buf, "0x%02x", text[i]);
     }
@@ -728,9 +728,9 @@ qemuMonitorIO(int watch, int fd, int events, void *opaque) {
         /* Make sure anyone waiting wakes up now */
         virCondSignal(&mon->notify);
         virObjectUnlock(mon);
-        virObjectUnref(mon);
         VIR_DEBUG("Triggering EOF callback");
         (eofNotify)(mon, vm, mon->callbackOpaque);
+        virObjectUnref(mon);
     } else if (error) {
         qemuMonitorErrorNotifyCallback errorNotify = mon->cb->errorNotify;
         virDomainObjPtr vm = mon->vm;
@@ -738,9 +738,9 @@ qemuMonitorIO(int watch, int fd, int events, void *opaque) {
         /* Make sure anyone waiting wakes up now */
         virCondSignal(&mon->notify);
         virObjectUnlock(mon);
-        virObjectUnref(mon);
         VIR_DEBUG("Triggering error callback");
         (errorNotify)(mon, vm, mon->callbackOpaque);
+        virObjectUnref(mon);
     } else {
         virObjectUnlock(mon);
         virObjectUnref(mon);
@@ -943,7 +943,7 @@ int qemuMonitorSend(qemuMonitorPtr mon,
 {
     int ret = -1;
 
-    /* Check whether qemu quited unexpectedly */
+    /* Check whether qemu quit unexpectedly */
     if (mon->lastError.code != VIR_ERR_OK) {
         VIR_DEBUG("Attempt to send command while error is set %s",
                   NULLSTR(mon->lastError.message));
@@ -3041,7 +3041,7 @@ int qemuMonitorCreateSnapshot(qemuMonitorPtr mon, const char *name)
 {
     int ret;
 
-    VIR_DEBUG("mon=%p, name=%s",mon,name);
+    VIR_DEBUG("mon=%p, name=%s", mon, name);
 
     if (!mon) {
         virReportError(VIR_ERR_INVALID_ARG, "%s",
@@ -3060,7 +3060,7 @@ int qemuMonitorLoadSnapshot(qemuMonitorPtr mon, const char *name)
 {
     int ret;
 
-    VIR_DEBUG("mon=%p, name=%s",mon,name);
+    VIR_DEBUG("mon=%p, name=%s", mon, name);
 
     if (!mon) {
         virReportError(VIR_ERR_INVALID_ARG, "%s",
@@ -3079,7 +3079,7 @@ int qemuMonitorDeleteSnapshot(qemuMonitorPtr mon, const char *name)
 {
     int ret;
 
-    VIR_DEBUG("mon=%p, name=%s",mon,name);
+    VIR_DEBUG("mon=%p, name=%s", mon, name);
 
     if (!mon) {
         virReportError(VIR_ERR_INVALID_ARG, "%s",
@@ -3277,7 +3277,7 @@ int qemuMonitorScreendump(qemuMonitorPtr mon,
     VIR_DEBUG("mon=%p, file=%s", mon, file);
 
     if (!mon) {
-        virReportError(VIR_ERR_INVALID_ARG,"%s",
+        virReportError(VIR_ERR_INVALID_ARG, "%s",
                        _("monitor must not be NULL"));
         return -1;
     }

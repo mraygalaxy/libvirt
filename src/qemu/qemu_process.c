@@ -3281,7 +3281,7 @@ qemuProcessReconnectHelper(virDomainObjPtr obj,
      */
     virConnectRef(data->conn);
 
-    if (virThreadCreate(&thread, true, qemuProcessReconnect, data) < 0) {
+    if (virThreadCreate(&thread, false, qemuProcessReconnect, data) < 0) {
 
         virConnectClose(data->conn);
 
@@ -3397,12 +3397,6 @@ qemuProcessSPICEAllocatePorts(virQEMUDriverPtr driver,
         if (virPortAllocatorAcquire(driver->remotePorts, &port) < 0)
             goto error;
 
-        if (port == 0) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("Unable to find an unused port for SPICE"));
-            goto error;
-        }
-
         graphics->data.spice.port = port;
     }
 
@@ -3428,12 +3422,6 @@ qemuProcessSPICEAllocatePorts(virQEMUDriverPtr driver,
             if (virPortAllocatorAcquire(driver->remotePorts, &tlsPort) < 0)
                 goto error;
 
-            if (tlsPort == 0) {
-                virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                               _("Unable to find an unused port for SPICE TLS"));
-                virPortAllocatorRelease(driver->remotePorts, port);
-                goto error;
-            }
             graphics->data.spice.tlsPort = tlsPort;
         }
     }

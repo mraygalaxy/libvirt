@@ -374,7 +374,8 @@ virPCIDeviceWrite32(virPCIDevicePtr dev, int cfgfd, unsigned int pos, uint32_t v
     virPCIDeviceWrite(dev, cfgfd, pos, &buf[0], sizeof(buf));
 }
 
-typedef int (*virPCIDeviceIterPredicate)(virPCIDevicePtr , virPCIDevicePtr , void *);
+typedef int (*virPCIDeviceIterPredicate)(virPCIDevicePtr, virPCIDevicePtr,
+                                         void *);
 
 /* Iterate over available PCI devices calling @predicate
  * to compare each one to @dev.
@@ -1085,8 +1086,6 @@ virPCIDeviceBindToStub(virPCIDevicePtr dev,
 
     char *stubDriverPath = NULL;
     char *driverLink = NULL;
-    char *oldDriverPath = NULL;
-    char *oldDriverName = NULL;
     char *path = NULL; /* reused for different purposes */
     const char *newDriverName = NULL;
 
@@ -1217,8 +1216,6 @@ remove_id:
 cleanup:
     VIR_FREE(stubDriverPath);
     VIR_FREE(driverLink);
-    VIR_FREE(oldDriverPath);
-    VIR_FREE(oldDriverName);
     VIR_FREE(path);
 
     if (newDriverName &&

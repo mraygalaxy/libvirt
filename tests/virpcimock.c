@@ -154,10 +154,13 @@ static int pci_driver_handle_remove_id(const char *path);
 static void
 make_file(const char *path,
           const char *name,
-          const char *value)
+          const char *value,
+          ssize_t len)
 {
     int fd = -1;
     char *filepath = NULL;
+    if (value && len == -1)
+        len = strlen(value);
 
     if (virAsprintfQuiet(&filepath, "%s/%s", path, name) < 0)
         ABORT_OOM();
@@ -165,7 +168,7 @@ make_file(const char *path,
     if ((fd = realopen(filepath, O_CREAT|O_WRONLY, 0666)) < 0)
         ABORT("Unable to open: %s", filepath);
 
-    if (value && safewrite(fd, value, strlen(value)) != strlen(value))
+    if (value && safewrite(fd, value, len) != len)
         ABORT("Unable to write: %s", filepath);
 
     VIR_FORCE_CLOSE(fd);
@@ -302,17 +305,13 @@ pci_device_new_from_stub(const struct pciDevice *data)
 {
     struct pciDevice *dev;
     char *devpath;
-    char *configSrc, *configDst;
+    char *configSrc;
     char tmp[32];
     struct stat sb;
-    char *abs_srcdir;
-
-    abs_srcdir = getenv("abs_srcdir");
-    if (!abs_srcdir)
-        abs_srcdir = getcwd(NULL, 0);
 
     if (VIR_ALLOC_QUIET(dev) < 0 ||
-        virAsprintfQuiet(&configSrc, "%s/virpcitestdata/%s.config", abs_srcdir, data->id) < 0 ||
+        virAsprintfQuiet(&configSrc, "%s/virpcitestdata/%s.config",
+                         abs_srcdir, data->id) < 0 ||
         virAsprintfQuiet(&devpath, "%s/devices/%s", fakesysfsdir, data->id) < 0)
         ABORT_OOM();
 
@@ -325,25 +324,32 @@ pci_device_new_from_stub(const struct pciDevice *data)
      * symlink it. Otherwise create a dummy config file. */
     if ((realstat && realstat(configSrc, &sb) == 0) ||
         (real__xstat && real__xstat(_STAT_VER, configSrc, &sb) == 0)) {
-        /* On success make symlink to @configSrc */
-        if (virAsprintfQuiet(&configDst, "%s/config", devpath) < 0)
-            ABORT_OOM();
+        /* On success, copy @configSrc into the destination (a copy,
+         * rather than a symlink, is required since we write into the
+         * file, and parallel VPATH builds must not stomp on the
+         * original; besides, 'make distcheck' requires the original
+         * to be read-only */
+        char *buf;
+        ssize_t len;
 
-        if (symlink(configSrc, configDst) < 0)
-            ABORT("Unable to create symlink: %s", configDst);
+        if ((len = virFileReadAll(configSrc, 4096, &buf)) < 0)
+            ABORT("Unable to read config file '%s'", configSrc);
+
+        make_file(devpath, "config", buf, len);
+        VIR_FREE(buf);
     } else {
         /* If there's no config data in the virpcitestdata dir, create a dummy
          * config file */
-        make_file(devpath, "config", "some dummy config");
+        make_file(devpath, "config", "some dummy config", -1);
     }
 
     if (snprintf(tmp, sizeof(tmp),  "0x%.4x", dev->vendor) < 0)
         ABORT("@tmp overflow");
-    make_file(devpath, "vendor", tmp);
+    make_file(devpath, "vendor", tmp, -1);
 
     if (snprintf(tmp, sizeof(tmp),  "0x%.4x", dev->device) < 0)
         ABORT("@tmp overflow");
-    make_file(devpath, "device", tmp);
+    make_file(devpath, "device", tmp, -1);
 
     if (pci_device_autobind(dev) < 0)
         ABORT("Unable to bind: %s", data->id);
@@ -352,6 +358,7 @@ pci_device_new_from_stub(const struct pciDevice *data)
         ABORT_OOM();
 
     VIR_FREE(devpath);
+    VIR_FREE(configSrc);
 }
 
 static struct pciDevice *
@@ -429,10 +436,10 @@ pci_driver_new(const char *name, ...)
 
     va_end(args);
 
-    make_file(driverpath, "bind", NULL);
-    make_file(driverpath, "unbind", NULL);
-    make_file(driverpath, "new_id", NULL);
-    make_file(driverpath, "remove_id", NULL);
+    make_file(driverpath, "bind", NULL, -1);
+    make_file(driverpath, "unbind", NULL, -1);
+    make_file(driverpath, "new_id", NULL, -1);
+    make_file(driverpath, "remove_id", NULL, -1);
 
     if (VIR_APPEND_ELEMENT_QUIET(pciDrivers, nPciDrivers, driver) < 0)
         ABORT_OOM();
@@ -480,7 +487,7 @@ pci_driver_bind(struct pciDriver *driver,
     char *devpath = NULL, *driverpath = NULL;
 
     if (dev->driver) {
-        /* Device already binded */
+        /* Device already bound */
         errno = ENODEV;
         return ret;
     }
@@ -527,7 +534,7 @@ pci_driver_unbind(struct pciDriver *driver,
     char *devpath = NULL, *driverpath = NULL;
 
     if (dev->driver != driver) {
-        /* Device not binded to the @driver */
+        /* Device not bound to the @driver */
         errno = ENODEV;
         return ret;
     }

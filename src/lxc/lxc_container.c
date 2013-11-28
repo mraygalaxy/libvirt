@@ -144,6 +144,7 @@ int lxcContainerHasReboot(void)
     int cmd, v;
     int status;
     char *tmp;
+    int stacksize = getpagesize() * 4;
 
     if (virFileReadAll("/proc/sys/kernel/ctrl-alt-del", 10, &buf) < 0)
         return -1;
@@ -160,10 +161,10 @@ int lxcContainerHasReboot(void)
     VIR_FREE(buf);
     cmd = v ? LINUX_REBOOT_CMD_CAD_ON : LINUX_REBOOT_CMD_CAD_OFF;
 
-    if (VIR_ALLOC_N(stack, getpagesize() * 4) < 0)
+    if (VIR_ALLOC_N(stack, stacksize) < 0)
         return -1;
 
-    childStack = stack + (getpagesize() * 4);
+    childStack = stack + stacksize;
 
     cpid = clone(lxcContainerRebootChild, childStack, flags, &cmd);
     VIR_FREE(stack);
@@ -483,7 +484,7 @@ error_out:
 
 
 /*_syscall2(int, pivot_root, char *, newroot, const char *, oldroot)*/
-extern int pivot_root(const char * new_root,const char * put_old);
+extern int pivot_root(const char * new_root, const char * put_old);
 
 static int lxcContainerChildMountSort(const void *a, const void *b)
 {
@@ -958,6 +959,7 @@ static int lxcContainerMountFSDev(virDomainDefPtr def,
 {
     int ret = -1;
     char *path = NULL;
+    int flags = def->idmap.nuidmap ? MS_BIND : MS_MOVE;
 
     VIR_DEBUG("Mount /dev/ stateDir=%s", stateDir);
 
@@ -971,9 +973,10 @@ static int lxcContainerMountFSDev(virDomainDefPtr def,
         goto cleanup;
     }
 
-    VIR_DEBUG("Trying to move %s to /dev", path);
+    VIR_DEBUG("Trying to %s %s to /dev", def->idmap.nuidmap ?
+              "bind" : "move", path);
 
-    if (mount(path, "/dev", NULL, MS_MOVE, NULL) < 0) {
+    if (mount(path, "/dev", NULL, flags, NULL) < 0) {
         virReportSystemError(errno,
                              _("Failed to mount %s on /dev"),
                              path);
@@ -992,6 +995,7 @@ static int lxcContainerMountFSDevPTS(virDomainDefPtr def,
 {
     int ret;
     char *path = NULL;
+    int flags = def->idmap.nuidmap ? MS_BIND : MS_MOVE;
 
     VIR_DEBUG("Mount /dev/pts stateDir=%s", stateDir);
 
@@ -1007,10 +1011,10 @@ static int lxcContainerMountFSDevPTS(virDomainDefPtr def,
         goto cleanup;
     }
 
-    VIR_DEBUG("Trying to move %s to /dev/pts", path);
+    VIR_DEBUG("Trying to %s %s to /dev/pts", def->idmap.nuidmap ?
+              "bind" : "move", path);
 
-    if ((ret = mount(path, "/dev/pts",
-                     NULL, MS_MOVE, NULL)) < 0) {
+    if ((ret = mount(path, "/dev/pts", NULL, flags, NULL)) < 0) {
         virReportSystemError(errno,
                              _("Failed to mount %s on /dev/pts"),
                              path);
@@ -1661,7 +1665,9 @@ static int lxcContainerSetupPivotRoot(virDomainDefPtr vmDef,
     if (lxcContainerPivotRoot(root) < 0)
         goto cleanup;
 
-    if (STREQ(root->src, "/") &&
+    /* FIXME: we should find a way to unmount these mounts for container
+     * even user namespace is enabled. */
+    if (STREQ(root->src, "/") && (!vmDef->idmap.nuidmap) &&
         lxcContainerUnmountForSharedRoot(stateDir, vmDef->name) < 0)
         goto cleanup;
 
@@ -2031,6 +2037,7 @@ int lxcContainerStart(virDomainDefPtr def,
     /* allocate a stack for the container */
     if (VIR_ALLOC_N(stack, stacksize) < 0)
         return -1;
+
     stacktop = stack + stacksize;
 
     cflags = CLONE_NEWPID|CLONE_NEWNS|CLONE_NEWUTS|CLONE_NEWIPC|SIGCHLD;
@@ -2078,6 +2085,7 @@ int lxcContainerAvailable(int features)
     int cpid;
     char *childStack;
     char *stack;
+    int stacksize = getpagesize() * 4;
 
     if (features & LXC_CONTAINER_FEATURE_USER)
         flags |= CLONE_NEWUSER;
@@ -2085,12 +2093,10 @@ int lxcContainerAvailable(int features)
     if (features & LXC_CONTAINER_FEATURE_NET)
         flags |= CLONE_NEWNET;
 
-    if (VIR_ALLOC_N(stack, getpagesize() * 4) < 0) {
-        VIR_DEBUG("Unable to allocate stack");
+    if (VIR_ALLOC_N(stack, stacksize) < 0)
         return -1;
-    }
 
-    childStack = stack + (getpagesize() * 4);
+    childStack = stack + stacksize;
 
     cpid = clone(lxcContainerDummyChild, childStack, flags, NULL);
     VIR_FREE(stack);

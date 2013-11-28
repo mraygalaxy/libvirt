@@ -80,6 +80,9 @@
 #if WITH_STORAGE_SHEEPDOG
 # include "storage_backend_sheepdog.h"
 #endif
+#if WITH_STORAGE_GLUSTER
+# include "storage_backend_gluster.h"
+#endif
 
 #define VIR_FROM_THIS VIR_FROM_STORAGE
 
@@ -111,6 +114,9 @@ static virStorageBackendPtr backends[] = {
 #endif
 #if WITH_STORAGE_SHEEPDOG
     &virStorageBackendSheepdog,
+#endif
+#if WITH_STORAGE_GLUSTER
+    &virStorageBackendGluster,
 #endif
     NULL
 };
@@ -1173,6 +1179,12 @@ virStorageBackendVolOpenCheckMode(const char *path, struct stat *sb,
         return -2;
     }
 
+    /* O_NONBLOCK should only matter during open() for fifos and
+     * sockets, which we already filtered; but using it prevents a
+     * TOCTTOU race.  However, later on we will want to read() the
+     * header from this fd, and virFileRead* routines require a
+     * blocking fd, so fix it up after verifying we avoided a
+     * race.  */
     if ((fd = open(path, O_RDONLY|O_NONBLOCK|O_NOCTTY)) < 0) {
         if ((errno == ENOENT || errno == ELOOP) &&
             S_ISLNK(sb->st_mode)) {
@@ -1194,13 +1206,13 @@ virStorageBackendVolOpenCheckMode(const char *path, struct stat *sb,
         return -1;
     }
 
-    if (S_ISREG(sb->st_mode))
+    if (S_ISREG(sb->st_mode)) {
         mode = VIR_STORAGE_VOL_OPEN_REG;
-    else if (S_ISCHR(sb->st_mode))
+    } else if (S_ISCHR(sb->st_mode)) {
         mode = VIR_STORAGE_VOL_OPEN_CHAR;
-    else if (S_ISBLK(sb->st_mode))
+    } else if (S_ISBLK(sb->st_mode)) {
         mode = VIR_STORAGE_VOL_OPEN_BLOCK;
-    else if (S_ISDIR(sb->st_mode)) {
+    } else if (S_ISDIR(sb->st_mode)) {
         mode = VIR_STORAGE_VOL_OPEN_DIR;
 
         if (STREQ(base, ".") ||
@@ -1209,6 +1221,17 @@ virStorageBackendVolOpenCheckMode(const char *path, struct stat *sb,
             VIR_INFO("Skipping special dir '%s'", base);
             return -2;
         }
+    } else {
+        VIR_WARN("ignoring unexpected type for file '%s'", path);
+        VIR_FORCE_CLOSE(fd);
+        return -2;
+    }
+
+    if (virSetBlocking(fd, true) < 0) {
+        virReportSystemError(errno, _("unable to set blocking mode for '%s'"),
+                             path);
+        VIR_FORCE_CLOSE(fd);
+        return -2;
     }
 
     if (!(mode & flags)) {
@@ -1290,9 +1313,9 @@ int virStorageBackendUpdateVolInfo(virStorageVolDefPtr vol,
 
 /*
  * virStorageBackendUpdateVolTargetInfoFD:
- * @conn: connection to report errors on
  * @target: target definition ptr of volume to update
- * @fd: fd of storage volume to update, via virStorageBackendOpenVol*
+ * @fd: fd of storage volume to update, via virStorageBackendOpenVol*, or -1
+ * @sb: details about file (must match @fd, if that is provided)
  * @allocation: If not NULL, updated allocation information will be stored
  * @capacity: If not NULL, updated capacity info will be stored
  *
@@ -1327,7 +1350,7 @@ virStorageBackendUpdateVolTargetInfoFD(virStorageVolTargetPtr target,
             if (capacity)
                 *capacity = 0;
 
-        } else {
+        } else if (fd >= 0) {
             off_t end;
             /* XXX this is POSIX compliant, but doesn't work for CHAR files,
              * only BLOCK. There is a Linux specific ioctl() for getting
@@ -1362,24 +1385,22 @@ virStorageBackendUpdateVolTargetInfoFD(virStorageVolTargetPtr target,
 
 #if WITH_SELINUX
     /* XXX: make this a security driver call */
-    if (fgetfilecon_raw(fd, &filecon) == -1) {
-        if (errno != ENODATA && errno != ENOTSUP) {
-            virReportSystemError(errno,
-                                 _("cannot get file context of '%s'"),
-                                 target->path);
-            return -1;
+    if (fd >= 0) {
+        if (fgetfilecon_raw(fd, &filecon) == -1) {
+            if (errno != ENODATA && errno != ENOTSUP) {
+                virReportSystemError(errno,
+                                     _("cannot get file context of '%s'"),
+                                     target->path);
+                return -1;
+            }
         } else {
-            target->perms.label = NULL;
-        }
-    } else {
-        if (VIR_STRDUP(target->perms.label, filecon) < 0) {
+            if (VIR_STRDUP(target->perms.label, filecon) < 0) {
+                freecon(filecon);
+                return -1;
+            }
             freecon(filecon);
-            return -1;
         }
-        freecon(filecon);
     }
-#else
-    target->perms.label = NULL;
 #endif
 
     return 0;

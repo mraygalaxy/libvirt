@@ -1,7 +1,7 @@
 /*
  * virsh-volume.c: Commands to manage storage volume
  *
- * Copyright (C) 2005, 2007-2012 Red Hat, Inc.
+ * Copyright (C) 2005, 2007-2013 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -211,7 +211,7 @@ cmdVolCreateAs(vshControl *ctl, const vshCmd *cmd)
 
     if (format) {
         virBufferAddLit(&buf, "  <target>\n");
-        virBufferAsprintf(&buf, "    <format type='%s'/>\n",format);
+        virBufferAsprintf(&buf, "    <format type='%s'/>\n", format);
         virBufferAddLit(&buf, "  </target>\n");
     }
 
@@ -265,9 +265,10 @@ cmdVolCreateAs(vshControl *ctl, const vshCmd *cmd)
 
         /* Create XML for the backing store */
         virBufferAddLit(&buf, "  <backingStore>\n");
-        virBufferAsprintf(&buf, "    <path>%s</path>\n",snapshotStrVolPath);
+        virBufferAsprintf(&buf, "    <path>%s</path>\n", snapshotStrVolPath);
         if (snapshotStrFormat)
-            virBufferAsprintf(&buf, "    <format type='%s'/>\n",snapshotStrFormat);
+            virBufferAsprintf(&buf, "    <format type='%s'/>\n",
+                              snapshotStrFormat);
         virBufferAddLit(&buf, "  </backingStore>\n");
 
         /* Cleanup snapshot allocations */
@@ -946,7 +947,7 @@ out:
 static const char *
 vshVolumeTypeToString(int type)
 {
-    switch (type) {
+    switch ((virStorageVolType) type) {
     case VIR_STORAGE_VOL_FILE:
         return N_("file");
 
@@ -958,6 +959,9 @@ vshVolumeTypeToString(int type)
 
     case VIR_STORAGE_VOL_NETWORK:
         return N_("network");
+
+    case VIR_STORAGE_VOL_NETDIR:
+        return N_("netdir");
 
     case VIR_STORAGE_VOL_LAST:
         break;
