@@ -1115,7 +1115,7 @@ virQEMUCapsComputeCmdFlags(const char *help,
      *  -incoming unix   (qemu >= 0.12.0)
      *  -incoming fd     (qemu >= 0.12.0)
      *  -incoming stdio  (all earlier kvm)
-     *  -incoming rdma   (qemu >= 1.7.0)
+     *  -incoming rdma   (qemu >= 2.0.0)
      *
      * NB, there was a pre-kvm-79 'tcp' support, but it
      * was broken, because it blocked the monitor console
@@ -1136,7 +1136,7 @@ virQEMUCapsComputeCmdFlags(const char *help,
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_KVM_STDIO);
     }
 
-    if (version >= 1007000)
+    if (version >= 2000000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
 
     if (version >= 10000)
@@ -2570,7 +2570,7 @@ virQEMUCapsInitQMPMonitor(virQEMUCapsPtr qemuCaps,
     if (qemuCaps->version >= 1006000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_DEVICE_VIDEO_PRIMARY);
 
-    if (qemuCaps->version >= 1007000)
+    if (qemuCaps->version >= 2000000)
         virQEMUCapsSet(qemuCaps, QEMU_CAPS_MIGRATE_QEMU_RDMA);
 
 
