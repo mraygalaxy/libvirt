@@ -4089,8 +4089,6 @@ struct _virDomainJobInfo {
     /* Time is measured in milliseconds */
     unsigned long long timeElapsed;    /* Always set */
     unsigned long long timeRemaining;  /* Only for VIR_DOMAIN_JOB_BOUNDED */
-    unsigned long long setupTime;      /* length of the SETUP phase */
-    double mbps;                       /* Migration throughput in Mbps */
 
     /* Data is measured in bytes unless otherwise specified
      * and is measuring the job as a whole.
@@ -4154,6 +4152,21 @@ int virDomainAbortJob(virDomainPtr dom);
  * during migration, as VIR_TYPED_PARAM_ULLONG.
  */
 #define VIR_DOMAIN_JOB_DOWNTIME                 "downtime"
+
+/**
+ * VIR_DOMAIN_JOB_MBPS:
+ *
+ * virDomainGetJobStats field: network throughput used while migrating.
+ */
+#define VIR_DOMAIN_JOB_MBPS "mbps"
+
+/**
+ * VIR_DOMAIN_JOB_SETUP_TIME:
+ *
+ * virDomainGetJobStats field: total time in milliseconds spent preparing
+ * the migration in the 'setup' phase before the iterations begin.
+ */
+#define VIR_DOMAIN_JOB_SETUP_TIME "setup_time"
 
 /**
  * VIR_DOMAIN_JOB_DATA_TOTAL:

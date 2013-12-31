@@ -2426,15 +2426,13 @@ qemuMonitorJSONGetMigrationStatusReply(virJSONValuePtr reply,
         virJSONValueObjectGetNumberUlong(ram, "normal-bytes",
                                          &status->ram_normal_bytes);
 
-        /*
         if (virJSONValueObjectGetNumberDouble(ram, "mbps",
-                                              &status->mbps) < 0) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("migration was active, but RAM 'mbps' "
-                             "data was missing"));
-            return -1;
-        }
-        */
+                                              &status->mbps) == 0)
+            status->mbps_set = true;
+
+        if (virJSONValueObjectGetNumberUlong(ret, "setup-time",
+                                              &status->setup_time) == 0)
+            status->setup_time_set = true;
 
         virJSONValuePtr disk = virJSONValueObjectGet(ret, "disk");
         if (disk) {
@@ -2514,18 +2512,6 @@ qemuMonitorJSONGetMigrationStatusReply(virJSONValuePtr reply,
                 return -1;
             }
         }
-
-        /*
-        rc = virJSONValueObjectGetNumberUlong(ret, "setup-time",
-                                              &status->setup_time);
-
-        if (rc < 0) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("migration was active, but no setup-time was set"));
-            return -1;
-        }
-        */
-
     }
 
     return 0;

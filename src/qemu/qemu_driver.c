@@ -11078,6 +11078,20 @@ qemuDomainGetJobStats(virDomainPtr dom,
             goto cleanup;
     }
 
+    if (priv->job.status.mbps_set) {
+        if (virTypedParamsAddDouble(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MBPS,
+                                    priv->job.status.mbps) < 0)
+            goto cleanup;
+    }
+
+    if (priv->job.status.setup_time_set) {
+        if (virTypedParamsAddULLong(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_SETUP_TIME,
+                                    priv->job.status.setup_time) < 0)
+            goto cleanup;
+    }
+
     if (virTypedParamsAddULLong(&par, &npar, &maxpar,
                                 VIR_DOMAIN_JOB_DISK_TOTAL,
                                 priv->job.info.fileTotal) < 0 ||
