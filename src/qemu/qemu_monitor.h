@@ -417,10 +417,12 @@ struct _qemuMonitorMigrationStatus {
      * for RDMA, this may be on the order of several seconds
      * if pinning support is requested before the migration begins.
      */
+    bool setup_time_set;
     unsigned long long setup_time;
     /*
      * Migration throughput in Mbps.
      */
+    bool mbps_set;
     double mbps;
 
     unsigned long long ram_transferred;
