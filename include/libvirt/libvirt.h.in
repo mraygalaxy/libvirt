@@ -4329,7 +4329,6 @@ int virDomainAbortJob(virDomainPtr dom);
  */
 #define VIR_DOMAIN_JOB_COMPRESSION_CACHE_MISSES "compression_cache_misses"
 
-
 /**
  * VIR_DOMAIN_JOB_COMPRESSION_OVERFLOW:
  *
@@ -4339,6 +4338,7 @@ int virDomainAbortJob(virDomainPtr dom);
  * as VIR_TYPED_PARAM_ULLONG.
  */
 #define VIR_DOMAIN_JOB_COMPRESSION_OVERFLOW     "compression_overflow"
+
 
 /**
  * virDomainSnapshot:
