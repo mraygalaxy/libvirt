@@ -1683,7 +1683,7 @@ testQemuMonitorJSONqemuMonitorJSONGetMigrationStatus(const void *data)
                                "        \"ram\": {"
                                "            \"total\": 1611038720,"
                                "            \"remaining\": 1605013504,"
-                               "            \"transferred\": 3625548,"
+                               "            \"transferred\": 3625548"
                                "        }"
                                "    },"
                                "    \"id\": \"libvirt-13\""
