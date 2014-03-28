@@ -8797,6 +8797,7 @@ static const vshCmdOptDef opts_migrate[] = {
     {.name = "rdma-pin-all",
      .type = VSH_OT_BOOL,
      .help = N_("support memory pinning during RDMA live migration")
+    },
     {.name = "auto-converge",
      .type = VSH_OT_BOOL,
      .help = N_("force convergence during live migration")
