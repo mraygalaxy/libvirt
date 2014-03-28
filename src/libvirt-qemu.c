@@ -2,7 +2,7 @@
  * libvirt-qemu.c: Interfaces for the libvirt library to handle qemu-specific
  *                 APIs.
  *
- * Copyright (C) 2010-2012 Red Hat, Inc.
+ * Copyright (C) 2010-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -25,17 +25,12 @@
 
 #include "virerror.h"
 #include "virlog.h"
+#include "viruuid.h"
 #include "datatypes.h"
 
 #define VIR_FROM_THIS VIR_FROM_NONE
 
-#define virLibConnError(conn, error, info)                              \
-    virReportErrorHelper(VIR_FROM_NONE, error, __FILE__, __FUNCTION__,  \
-                         __LINE__, info)
-
-#define virLibDomainError(domain, error, info)                          \
-    virReportErrorHelper(VIR_FROM_DOM, error, __FILE__, __FUNCTION__,   \
-                         __LINE__, info)
+VIR_LOG_INIT("libvirt-qemu");
 
 /**
  * virDomainQemuMonitorCommand:
@@ -75,25 +70,16 @@ virDomainQemuMonitorCommand(virDomainPtr domain, const char *cmd,
 {
     virConnectPtr conn;
 
-    VIR_DEBUG("domain=%p, cmd=%s, result=%p, flags=%x",
-              domain, cmd, result, flags);
+    VIR_DOMAIN_DEBUG(domain, "cmd=%s, result=%p, flags=%x",
+                     cmd, result, flags);
 
     virResetLastError();
 
-    if (!VIR_IS_CONNECTED_DOMAIN(domain)) {
-        virLibDomainError(NULL, VIR_ERR_INVALID_DOMAIN, __FUNCTION__);
-        virDispatchError(NULL);
-        return -1;
-    }
-
+    virCheckDomainReturn(domain, -1);
     conn = domain->conn;
 
     virCheckNonNullArgGoto(result, error);
-
-    if (conn->flags & VIR_CONNECT_RO) {
-        virLibDomainError(domain, VIR_ERR_OPERATION_DENIED, __FUNCTION__);
-        goto error;
-    }
+    virCheckReadOnlyGoto(conn->flags, error);
 
     if (conn->driver->domainQemuMonitorCommand) {
         int ret;
@@ -104,12 +90,13 @@ virDomainQemuMonitorCommand(virDomainPtr domain, const char *cmd,
         return ret;
     }
 
-    virLibConnError(conn, VIR_ERR_NO_SUPPORT, __FUNCTION__);
+    virReportUnsupportedError();
 
-error:
+ error:
     virDispatchError(conn);
     return -1;
 }
+
 
 /**
  * virDomainQemuAttach:
@@ -151,12 +138,7 @@ virDomainQemuAttach(virConnectPtr conn,
 
     virResetLastError();
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(NULL, VIR_ERR_INVALID_CONN, __FUNCTION__);
-        virDispatchError(NULL);
-        return NULL;
-    }
-
+    virCheckConnectReturn(conn, NULL);
     virCheckPositiveArgGoto(pid_value, error);
     if (pid != pid_value) {
         virReportInvalidArg(pid_value,
@@ -165,10 +147,7 @@ virDomainQemuAttach(virConnectPtr conn,
         goto error;
     }
 
-    if (conn->flags & VIR_CONNECT_RO) {
-        virLibDomainError(domain, VIR_ERR_OPERATION_DENIED, __FUNCTION__);
-        goto error;
-    }
+    virCheckReadOnlyGoto(conn->flags, error);
 
     if (conn->driver->domainQemuAttach) {
         virDomainPtr ret;
@@ -178,12 +157,13 @@ virDomainQemuAttach(virConnectPtr conn,
         return ret;
     }
 
-    virLibConnError(conn, VIR_ERR_NO_SUPPORT, __FUNCTION__);
+    virReportUnsupportedError();
 
-error:
+ error:
     virDispatchError(conn);
     return NULL;
 }
+
 
 /**
  * virDomainQemuAgentCommand:
@@ -213,21 +193,15 @@ virDomainQemuAgentCommand(virDomainPtr domain,
     virConnectPtr conn;
     char *ret;
 
-    VIR_DEBUG("domain=%p, cmd=%s, timeout=%d, flags=%x",
-              domain, cmd, timeout, flags);
+    VIR_DOMAIN_DEBUG(domain, "cmd=%s, timeout=%d, flags=%x",
+                     cmd, timeout, flags);
 
-    if (!VIR_IS_CONNECTED_DOMAIN(domain)) {
-        virLibDomainError(NULL, VIR_ERR_INVALID_DOMAIN, __FUNCTION__);
-        virDispatchError(NULL);
-        return NULL;
-    }
+    virResetLastError();
 
+    virCheckDomainReturn(domain, NULL);
     conn = domain->conn;
 
-    if (conn->flags & VIR_CONNECT_RO) {
-        virLibDomainError(NULL, VIR_ERR_OPERATION_DENIED, __FUNCTION__);
-        goto error;
-    }
+    virCheckReadOnlyGoto(conn->flags, error);
 
     if (conn->driver->domainQemuAgentCommand) {
         ret = conn->driver->domainQemuAgentCommand(domain, cmd,
@@ -237,10 +211,133 @@ virDomainQemuAgentCommand(virDomainPtr domain,
         return ret;
     }
 
-    virLibConnError(conn, VIR_ERR_NO_SUPPORT, __FUNCTION__);
+    virReportUnsupportedError();
 
-    /* Copy to connection error object for back compatibility */
-error:
+ error:
     virDispatchError(conn);
     return NULL;
+}
+
+
+/**
+ * virConnectDomainQemuMonitorEventRegister:
+ * @conn: pointer to the connection
+ * @dom: pointer to the domain, or NULL
+ * @event: name of the event, or NULL
+ * @cb: callback to the function handling monitor events
+ * @opaque: opaque data to pass on to the callback
+ * @freecb: optional function to deallocate opaque when not used anymore
+ * @flags: bitwise-OR of virConnectDomainQemuMonitorEventRegisterFlags
+ *
+ * This API is QEMU specific, so it will only work with hypervisor
+ * connections to the QEMU driver.
+ *
+ * Adds a callback to receive notifications of arbitrary qemu monitor events
+ * occurring on a domain.  Many qemu monitor events also result in a libvirt
+ * event which can be delivered via virConnectDomainEventRegisterAny(); this
+ * command is primarily for testing new qemu events that have not yet been
+ * given a libvirt counterpart event.
+ *
+ * If @dom is NULL, then events will be monitored for any domain. If @dom
+ * is non-NULL, then only the specific domain will be monitored.
+ *
+ * If @event is NULL, then all monitor events will be reported. If @event is
+ * non-NULL, then only specific monitor events will be reported.  @flags
+ * controls how the filtering is performed: 0 requests an exact match, while
+ * VIR_CONNECT_DOMAIN_QEMU_MONITOR_EVENT_REGISTER_REGEX states that @event
+ * is a basic regular expression.  Additionally, including
+ * VIR_CONNECT_DOMAIN_QEMU_MONITOR_EVENT_REGISTER_NOCASE lets @event match
+ * case-insensitively.
+ *
+ * The virDomainPtr object handle passed into the callback upon delivery
+ * of an event is only valid for the duration of execution of the callback.
+ * If the callback wishes to keep the domain object after the callback returns,
+ * it shall take a reference to it, by calling virDomainRef().
+ * The reference can be released once the object is no longer required
+ * by calling virDomainFree().
+ *
+ * The return value from this method is a positive integer identifier
+ * for the callback. To unregister a callback, this callback ID should
+ * be passed to the virConnectDomainQemuMonitorEventDeregister() method.
+ *
+ * Returns a callback identifier on success, -1 on failure
+ */
+int
+virConnectDomainQemuMonitorEventRegister(virConnectPtr conn,
+                                         virDomainPtr dom,
+                                         const char *event,
+                                         virConnectDomainQemuMonitorEventCallback cb,
+                                         void *opaque,
+                                         virFreeCallback freecb,
+                                         unsigned int flags)
+{
+    VIR_DOMAIN_DEBUG(dom,
+                     "conn=%p, event=%s, cb=%p, opaque=%p, freecb=%p, flags=%x",
+                     conn, NULLSTR(event), cb, opaque, freecb, flags);
+
+    virResetLastError();
+
+    virCheckConnectReturn(conn, -1);
+    if (dom) {
+        virCheckDomainGoto(dom, error);
+        if (dom->conn != conn) {
+            virReportInvalidArg(dom,
+                                _("domain '%s' in %s must match connection"),
+                                dom->name, __FUNCTION__);
+            goto error;
+        }
+    }
+    virCheckNonNullArgGoto(cb, error);
+    virCheckReadOnlyGoto(conn->flags, error);
+
+    if (conn->driver && conn->driver->connectDomainQemuMonitorEventRegister) {
+        int ret;
+        ret = conn->driver->connectDomainQemuMonitorEventRegister(conn, dom, event, cb, opaque, freecb, flags);
+        if (ret < 0)
+            goto error;
+        return ret;
+    }
+
+    virReportUnsupportedError();
+ error:
+    virDispatchError(conn);
+    return -1;
+}
+
+
+/**
+ * virConnectDomainQemuMonitorEventDeregister:
+ * @conn: pointer to the connection
+ * @callbackID: the callback identifier
+ *
+ * Removes an event callback. The callbackID parameter should be the
+ * value obtained from a previous virConnectDomainQemuMonitorEventRegister()
+ * method.
+ *
+ * Returns 0 on success, -1 on failure
+ */
+int
+virConnectDomainQemuMonitorEventDeregister(virConnectPtr conn,
+                                           int callbackID)
+{
+    VIR_DEBUG("conn=%p, callbackID=%d", conn, callbackID);
+
+    virResetLastError();
+
+    virCheckConnectReturn(conn, -1);
+    virCheckNonNegativeArgGoto(callbackID, error);
+    virCheckReadOnlyGoto(conn->flags, error);
+
+    if (conn->driver && conn->driver->connectDomainQemuMonitorEventDeregister) {
+        int ret;
+        ret = conn->driver->connectDomainQemuMonitorEventDeregister(conn, callbackID);
+        if (ret < 0)
+            goto error;
+        return ret;
+    }
+
+    virReportUnsupportedError();
+ error:
+    virDispatchError(conn);
+    return -1;
 }

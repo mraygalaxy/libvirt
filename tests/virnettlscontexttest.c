@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2012 Red Hat, Inc.
+ * Copyright (C) 2011-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -39,6 +39,8 @@
 # include "rpc/virnettlscontext.h"
 
 # define VIR_FROM_THIS VIR_FROM_RPC
+
+VIR_LOG_INIT("tests.nettlscontexttest");
 
 # define KEYFILE "key-ctx.pem"
 
@@ -99,7 +101,7 @@ static int testTLSContextInit(const void *opaque)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virObjectUnref(ctxt);
     return ret;
 }
@@ -265,10 +267,12 @@ mymain(void)
 
     /* Technically a CA cert with basic constraints
      * key purpose == key signing + non-critical should
-     * be rejected. GNUTLS < 3 does not reject it and
+     * be rejected. GNUTLS < 3.1 does not reject it and
      * we don't anticipate them changing this behaviour
      */
-    DO_CTX_TEST(true, cacert4req.filename, servercert4req.filename, GNUTLS_VERSION_MAJOR >= 3);
+    DO_CTX_TEST(true, cacert4req.filename, servercert4req.filename,
+                (GNUTLS_VERSION_MAJOR == 3 && GNUTLS_VERSION_MINOR >= 1) ||
+                GNUTLS_VERSION_MAJOR > 3);
     DO_CTX_TEST(true, cacert5req.filename, servercert5req.filename, true);
     DO_CTX_TEST(true, cacert6req.filename, servercert6req.filename, true);
 
@@ -623,7 +627,7 @@ mymain(void)
 
     testTLSCleanup(KEYFILE);
 
-    return ret==0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 VIRT_TEST_MAIN(mymain)

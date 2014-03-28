@@ -1,5 +1,5 @@
 /*
- * bridge_driver.h: platform specific routines for bridge driver
+ * bridge_driver_platform.h: platform specific routines for bridge driver
  *
  * Copyright (C) 2006-2013 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
@@ -25,10 +25,10 @@
 # define __VIR_BRIDGE_DRIVER_PLATFORM_H__
 
 # include "internal.h"
-# include "virlog.h"
 # include "virthread.h"
 # include "virdnsmasq.h"
 # include "network_conf.h"
+# include "object_event.h"
 
 /* Main driver state */
 struct _virNetworkDriverState {
@@ -43,34 +43,14 @@ struct _virNetworkDriverState {
     char *dnsmasqStateDir;
     char *radvdStateDir;
     dnsmasqCapsPtr dnsmasqCaps;
+
+    virObjectEventStatePtr networkEventState;
 };
 
 typedef struct _virNetworkDriverState virNetworkDriverState;
 typedef virNetworkDriverState *virNetworkDriverStatePtr;
 
 int networkCheckRouteCollision(virNetworkObjPtr network);
-
-int networkAddMasqueradingFirewallRules(virNetworkObjPtr network,
-                                        virNetworkIpDefPtr ipdef);
-
-void networkRemoveMasqueradingFirewallRules(virNetworkObjPtr network,
-                                            virNetworkIpDefPtr ipdef);
-
-int networkAddRoutingFirewallRules(virNetworkObjPtr network,
-                                   virNetworkIpDefPtr ipdef);
-
-void networkRemoveRoutingFirewallRules(virNetworkObjPtr network,
-                                       virNetworkIpDefPtr ipdef);
-
-int networkAddGeneralFirewallRules(virNetworkObjPtr network);
-
-void networkRemoveGeneralFirewallRules(virNetworkObjPtr network);
-
-int networkAddIpSpecificFirewallRules(virNetworkObjPtr network,
-                                      virNetworkIpDefPtr ipdef);
-
-void networkRemoveIpSpecificFirewallRules(virNetworkObjPtr network,
-                                          virNetworkIpDefPtr ipdef);
 
 int networkAddFirewallRules(virNetworkObjPtr network);
 

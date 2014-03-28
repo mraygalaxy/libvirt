@@ -4,7 +4,7 @@
  * Description: Provides the interfaces of the libvirt library to handle
  *              virtualized domains
  *
- * Copyright (C) 2005-2006, 2010-2013 Red Hat, Inc.
+ * Copyright (C) 2005-2006, 2010-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -692,6 +692,14 @@ typedef enum {
 #define VIR_NODE_CPU_STATS_IOWAIT "iowait"
 
 /**
+ * VIR_NODE_CPU_STATS_INTR:
+ *
+ * The cumulative interrupt CPU time,
+ * since the node booting up (in nanoseconds).
+ */
+#define VIR_NODE_CPU_STATS_INTR "intr"
+
+/**
  * VIR_NODE_CPU_STATS_UTILIZATION:
  *
  * The CPU utilization of a node.
@@ -1172,6 +1180,29 @@ typedef enum {
     VIR_DUMP_MEMORY_ONLY  = (1 << 4), /* use dump-guest-memory */
 } virDomainCoreDumpFlags;
 
+/**
+ * virDomainCoreDumpFormat:
+ *
+ * Values for specifying different formats of domain core dumps.
+ */
+typedef enum {
+    VIR_DOMAIN_CORE_DUMP_FORMAT_RAW,          /* dump guest memory in raw format */
+    VIR_DOMAIN_CORE_DUMP_FORMAT_KDUMP_ZLIB,   /* kdump-compressed format, with
+                                               * zlib compression */
+    VIR_DOMAIN_CORE_DUMP_FORMAT_KDUMP_LZO,    /* kdump-compressed format, with
+                                               * lzo compression */
+    VIR_DOMAIN_CORE_DUMP_FORMAT_KDUMP_SNAPPY, /* kdump-compressed format, with
+                                               * snappy compression */
+#ifdef VIR_ENUM_SENTINELS
+    VIR_DOMAIN_CORE_DUMP_FORMAT_LAST
+    /*
+     * NB: this enum value will increase over time as new events are
+     * added to the libvirt API. It reflects the last state supported
+     * by this version of the libvirt API.
+     */
+#endif
+} virDomainCoreDumpFormat;
+
 /* Domain migration flags. */
 typedef enum {
     VIR_MIGRATE_LIVE              = (1 << 0), /* live migration */
@@ -1192,7 +1223,8 @@ typedef enum {
     VIR_MIGRATE_OFFLINE           = (1 << 10), /* offline migrate */
     VIR_MIGRATE_COMPRESSED        = (1 << 11), /* compress data during migration */
     VIR_MIGRATE_ABORT_ON_ERROR    = (1 << 12), /* abort migration on I/O errors happened during migration */
-    VIR_MIGRATE_RDMA_PIN_ALL      = (1 << 13), /* RDMA memory pinning */
+    VIR_MIGRATE_AUTO_CONVERGE     = (1 << 13), /* force convergence */
+    VIR_MIGRATE_RDMA_PIN_ALL      = (1 << 14), /* RDMA memory pinning */
 } virDomainMigrateFlags;
 
 
@@ -1724,6 +1756,14 @@ int                     virDomainCoreDump       (virDomainPtr domain,
                                                  unsigned int flags);
 
 /*
+ * Domain core dump with format specified
+ */
+int                 virDomainCoreDumpWithFormat (virDomainPtr domain,
+                                                 const char *to,
+                                                 unsigned int dumpformat,
+                                                 unsigned int flags);
+
+/*
  * Screenshot of current domain console
  */
 char *                  virDomainScreenshot     (virDomainPtr domain,
@@ -1806,6 +1846,51 @@ char *                  virDomainGetSchedulerType(virDomainPtr domain,
  */
 
 #define VIR_DOMAIN_BLKIO_DEVICE_WEIGHT "device_weight"
+
+/**
+ * VIR_DOMAIN_BLKIO_DEVICE_READ_IOPS:
+ *
+ * Macro for the blkio tunable throttle.read_iops_device: it represents
+ * the number of reading the block device per second, as a string. The
+ * string is parsed as a series of /path/to/device, read_iops elements,
+ * separated by ','.
+ */
+
+#define VIR_DOMAIN_BLKIO_DEVICE_READ_IOPS "device_read_iops_sec"
+
+
+/**
+ * VIR_DOMAIN_BLKIO_DEVICE_WRITE_IOPS:
+ *
+ * Macro for the blkio tunable throttle.write_iops_device: it represents
+ * the number of writing the block device per second, as a string. The
+ * string is parsed as a series of /path/to/device, write_iops elements,
+ * separated by ','.
+ */
+#define VIR_DOMAIN_BLKIO_DEVICE_WRITE_IOPS "device_write_iops_sec"
+
+
+/**
+ * VIR_DOMAIN_BLKIO_DEVICE_READ_BPS:
+ *
+ * Macro for the blkio tunable throttle.read_iops_device: it represents
+ * the bytes of reading the block device per second, as a string. The
+ * string is parsed as a series of /path/to/device, read_bps elements,
+ * separated by ','.
+ */
+#define VIR_DOMAIN_BLKIO_DEVICE_READ_BPS "device_read_bytes_sec"
+
+
+/**
+ * VIR_DOMAIN_BLKIO_DEVICE_WRITE_BPS:
+ *
+ * Macro for the blkio tunable throttle.read_iops_device: it represents
+ * the number of reading the block device per second, as a string. The
+ * string is parsed as a series of /path/to/device, write_bps elements,
+ * separated by ','.
+ */
+#define VIR_DOMAIN_BLKIO_DEVICE_WRITE_BPS "device_write_bytes_sec"
+
 
 /* Set Blkio tunables for the domain*/
 int     virDomainSetBlkioParameters(virDomainPtr domain,
@@ -2096,7 +2181,8 @@ int                     virDomainBlockResize (virDomainPtr dom,
 
 /** virDomainBlockInfo:
  *
- * This struct provides information about the size of a block device backing store
+ * This struct provides information about the size of a block device
+ * backing store
  *
  * Examples:
  *
@@ -2109,11 +2195,12 @@ int                     virDomainBlockResize (virDomainPtr dom,
  *
  *  - qcow2 file in filesystem
  *       * capacity: logical size from qcow2 header
- *       * allocation, physical: logical size of the file / highest qcow extent (identical)
+ *       * allocation, physical: logical size of the file /
+ *                               highest qcow extent (identical)
  *
  *  - qcow2 file in a block device
  *       * capacity: logical size from qcow2 header
- *       * allocation: highest qcow extent written
+ *       * allocation: highest qcow extent written for an active domain
  *       * physical: size of the block device container
  */
 typedef struct _virDomainBlockInfo virDomainBlockInfo;
@@ -3057,6 +3144,7 @@ typedef enum {
     VIR_CONNECT_LIST_STORAGE_POOLS_MPATH         = 1 << 13,
     VIR_CONNECT_LIST_STORAGE_POOLS_RBD           = 1 << 14,
     VIR_CONNECT_LIST_STORAGE_POOLS_SHEEPDOG      = 1 << 15,
+    VIR_CONNECT_LIST_STORAGE_POOLS_GLUSTER       = 1 << 16,
 } virConnectListAllStoragePoolsFlags;
 
 int                     virConnectListAllStoragePools(virConnectPtr conn,
@@ -3464,7 +3552,7 @@ typedef enum {
 /**
  * virDomainEventDefinedDetailType:
  *
- * Details on the caused of the 'defined' lifecycle event
+ * Details on the cause of a 'defined' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_DEFINED_ADDED = 0,     /* Newly created config file */
@@ -3478,7 +3566,7 @@ typedef enum {
 /**
  * virDomainEventUndefinedDetailType:
  *
- * Details on the caused of the 'undefined' lifecycle event
+ * Details on the cause of an 'undefined' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_UNDEFINED_REMOVED = 0, /* Deleted the config file */
@@ -3491,7 +3579,7 @@ typedef enum {
 /**
  * virDomainEventStartedDetailType:
  *
- * Details on the caused of the 'started' lifecycle event
+ * Details on the cause of a 'started' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_STARTED_BOOTED = 0,   /* Normal startup from boot */
@@ -3508,7 +3596,7 @@ typedef enum {
 /**
  * virDomainEventSuspendedDetailType:
  *
- * Details on the caused of the 'suspended' lifecycle event
+ * Details on the cause of a 'suspended' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_SUSPENDED_PAUSED = 0,   /* Normal suspend due to admin pause */
@@ -3527,7 +3615,7 @@ typedef enum {
 /**
  * virDomainEventResumedDetailType:
  *
- * Details on the caused of the 'resumed' lifecycle event
+ * Details on the cause of a 'resumed' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_RESUMED_UNPAUSED = 0,   /* Normal resume due to admin unpause */
@@ -3542,7 +3630,7 @@ typedef enum {
 /**
  * virDomainEventStoppedDetailType:
  *
- * Details on the caused of the 'stopped' lifecycle event
+ * Details on the cause of a 'stopped' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_STOPPED_SHUTDOWN = 0,  /* Normal shutdown */
@@ -3562,7 +3650,7 @@ typedef enum {
 /**
  * virDomainEventShutdownDetailType:
  *
- * Details about the 'shutdown' lifecycle event
+ * Details on the cause of a 'shutdown' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_SHUTDOWN_FINISHED = 0, /* Guest finished shutdown sequence */
@@ -3575,7 +3663,7 @@ typedef enum {
 /**
  * virDomainEventPMSuspendedDetailType:
  *
- * Details about the 'pmsuspended' lifecycle event
+ * Details on the cause of a 'pmsuspended' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_PMSUSPENDED_MEMORY = 0, /* Guest was PM suspended to memory */
@@ -3586,8 +3674,10 @@ typedef enum {
 #endif
 } virDomainEventPMSuspendedDetailType;
 
-/*
- * Details about the 'crashed' lifecycle event
+/**
+ * virDomainEventCrashedDetailType:
+ *
+ * Details on the cause of a 'crashed' lifecycle event
  */
 typedef enum {
     VIR_DOMAIN_EVENT_CRASHED_PANICKED = 0, /* Guest was panicked */
@@ -4521,14 +4611,17 @@ int virDomainSnapshotDelete(virDomainSnapshotPtr snapshot,
 int virDomainSnapshotRef(virDomainSnapshotPtr snapshot);
 int virDomainSnapshotFree(virDomainSnapshotPtr snapshot);
 
-/*
+/**
  * virConnectDomainEventGenericCallback:
  * @conn: the connection pointer
  * @dom: the domain pointer
  * @opaque: application specified data
  *
- * A generic domain event callback handler. Specific events usually
- * have a customization with extra parameters
+ * A generic domain event callback handler, for use with
+ * virConnectDomainEventRegisterAny(). Specific events usually
+ * have a customization with extra parameters, often with @opaque being
+ * passed in a different parameter position; use VIR_DOMAIN_EVENT_CALLBACK()
+ * when registering an appropriate handler.
  */
 typedef void (*virConnectDomainEventGenericCallback)(virConnectPtr conn,
                                                      virDomainPtr dom,
@@ -4558,7 +4651,7 @@ typedef enum {
     VIR_DOMAIN_EVENT_WATCHDOG_NONE = 0, /* No action, watchdog ignored */
     VIR_DOMAIN_EVENT_WATCHDOG_PAUSE,    /* Guest CPUs are paused */
     VIR_DOMAIN_EVENT_WATCHDOG_RESET,    /* Guest CPUs are reset */
-    VIR_DOMAIN_EVENT_WATCHDOG_POWEROFF, /* Guest is forcably powered off */
+    VIR_DOMAIN_EVENT_WATCHDOG_POWEROFF, /* Guest is forcibly powered off */
     VIR_DOMAIN_EVENT_WATCHDOG_SHUTDOWN, /* Guest is requested to gracefully shutdown */
     VIR_DOMAIN_EVENT_WATCHDOG_DEBUG,    /* No action, a debug message logged */
 
@@ -4590,7 +4683,7 @@ typedef void (*virConnectDomainEventWatchdogCallback)(virConnectPtr conn,
  */
 typedef enum {
     VIR_DOMAIN_EVENT_IO_ERROR_NONE = 0,  /* No action, IO error ignored */
-    VIR_DOMAIN_EVENT_IO_ERROR_PAUSE,     /* Guest CPUs are pausde */
+    VIR_DOMAIN_EVENT_IO_ERROR_PAUSE,     /* Guest CPUs are paused */
     VIR_DOMAIN_EVENT_IO_ERROR_REPORT,    /* IO error reported to guest OS */
 
 #ifdef VIR_ENUM_SENTINELS
@@ -4629,7 +4722,7 @@ typedef void (*virConnectDomainEventIOErrorCallback)(virConnectPtr conn,
  * @opaque: application specified data
  *
  * The callback signature to use when registering for an event of type
- * VIR_DOMAIN_EVENT_ID_IO_ERROR with virConnectDomainEventRegisterAny()
+ * VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON with virConnectDomainEventRegisterAny()
  *
  */
 typedef void (*virConnectDomainEventIOErrorReasonCallback)(virConnectPtr conn,
@@ -4859,7 +4952,7 @@ typedef void (*virConnectDomainEventTrayChangeCallback)(virConnectPtr conn,
  *          always passes 0
  * @opaque: application specified data
  *
- * This callback occurs when the guest is waken up.
+ * This callback occurs when the guest is woken up.
  *
  * The callback signature to use when registering for an event of type
  * VIR_DOMAIN_EVENT_ID_PMWAKEUP with virConnectDomainEventRegisterAny()
@@ -4877,7 +4970,7 @@ typedef void (*virConnectDomainEventPMWakeupCallback)(virConnectPtr conn,
  *          always passes 0
  * @opaque: application specified data
  *
- * This callback occurs when the guest is waken up.
+ * This callback occurs when the guest is suspended.
  *
  * The callback signature to use when registering for an event of type
  * VIR_DOMAIN_EVENT_ID_PMSUSPEND with virConnectDomainEventRegisterAny()
@@ -4943,11 +5036,18 @@ typedef void (*virConnectDomainEventDeviceRemovedCallback)(virConnectPtr conn,
  * VIR_DOMAIN_EVENT_CALLBACK:
  *
  * Used to cast the event specific callback into the generic one
- * for use for virDomainEventRegister
+ * for use for virConnectDomainEventRegisterAny()
  */
 #define VIR_DOMAIN_EVENT_CALLBACK(cb) ((virConnectDomainEventGenericCallback)(cb))
 
 
+/**
+ * virDomainEventID:
+ *
+ * An enumeration of supported eventId parameters for
+ * virConnectDomainEventRegisterAny().  Each event id determines which
+ * signature of callback function will be used.
+ */
 typedef enum {
     VIR_DOMAIN_EVENT_ID_LIFECYCLE = 0,       /* virConnectDomainEventCallback */
     VIR_DOMAIN_EVENT_ID_REBOOT = 1,          /* virConnectDomainEventGenericCallback */
@@ -4988,6 +5088,96 @@ int virConnectDomainEventRegisterAny(virConnectPtr conn,
 int virConnectDomainEventDeregisterAny(virConnectPtr conn,
                                        int callbackID);
 
+/**
+ * virNetworkEventLifecycleType:
+ *
+ * a virNetworkEventLifecycleType is emitted during network lifecycle events
+ */
+typedef enum {
+    VIR_NETWORK_EVENT_DEFINED = 0,
+    VIR_NETWORK_EVENT_UNDEFINED = 1,
+    VIR_NETWORK_EVENT_STARTED = 2,
+    VIR_NETWORK_EVENT_STOPPED = 3,
+
+#ifdef VIR_ENUM_SENTINELS
+    VIR_NETWORK_EVENT_LAST
+#endif
+} virNetworkEventLifecycleType;
+
+/**
+ * virConnectNetworkEventLifecycleCallback:
+ * @conn: connection object
+ * @net: network on which the event occurred
+ * @event: The specific virNetworkEventLifeCycleType which occurred
+ * @detail: contains some details on the reason of the event.
+ *          It will be 0 for the while.
+ * @opaque: application specified data
+ *
+ * This callback occurs when the network is started or stopped.
+ *
+ * The callback signature to use when registering for an event of type
+ * VIR_NETWORK_EVENT_ID_LIFECYCLE with virConnectNetworkEventRegisterAny()
+ */
+typedef void (*virConnectNetworkEventLifecycleCallback)(virConnectPtr conn,
+                                                        virNetworkPtr net,
+                                                        int event,
+                                                        int detail,
+                                                        void *opaque);
+
+/**
+ * VIR_NETWORK_EVENT_CALLBACK:
+ *
+ * Used to cast the event specific callback into the generic one
+ * for use for virConnectNetworkEventRegisterAny()
+ */
+#define VIR_NETWORK_EVENT_CALLBACK(cb) ((virConnectNetworkEventGenericCallback)(cb))
+
+/**
+ * virNetworkEventID:
+ *
+ * An enumeration of supported eventId parameters for
+ * virConnectNetworkEventRegisterAny().  Each event id determines which
+ * signature of callback function will be used.
+ */
+typedef enum {
+    VIR_NETWORK_EVENT_ID_LIFECYCLE = 0,       /* virConnectNetworkEventLifecycleCallback */
+
+#ifdef VIR_ENUM_SENTINELS
+    VIR_NETWORK_EVENT_ID_LAST
+    /*
+     * NB: this enum value will increase over time as new events are
+     * added to the libvirt API. It reflects the last event ID supported
+     * by this version of the libvirt API.
+     */
+#endif
+} virNetworkEventID;
+
+/**
+ * virConnectNetworkEventGenericCallback:
+ * @conn: the connection pointer
+ * @net: the network pointer
+ * @opaque: application specified data
+ *
+ * A generic network event callback handler, for use with
+ * virConnectNetworkEventRegisterAny(). Specific events usually
+ * have a customization with extra parameters, often with @opaque being
+ * passed in a different parameter position; use VIR_NETWORK_EVENT_CALLBACK()
+ * when registering an appropriate handler.
+ */
+typedef void (*virConnectNetworkEventGenericCallback)(virConnectPtr conn,
+                                                      virNetworkPtr net,
+                                                      void *opaque);
+
+/* Use VIR_NETWORK_EVENT_CALLBACK() to cast the 'cb' parameter  */
+int virConnectNetworkEventRegisterAny(virConnectPtr conn,
+                                      virNetworkPtr net, /* Optional, to filter */
+                                      int eventID,
+                                      virConnectNetworkEventGenericCallback cb,
+                                      void *opaque,
+                                      virFreeCallback freecb);
+
+int virConnectNetworkEventDeregisterAny(virConnectPtr conn,
+                                        int callbackID);
 
 /**
  * virNWFilter:

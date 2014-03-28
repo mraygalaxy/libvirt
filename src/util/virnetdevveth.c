@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2013 Red Hat, Inc.
+ * Copyright (C) 2010-2014 Red Hat, Inc.
  * Copyright IBM Corp. 2008
  *
  * This library is free software; you can redistribute it and/or
@@ -37,7 +37,22 @@
 
 #define VIR_FROM_THIS VIR_FROM_NONE
 
+VIR_LOG_INIT("util.netdevveth");
+
 /* Functions */
+
+virMutex virNetDevVethCreateMutex;
+
+static int virNetDevVethCreateMutexOnceInit(void)
+{
+    if (virMutexInit(&virNetDevVethCreateMutex) < 0) {
+        virReportSystemError(errno, "%s", _("unable to init mutex"));
+        return -1;
+    }
+    return 0;
+}
+
+VIR_ONCE_GLOBAL_INIT(virNetDevVethCreateMutex);
 
 static int virNetDevVethExists(int devNum)
 {
@@ -117,6 +132,10 @@ int virNetDevVethCreate(char** veth1, char** veth2)
      * We might race with other containers, but this is reasonably
      * unlikely, so don't do too many retries for device creation
      */
+    if (virNetDevVethCreateMutexInitialize() < 0)
+        return -1;
+
+    virMutexLock(&virNetDevVethCreateMutex);
 #define MAX_VETH_RETRIES 10
 
     for (i = 0; i < MAX_VETH_RETRIES; i++) {
@@ -166,7 +185,7 @@ int virNetDevVethCreate(char** veth1, char** veth2)
 
         VIR_DEBUG("Failed to create veth host: %s guest: %s: %d",
                   *veth1 ? *veth1 : veth1auto,
-                  *veth1 ? *veth1 : veth1auto,
+                  *veth2 ? *veth2 : veth2auto,
                   status);
         VIR_FREE(veth1auto);
         VIR_FREE(veth2auto);
@@ -178,7 +197,8 @@ int virNetDevVethCreate(char** veth1, char** veth2)
                    _("Failed to allocate free veth pair after %d attempts"),
                    MAX_VETH_RETRIES);
 
-cleanup:
+ cleanup:
+    virMutexUnlock(&virNetDevVethCreateMutex);
     virCommandFree(cmd);
     VIR_FREE(veth1auto);
     VIR_FREE(veth2auto);
@@ -217,7 +237,7 @@ int virNetDevVethDelete(const char *veth)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     return ret;
 }

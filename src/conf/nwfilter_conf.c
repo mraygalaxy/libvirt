@@ -2,7 +2,7 @@
  * nwfilter_conf.c: network filter XML processing
  *                  (derived from storage_conf.c)
  *
- * Copyright (C) 2006-2013 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  * Copyright (C) 2006-2008 Daniel P. Berrange
  *
  * Copyright (C) 2010-2011 IBM Corporation
@@ -143,17 +143,25 @@ static const struct int_map chain_priorities[] = {
 /*
  * only one filter update allowed
  */
-static virMutex updateMutex;
+static virRWLock updateLock;
 static bool initialized = false;
 
 void
-virNWFilterLockFilterUpdates(void) {
-    virMutexLock(&updateMutex);
+virNWFilterReadLockFilterUpdates(void)
+{
+    virRWLockRead(&updateLock);
 }
 
 void
-virNWFilterUnlockFilterUpdates(void) {
-    virMutexUnlock(&updateMutex);
+virNWFilterWriteLockFilterUpdates(void)
+{
+    virRWLockWrite(&updateLock);
+}
+
+void
+virNWFilterUnlockFilterUpdates(void)
+{
+    virRWLockUnlock(&updateLock);
 }
 
 
@@ -161,30 +169,32 @@ virNWFilterUnlockFilterUpdates(void) {
 /*
  * attribute names for the rules XML
  */
-static const char srcmacaddr_str[]   = "srcmacaddr";
-static const char srcmacmask_str[]   = "srcmacmask";
-static const char dstmacaddr_str[]   = "dstmacaddr";
-static const char dstmacmask_str[]   = "dstmacmask";
-static const char arpsrcmacaddr_str[]= "arpsrcmacaddr";
-static const char arpdstmacaddr_str[]= "arpdstmacaddr";
-static const char arpsrcipaddr_str[] = "arpsrcipaddr";
-static const char arpdstipaddr_str[] = "arpdstipaddr";
-static const char srcipaddr_str[]    = "srcipaddr";
-static const char srcipmask_str[]    = "srcipmask";
-static const char dstipaddr_str[]    = "dstipaddr";
-static const char dstipmask_str[]    = "dstipmask";
-static const char srcipfrom_str[]    = "srcipfrom";
-static const char srcipto_str[]      = "srcipto";
-static const char dstipfrom_str[]    = "dstipfrom";
-static const char dstipto_str[]      = "dstipto";
-static const char srcportstart_str[] = "srcportstart";
-static const char srcportend_str[]   = "srcportend";
-static const char dstportstart_str[] = "dstportstart";
-static const char dstportend_str[]   = "dstportend";
-static const char dscp_str[]         = "dscp";
-static const char state_str[]        = "state";
-static const char ipset_str[]        = "ipset";
-static const char ipsetflags_str[]   = "ipsetflags";
+static const char srcmacaddr_str[]    = "srcmacaddr";
+static const char srcmacmask_str[]    = "srcmacmask";
+static const char dstmacaddr_str[]    = "dstmacaddr";
+static const char dstmacmask_str[]    = "dstmacmask";
+static const char arpsrcmacaddr_str[] = "arpsrcmacaddr";
+static const char arpdstmacaddr_str[] = "arpdstmacaddr";
+static const char arpsrcipaddr_str[]  = "arpsrcipaddr";
+static const char arpsrcipmask_str[]  = "arpsrcipmask";
+static const char arpdstipaddr_str[]  = "arpdstipaddr";
+static const char arpdstipmask_str[]  = "arpdstipmask";
+static const char srcipaddr_str[]     = "srcipaddr";
+static const char srcipmask_str[]     = "srcipmask";
+static const char dstipaddr_str[]     = "dstipaddr";
+static const char dstipmask_str[]     = "dstipmask";
+static const char srcipfrom_str[]     = "srcipfrom";
+static const char srcipto_str[]       = "srcipto";
+static const char dstipfrom_str[]     = "dstipfrom";
+static const char dstipto_str[]       = "dstipto";
+static const char srcportstart_str[]  = "srcportstart";
+static const char srcportend_str[]    = "srcportend";
+static const char dstportstart_str[]  = "dstportstart";
+static const char dstportend_str[]    = "dstportend";
+static const char dscp_str[]          = "dscp";
+static const char state_str[]         = "state";
+static const char ipset_str[]         = "ipset";
+static const char ipsetflags_str[]    = "ipsetflags";
 
 #define SRCMACADDR    srcmacaddr_str
 #define SRCMACMASK    srcmacmask_str
@@ -193,7 +203,9 @@ static const char ipsetflags_str[]   = "ipsetflags";
 #define ARPSRCMACADDR arpsrcmacaddr_str
 #define ARPDSTMACADDR arpdstmacaddr_str
 #define ARPSRCIPADDR  arpsrcipaddr_str
+#define ARPSRCIPMASK  arpsrcipmask_str
 #define ARPDSTIPADDR  arpdstipaddr_str
+#define ARPDSTIPMASK  arpdstipmask_str
 #define SRCIPADDR     srcipaddr_str
 #define SRCIPMASK     srcipmask_str
 #define DSTIPADDR     dstipaddr_str
@@ -271,7 +283,8 @@ intMapGetByString(const struct int_map *intmap, const char *str, int casecmp,
 
 
 void
-virNWFilterRuleDefFree(virNWFilterRuleDefPtr def) {
+virNWFilterRuleDefFree(virNWFilterRuleDefPtr def)
+{
     size_t i;
     if (!def)
         return;
@@ -290,7 +303,8 @@ virNWFilterRuleDefFree(virNWFilterRuleDefPtr def) {
 
 
 static void
-virNWFilterIncludeDefFree(virNWFilterIncludeDefPtr inc) {
+virNWFilterIncludeDefFree(virNWFilterIncludeDefPtr inc)
+{
     if (!inc)
         return;
     virNWFilterHashTableFree(inc->params);
@@ -300,7 +314,8 @@ virNWFilterIncludeDefFree(virNWFilterIncludeDefPtr inc) {
 
 
 static void
-virNWFilterEntryFree(virNWFilterEntryPtr entry) {
+virNWFilterEntryFree(virNWFilterEntryPtr entry)
+{
     if (!entry)
         return;
 
@@ -311,7 +326,8 @@ virNWFilterEntryFree(virNWFilterEntryPtr entry) {
 
 
 void
-virNWFilterDefFree(virNWFilterDefPtr def) {
+virNWFilterDefFree(virNWFilterDefPtr def)
+{
     size_t i;
     if (!def)
         return;
@@ -394,15 +410,13 @@ virNWFilterRuleDefAddString(virNWFilterRuleDefPtr nwf,
                             const char *string,
                             size_t maxstrlen)
 {
-    if (VIR_REALLOC_N(nwf->strings, nwf->nstrings+1) < 0)
-        return NULL;
+    char *tmp;
 
-    if (VIR_STRNDUP(nwf->strings[nwf->nstrings], string, maxstrlen) < 0)
-        return NULL;
+    if (VIR_STRNDUP(tmp, string, maxstrlen) < 0 ||
+        VIR_APPEND_ELEMENT_COPY(nwf->strings, nwf->nstrings, tmp) < 0)
+        VIR_FREE(tmp);
 
-    nwf->nstrings++;
-
-    return nwf->strings[nwf->nstrings-1];
+    return tmp;
 }
 
 
@@ -420,15 +434,7 @@ virNWFilterObjRemove(virNWFilterObjListPtr nwfilters,
             virNWFilterObjUnlock(nwfilters->objs[i]);
             virNWFilterObjFree(nwfilters->objs[i]);
 
-            if (i < (nwfilters->count - 1))
-                memmove(nwfilters->objs + i, nwfilters->objs + i + 1,
-                        sizeof(*(nwfilters->objs)) * (nwfilters->count - (i + 1)));
-
-            if (VIR_REALLOC_N(nwfilters->objs, nwfilters->count - 1) < 0) {
-                ; /* Failure to reduce memory allocation isn't fatal */
-            }
-            nwfilters->count--;
-
+            VIR_DELETE_ELEMENT(nwfilters->objs, i, nwfilters->count);
             break;
         }
         virNWFilterObjUnlock(nwfilters->objs[i]);
@@ -1000,7 +1006,7 @@ ipsetValidator(enum attrDatatype datatype ATTRIBUTE_UNUSED, union data *val,
 
     return true;
 
-arg_err_exit:
+ arg_err_exit:
     virReportError(VIR_ERR_INVALID_ARG,
                    "%s", errmsg);
     return false;
@@ -1046,7 +1052,7 @@ ipsetFlagsValidator(enum attrDatatype datatype ATTRIBUTE_UNUSED, union data *val
 
     return true;
 
-arg_err_exit:
+ arg_err_exit:
     virReportError(VIR_ERR_INVALID_ARG,
                    "%s", errmsg);
     return false;
@@ -1116,8 +1122,8 @@ static const virXMLAttr2Struct macAttributes[] = {
         .name = "protocolid",
         .datatype = DATATYPE_UINT16 | DATATYPE_UINT16_HEX | DATATYPE_STRING,
         .dataIdx = offsetof(virNWFilterRuleDef, p.ethHdrFilter.dataProtocolID),
-        .validator= checkMacProtocolID,
-        .formatter= macProtocolIDFormatter,
+        .validator = checkMacProtocolID,
+        .formatter = macProtocolIDFormatter,
     },
     COMMENT_PROP(ethHdrFilter),
     {
@@ -1292,8 +1298,8 @@ static const virXMLAttr2Struct arpAttributes[] = {
         .name = "opcode",
         .datatype = DATATYPE_UINT16 | DATATYPE_UINT16_HEX | DATATYPE_STRING,
         .dataIdx = offsetof(virNWFilterRuleDef, p.arpHdrFilter.dataOpcode),
-        .validator= arpOpcodeValidator,
-        .formatter= arpOpcodeFormatter,
+        .validator = arpOpcodeValidator,
+        .formatter = arpOpcodeFormatter,
     }, {
         .name = ARPSRCMACADDR,
         .datatype = DATATYPE_MACADDR,
@@ -1307,9 +1313,17 @@ static const virXMLAttr2Struct arpAttributes[] = {
         .datatype = DATATYPE_IPADDR,
         .dataIdx = offsetof(virNWFilterRuleDef, p.arpHdrFilter.dataARPSrcIPAddr),
     }, {
+        .name = ARPSRCIPMASK,
+        .datatype = DATATYPE_IPMASK,
+        .dataIdx = offsetof(virNWFilterRuleDef, p.arpHdrFilter.dataARPSrcIPMask),
+    }, {
         .name = ARPDSTIPADDR,
         .datatype = DATATYPE_IPADDR,
         .dataIdx = offsetof(virNWFilterRuleDef, p.arpHdrFilter.dataARPDstIPAddr),
+    }, {
+        .name = ARPDSTIPMASK,
+        .datatype = DATATYPE_IPMASK,
+        .dataIdx = offsetof(virNWFilterRuleDef, p.arpHdrFilter.dataARPDstIPMask),
     }, {
         .name = "gratuitous",
         .datatype = DATATYPE_BOOLEAN,
@@ -1347,8 +1361,8 @@ static const virXMLAttr2Struct ipAttributes[] = {
         .name = "protocol",
         .datatype = DATATYPE_STRING | DATATYPE_UINT8 | DATATYPE_UINT8_HEX,
         .dataIdx = offsetof(virNWFilterRuleDef, p.ipHdrFilter.ipHdr.dataProtocolID),
-        .validator= checkIPProtocolID,
-        .formatter= formatIPProtocolID,
+        .validator = checkIPProtocolID,
+        .formatter = formatIPProtocolID,
     },
     {
         .name = SRCPORTSTART,
@@ -1409,8 +1423,8 @@ static const virXMLAttr2Struct ipv6Attributes[] = {
         .name = "protocol",
         .datatype = DATATYPE_STRING | DATATYPE_UINT8 | DATATYPE_UINT8_HEX,
         .dataIdx = offsetof(virNWFilterRuleDef, p.ipv6HdrFilter.ipHdr.dataProtocolID),
-        .validator= checkIPProtocolID,
-        .formatter= formatIPProtocolID,
+        .validator = checkIPProtocolID,
+        .formatter = formatIPProtocolID,
     },
     {
         .name = SRCPORTSTART,
@@ -2056,10 +2070,10 @@ virNWFilterIncludeParse(xmlNodePtr cur)
     if (!ret->params)
         goto err_exit;
 
-cleanup:
+ cleanup:
     return ret;
 
-err_exit:
+ err_exit:
     virNWFilterIncludeDefFree(ret);
     ret = NULL;
     goto cleanup;
@@ -2306,10 +2320,10 @@ virNWFilterRuleParse(xmlNodePtr node)
     if (VIR_ALLOC(ret) < 0)
         return NULL;
 
-    action    = virXMLPropString(node, "action");
-    direction = virXMLPropString(node, "direction");
-    prio      = virXMLPropString(node, "priority");
-    statematch= virXMLPropString(node, "statematch");
+    action     = virXMLPropString(node, "action");
+    direction  = virXMLPropString(node, "direction");
+    prio       = virXMLPropString(node, "priority");
+    statematch = virXMLPropString(node, "statematch");
 
     if (!action) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
@@ -2319,7 +2333,7 @@ virNWFilterRuleParse(xmlNodePtr node)
     }
 
     if ((ret->action = virNWFilterRuleActionTypeFromString(action)) < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR,
+        virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
                        "%s",
                        _("unknown rule action attribute value"));
         goto err_exit;
@@ -2333,7 +2347,7 @@ virNWFilterRuleParse(xmlNodePtr node)
     }
 
     if ((ret->tt = virNWFilterRuleDirectionTypeFromString(direction)) < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR,
+        virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
                        "%s",
                        _("unknown rule direction attribute value"));
         goto err_exit;
@@ -2391,7 +2405,7 @@ virNWFilterRuleParse(xmlNodePtr node)
 
     virNWFilterRuleDefFixup(ret);
 
-cleanup:
+ cleanup:
     VIR_FREE(prio);
     VIR_FREE(action);
     VIR_FREE(direction);
@@ -2399,7 +2413,7 @@ cleanup:
 
     return ret;
 
-err_exit:
+ err_exit:
     virNWFilterRuleDefFree(ret);
     ret = NULL;
     goto cleanup;
@@ -2481,12 +2495,13 @@ virNWFilterIsAllowedChain(const char *chainname)
     virReportError(VIR_ERR_INVALID_ARG, "%s", msg);
     VIR_FREE(msg);
 
-err_exit:
+ err_exit:
     return NULL;
 }
 
 static virNWFilterDefPtr
-virNWFilterDefParseXML(xmlXPathContextPtr ctxt) {
+virNWFilterDefParseXML(xmlXPathContextPtr ctxt)
+{
     virNWFilterDefPtr ret;
     xmlNodePtr curr = ctxt->node;
     char *uuid = NULL;
@@ -2576,21 +2591,25 @@ virNWFilterDefParseXML(xmlXPathContextPtr ctxt) {
                 goto cleanup;
 
             if (xmlStrEqual(curr->name, BAD_CAST "rule")) {
-                if (!(entry->rule = virNWFilterRuleParse(curr)))
+                if (!(entry->rule = virNWFilterRuleParse(curr))) {
+                    virNWFilterEntryFree(entry);
                     goto cleanup;
+                }
             } else if (xmlStrEqual(curr->name, BAD_CAST "filterref")) {
-                if (!(entry->include = virNWFilterIncludeParse(curr)))
+                if (!(entry->include = virNWFilterIncludeParse(curr))) {
+                    virNWFilterEntryFree(entry);
                     goto cleanup;
+                }
             }
 
             if (entry->rule || entry->include) {
-                if (VIR_REALLOC_N(ret->filterEntries, ret->nentries+1) < 0) {
-                    VIR_FREE(entry);
+                if (VIR_APPEND_ELEMENT_COPY(ret->filterEntries,
+                                            ret->nentries, entry) < 0) {
+                    virNWFilterEntryFree(entry);
                     goto cleanup;
                 }
-                ret->filterEntries[ret->nentries++] = entry;
             } else
-                VIR_FREE(entry);
+                virNWFilterEntryFree(entry);
         }
         curr = curr->next;
     }
@@ -2611,7 +2630,8 @@ virNWFilterDefParseXML(xmlXPathContextPtr ctxt) {
 
 virNWFilterDefPtr
 virNWFilterDefParseNode(xmlDocPtr xml,
-                        xmlNodePtr root) {
+                        xmlNodePtr root)
+{
     xmlXPathContextPtr ctxt = NULL;
     virNWFilterDefPtr def = NULL;
 
@@ -2631,7 +2651,7 @@ virNWFilterDefParseNode(xmlDocPtr xml,
     ctxt->node = root;
     def = virNWFilterDefParseXML(ctxt);
 
-cleanup:
+ cleanup:
     xmlXPathFreeContext(ctxt);
     return def;
 }
@@ -2639,7 +2659,8 @@ cleanup:
 
 static virNWFilterDefPtr
 virNWFilterDefParse(const char *xmlStr,
-                    const char *filename) {
+                    const char *filename)
+{
     virNWFilterDefPtr def = NULL;
     xmlDocPtr xml;
 
@@ -2741,7 +2762,7 @@ int virNWFilterSaveConfig(const char *configDir,
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(xml);
     return ret;
 }
@@ -2950,7 +2971,7 @@ virNWFilterDefEqual(const virNWFilterDef *def1, virNWFilterDefPtr def2,
 
     ret = STREQ(xml1, xml2);
 
-cleanup:
+ cleanup:
     if (!cmpUUIDs)
         memcpy(def2->uuid, rem_uuid, sizeof(rem_uuid));
 
@@ -2986,14 +3007,12 @@ virNWFilterObjAssignDef(virNWFilterObjListPtr nwfilters,
         return NULL;
     }
 
-    virNWFilterLockFilterUpdates();
 
     if ((nwfilter = virNWFilterObjFindByName(nwfilters, def->name))) {
 
         if (virNWFilterDefEqual(def, nwfilter->def, false)) {
             virNWFilterDefFree(nwfilter->def);
             nwfilter->def = def;
-            virNWFilterUnlockFilterUpdates();
             return nwfilter;
         }
 
@@ -3001,7 +3020,6 @@ virNWFilterObjAssignDef(virNWFilterObjListPtr nwfilters,
         /* trigger the update on VMs referencing the filter */
         if (virNWFilterTriggerVMFilterRebuild()) {
             nwfilter->newDef = NULL;
-            virNWFilterUnlockFilterUpdates();
             virNWFilterObjUnlock(nwfilter);
             return NULL;
         }
@@ -3009,11 +3027,8 @@ virNWFilterObjAssignDef(virNWFilterObjListPtr nwfilters,
         virNWFilterDefFree(nwfilter->def);
         nwfilter->def = def;
         nwfilter->newDef = NULL;
-        virNWFilterUnlockFilterUpdates();
         return nwfilter;
     }
-
-    virNWFilterUnlockFilterUpdates();
 
     if (VIR_ALLOC(nwfilter) < 0)
         return NULL;
@@ -3026,15 +3041,14 @@ virNWFilterObjAssignDef(virNWFilterObjListPtr nwfilters,
     }
     virNWFilterObjLock(nwfilter);
     nwfilter->active = 0;
-    nwfilter->def = def;
 
-    if (VIR_REALLOC_N(nwfilters->objs, nwfilters->count + 1) < 0) {
-        nwfilter->def = NULL;
+    if (VIR_APPEND_ELEMENT_COPY(nwfilters->objs,
+                                nwfilters->count, nwfilter) < 0) {
         virNWFilterObjUnlock(nwfilter);
         virNWFilterObjFree(nwfilter);
         return NULL;
     }
-    nwfilters->objs[nwfilters->count++] = nwfilter;
+    nwfilter->def = def;
 
     return nwfilter;
 }
@@ -3212,7 +3226,7 @@ virNWFilterRuleDefDetailsFormat(virBufferPtr buf,
         enum virNWFilterEntryItemFlags flags = item->flags;
         if ((flags & NWFILTER_ENTRY_ITEM_FLAG_EXISTS)) {
             if (!typeShown) {
-                virBufferAsprintf(buf, "    <%s", type);
+                virBufferAsprintf(buf, "<%s", type);
                 typeShown = true;
                 neverShown = false;
             }
@@ -3323,95 +3337,59 @@ virNWFilterRuleDefDetailsFormat(virBufferPtr buf,
 
     if (neverShown)
        virBufferAsprintf(buf,
-                         "    <%s/>\n", type);
+                         "<%s/>\n", type);
 
-err_exit:
+ err_exit:
     return;
 }
 
 
-static char *
-virNWFilterRuleDefFormat(virNWFilterRuleDefPtr def)
+static int
+virNWFilterRuleDefFormat(virBufferPtr buf, virNWFilterRuleDefPtr def)
 {
     size_t i;
-    virBuffer buf  = VIR_BUFFER_INITIALIZER;
-    virBuffer buf2 = VIR_BUFFER_INITIALIZER;
-    char *data;
+    bool subelement = false;
 
-    virBufferAsprintf(&buf, "  <rule action='%s' direction='%s' priority='%d'",
+    virBufferAsprintf(buf, "<rule action='%s' direction='%s' priority='%d'",
                       virNWFilterRuleActionTypeToString(def->action),
                       virNWFilterRuleDirectionTypeToString(def->tt),
                       def->priority);
 
     if ((def->flags & RULE_FLAG_NO_STATEMATCH))
-        virBufferAddLit(&buf, " statematch='false'");
+        virBufferAddLit(buf, " statematch='false'");
 
+    virBufferAdjustIndent(buf, 2);
     i = 0;
     while (virAttr[i].id) {
         if (virAttr[i].prtclType == def->prtclType) {
-            virNWFilterRuleDefDetailsFormat(&buf2,
+            if (!subelement)
+                virBufferAddLit(buf, ">\n");
+            virNWFilterRuleDefDetailsFormat(buf,
                                             virAttr[i].id,
                                             virAttr[i].att,
                                             def);
+            subelement = true;
             break;
         }
         i++;
     }
 
-    if (virBufferError(&buf2))
-        goto no_memory;
-
-    data = virBufferContentAndReset(&buf2);
-
-    if (data) {
-        virBufferAddLit(&buf, ">\n");
-        virBufferAsprintf(&buf, "%s  </rule>\n", data);
-        VIR_FREE(data);
-    } else
-        virBufferAddLit(&buf, "/>\n");
-
-    if (virBufferError(&buf))
-        goto no_memory;
-
-    return virBufferContentAndReset(&buf);
-
-no_memory:
-    virReportOOMError();
-    virBufferFreeAndReset(&buf);
-    virBufferFreeAndReset(&buf2);
-
-    return NULL;
+    virBufferAdjustIndent(buf, -2);
+    if (subelement)
+        virBufferAddLit(buf, "</rule>\n");
+    else
+        virBufferAddLit(buf, "/>\n");
+    return 0;
 }
 
 
-static char *
-virNWFilterIncludeDefFormat(virNWFilterIncludeDefPtr inc)
-{
-    virBuffer buf = VIR_BUFFER_INITIALIZER;
-
-    virBufferAdjustIndent(&buf, 2);
-    if (virNWFilterFormatParamAttributes(&buf, inc->params,
-                                         inc->filterref) < 0) {
-        virBufferFreeAndReset(&buf);
-        return NULL;
-    }
-    virBufferAdjustIndent(&buf, -2);
-    if (virBufferError(&buf)) {
-        virReportOOMError();
-        virBufferFreeAndReset(&buf);
-        return NULL;
-    }
-
-    return virBufferContentAndReset(&buf);
-}
-
-
-static char *
-virNWFilterEntryFormat(virNWFilterEntryPtr entry)
+static int
+virNWFilterEntryFormat(virBufferPtr buf, virNWFilterEntryPtr entry)
 {
     if (entry->rule)
-        return virNWFilterRuleDefFormat(entry->rule);
-    return virNWFilterIncludeDefFormat(entry->include);
+        return virNWFilterRuleDefFormat(buf, entry->rule);
+    return virNWFilterFormatParamAttributes(buf, entry->include->params,
+                                            entry->include->filterref);
 }
 
 
@@ -3421,7 +3399,6 @@ virNWFilterDefFormat(const virNWFilterDef *def)
     virBuffer buf = VIR_BUFFER_INITIALIZER;
     char uuid[VIR_UUID_STRING_BUFLEN];
     size_t i;
-    char *xml;
 
     virBufferAsprintf(&buf, "<filter name='%s' chain='%s'",
                       def->name,
@@ -3430,18 +3407,17 @@ virNWFilterDefFormat(const virNWFilterDef *def)
         virBufferAsprintf(&buf, " priority='%d'",
                           def->chainPriority);
     virBufferAddLit(&buf, ">\n");
+    virBufferAdjustIndent(&buf, 2);
 
     virUUIDFormat(def->uuid, uuid);
-    virBufferAsprintf(&buf, "  <uuid>%s</uuid>\n", uuid);
+    virBufferAsprintf(&buf, "<uuid>%s</uuid>\n", uuid);
 
     for (i = 0; i < def->nentries; i++) {
-        xml = virNWFilterEntryFormat(def->filterEntries[i]);
-        if (!xml)
+        if (virNWFilterEntryFormat(&buf, def->filterEntries[i]) < 0)
             goto err_exit;
-        virBufferAdd(&buf, xml, -1);
-        VIR_FREE(xml);
     }
 
+    virBufferAdjustIndent(&buf, -2);
     virBufferAddLit(&buf, "</filter>\n");
 
     if (virBufferError(&buf))
@@ -3479,7 +3455,7 @@ int virNWFilterConfLayerInit(virDomainObjListIterator domUpdateCB,
 
     initialized = true;
 
-    if (virMutexInitRecursive(&updateMutex) < 0)
+    if (virRWLockInit(&updateLock) < 0)
         return -1;
 
     return 0;
@@ -3491,7 +3467,7 @@ void virNWFilterConfLayerShutdown(void)
     if (!initialized)
         return;
 
-    virMutexDestroy(&updateMutex);
+    virRWLockDestroy(&updateLock);
 
     initialized = false;
     virNWFilterDomainFWUpdateOpaque = NULL;

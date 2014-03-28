@@ -60,8 +60,12 @@ int virUSBDeviceFind(unsigned int vendor,
                      virUSBDevicePtr *usb);
 
 void virUSBDeviceFree(virUSBDevicePtr dev);
-void virUSBDeviceSetUsedBy(virUSBDevicePtr dev, const char *name);
-const char *virUSBDeviceGetUsedBy(virUSBDevicePtr dev);
+int virUSBDeviceSetUsedBy(virUSBDevicePtr dev,
+                          const char *drv_name,
+                          const char *dom_name);
+void virUSBDeviceGetUsedBy(virUSBDevicePtr dev,
+                           const char **drv_name,
+                           const char **dom_name);
 const char *virUSBDeviceGetName(virUSBDevicePtr dev);
 
 unsigned int virUSBDeviceGetBus(virUSBDevicePtr dev);
@@ -86,7 +90,7 @@ int virUSBDeviceListAdd(virUSBDeviceListPtr list,
                         virUSBDevicePtr dev);
 virUSBDevicePtr virUSBDeviceListGet(virUSBDeviceListPtr list,
                                     int idx);
-int virUSBDeviceListCount(virUSBDeviceListPtr list);
+size_t virUSBDeviceListCount(virUSBDeviceListPtr list);
 virUSBDevicePtr virUSBDeviceListSteal(virUSBDeviceListPtr list,
                                       virUSBDevicePtr dev);
 void virUSBDeviceListDel(virUSBDeviceListPtr list,

@@ -66,7 +66,7 @@ testCapsInit(void)
 
     return;
 
-  failure:
+ failure:
     virObjectUnref(caps);
     virObjectUnref(xmlopt);
     caps = NULL;
@@ -97,6 +97,11 @@ testCompareFiles(const char *xml, const char *vmx, int virtualHW_version)
         goto failure;
     }
 
+    if (!virDomainDefCheckABIStability(def, def)) {
+        fprintf(stderr, "ABI stability check failed on %s", xml);
+        goto failure;
+    }
+
     formatted = virVMXFormatConfig(&ctx, xmlopt, def, virtualHW_version);
 
     if (formatted == NULL) {
@@ -110,7 +115,7 @@ testCompareFiles(const char *xml, const char *vmx, int virtualHW_version)
 
     result = 0;
 
-  failure:
+ failure:
     VIR_FREE(xmlData);
     VIR_FREE(vmxData);
     VIR_FREE(formatted);
@@ -142,7 +147,7 @@ testCompareHelper(const void *data)
 
     result = testCompareFiles(xml, vmx, info->virtualHW_version);
 
-  cleanup:
+ cleanup:
     VIR_FREE(xml);
     VIR_FREE(vmx);
 
@@ -201,7 +206,7 @@ testFormatVMXFileName(const char *src, void *opaque ATTRIBUTE_UNUSED)
 
     success = true;
 
-  cleanup:
+ cleanup:
     if (! success) {
         VIR_FREE(absolutePath);
     }

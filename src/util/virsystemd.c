@@ -21,6 +21,10 @@
 
 #include <config.h>
 
+#ifdef WITH_SYSTEMD_DAEMON
+# include <systemd/sd-daemon.h>
+#endif
+
 #include "virsystemd.h"
 #include "virdbus.h"
 #include "virstring.h"
@@ -31,6 +35,7 @@
 
 #define VIR_FROM_THIS VIR_FROM_SYSTEMD
 
+VIR_LOG_INIT("util.systemd");
 
 static void virSystemdEscapeName(virBufferPtr buf,
                                  const char *name)
@@ -132,7 +137,7 @@ char *virSystemdMakeMachineName(const char *name,
             goto cleanup;
     }
 
-cleanup:
+ cleanup:
     VIR_FREE(username);
 
     return machinename;
@@ -167,6 +172,9 @@ int virSystemdCreateMachine(const char *name,
 
     ret = virDBusIsServiceEnabled("org.freedesktop.machine1");
     if (ret < 0)
+        return ret;
+
+    if ((ret = virDBusIsServiceRegistered("org.freedesktop.systemd1")) < 0)
         return ret;
 
     if (!(conn = virDBusGetSystemBus()))
@@ -228,6 +236,7 @@ int virSystemdCreateMachine(const char *name,
     VIR_DEBUG("Attempting to create machine via systemd");
     if (virDBusCallMethod(conn,
                           NULL,
+                          NULL,
                           "org.freedesktop.machine1",
                           "/org/freedesktop/machine1",
                           "org.freedesktop.machine1.Manager",
@@ -243,13 +252,15 @@ int virSystemdCreateMachine(const char *name,
                           iscontainer ? "container" : "vm",
                           (unsigned int)pidleader,
                           rootdir ? rootdir : "",
-                          1, "Slice", "s",
-                          slicename) < 0)
+                          3,
+                          "Slice", "s", slicename,
+                          "After", "as", 1, "libvirtd.service",
+                          "Before", "as", 1, "libvirt-guests.service") < 0)
         goto cleanup;
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(creatorname);
     VIR_FREE(machinename);
     VIR_FREE(slicename);
@@ -266,6 +277,9 @@ int virSystemdTerminateMachine(const char *name,
 
     ret = virDBusIsServiceEnabled("org.freedesktop.machine1");
     if (ret < 0)
+        return ret;
+
+    if ((ret = virDBusIsServiceRegistered("org.freedesktop.systemd1")) < 0)
         return ret;
 
     if (!(conn = virDBusGetSystemBus()))
@@ -288,6 +302,7 @@ int virSystemdTerminateMachine(const char *name,
     VIR_DEBUG("Attempting to terminate machine via systemd");
     if (virDBusCallMethod(conn,
                           NULL,
+                          NULL,
                           "org.freedesktop.machine1",
                           "/org/freedesktop/machine1",
                           "org.freedesktop.machine1.Manager",
@@ -298,7 +313,15 @@ int virSystemdTerminateMachine(const char *name,
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(machinename);
     return ret;
+}
+
+void
+virSystemdNotifyStartup(void)
+{
+#ifdef WITH_SYSTEMD_DAEMON
+    sd_notify(0, "READY=1");
+#endif
 }

@@ -29,6 +29,7 @@
 # include <fcntl.h>
 # include <sys/stat.h>
 # include <stdarg.h>
+# include <dirent.h>
 # include "viralloc.h"
 # include "virstring.h"
 # include "virfile.h"
@@ -42,6 +43,7 @@ static int (*real__xstat)(int ver, const char *path, struct stat *sb);
 static char *(*realcanonicalize_file_name)(const char *path);
 static int (*realopen)(const char *path, int flags, ...);
 static int (*realclose)(int fd);
+static DIR * (*realopendir)(const char *name);
 
 /* Don't make static, since it causes problems with clang
  * when passed as an arg to virAsprintf()
@@ -89,6 +91,10 @@ char *fakesysfsdir;
  *   Unbind driver from the device.
  *   Data in format "DDDD:BB:DD.F" (Domain:Bus:Device.Function).
  *
+ * /sys/bus/pci/drivers_probe
+ *   Probe for a driver that handles the specified device.
+ *   Data in format "DDDD:BB:DD.F" (Domain:Bus:Device.Function).
+ *
  * As a little hack, we are not mocking write to these files, but close()
  * instead. The advantage is we don't need any self growing array to hold the
  * partial writes and construct them back. We can let all the writes finish,
@@ -101,17 +107,26 @@ char *fakesysfsdir;
  *
  */
 
+enum driverActions {
+    PCI_ACTION_BIND         = 1 << 0,
+    PCI_ACTION_UNBIND       = 1 << 1,
+    PCI_ACTION_NEW_ID       = 1 << 2,
+    PCI_ACTION_REMOVE_ID    = 1 << 3,
+};
+
 struct pciDriver {
     char *name;
     int *vendor;        /* List of vendor:device IDs the driver can handle */
     int *device;
     size_t len;            /* @len is used for both @vendor and @device */
+    unsigned int fail;  /* Bitwise-OR of driverActions that should fail */
 };
 
 struct pciDevice {
     char *id;
     int vendor;
     int device;
+    int class;
     struct pciDriver *driver;   /* Driver attached. NULL if attached to no driver */
 };
 
@@ -136,7 +151,7 @@ static void pci_device_new_from_stub(const struct pciDevice *data);
 static struct pciDevice *pci_device_find_by_id(const char *id);
 static struct pciDevice *pci_device_find_by_content(const char *path);
 
-static void pci_driver_new(const char *name, ...);
+static void pci_driver_new(const char *name, int fail, ...);
 static struct pciDriver *pci_driver_find_by_dev(struct pciDevice *dev);
 static struct pciDriver *pci_driver_find_by_path(const char *path);
 static int pci_driver_bind(struct pciDriver *driver, struct pciDevice *dev);
@@ -204,7 +219,7 @@ pci_read_file(const char *path,
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(newpath);
     realclose(fd);
     return ret;
@@ -268,7 +283,7 @@ add_fd(int fd, const char *path)
 
     callbacks[nCallbacks++].fd = fd;
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -292,7 +307,7 @@ remove_fd(int fd)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -305,16 +320,33 @@ pci_device_new_from_stub(const struct pciDevice *data)
 {
     struct pciDevice *dev;
     char *devpath;
+    char *id;
+    char *c;
     char *configSrc;
     char tmp[32];
     struct stat sb;
 
+    if (VIR_STRDUP_QUIET(id, data->id) < 0)
+        ABORT_OOM();
+
+    /* Replace ':' with '-' to create the config filename from the
+     * device ID. The device ID cannot be used directly as filename
+     * because it contains ':' and Windows does not allow ':' in
+     * filenames. */
+    c = strchr(id, ':');
+
+    while (c) {
+        *c = '-';
+        c = strchr(c, ':');
+    }
+
     if (VIR_ALLOC_QUIET(dev) < 0 ||
         virAsprintfQuiet(&configSrc, "%s/virpcitestdata/%s.config",
-                         abs_srcdir, data->id) < 0 ||
+                         abs_srcdir, id) < 0 ||
         virAsprintfQuiet(&devpath, "%s/devices/%s", fakesysfsdir, data->id) < 0)
         ABORT_OOM();
 
+    VIR_FREE(id);
     memcpy(dev, data, sizeof(*dev));
 
     if (virFileMakePath(devpath) < 0)
@@ -350,6 +382,10 @@ pci_device_new_from_stub(const struct pciDevice *data)
     if (snprintf(tmp, sizeof(tmp),  "0x%.4x", dev->device) < 0)
         ABORT("@tmp overflow");
     make_file(devpath, "device", tmp, -1);
+
+    if (snprintf(tmp, sizeof(tmp),  "0x%.4x", dev->class) < 0)
+        ABORT("@tmp overflow");
+    make_file(devpath, "class", tmp, -1);
 
     if (pci_device_autobind(dev) < 0)
         ABORT("Unable to bind: %s", data->id);
@@ -404,7 +440,7 @@ pci_device_autobind(struct pciDevice *dev)
  * PCI Driver functions
  */
 static void
-pci_driver_new(const char *name, ...)
+pci_driver_new(const char *name, int fail, ...)
 {
     struct pciDriver *driver;
     va_list args;
@@ -416,10 +452,12 @@ pci_driver_new(const char *name, ...)
         virAsprintfQuiet(&driverpath, "%s/drivers/%s", fakesysfsdir, name) < 0)
         ABORT_OOM();
 
+    driver->fail = fail;
+
     if (virFileMakePath(driverpath) < 0)
         ABORT("Unable to create: %s", driverpath);
 
-    va_start(args, name);
+    va_start(args, fail);
 
     while ((vendor = va_arg(args, int)) != -1) {
         if ((device = va_arg(args, int)) == -1)
@@ -486,8 +524,8 @@ pci_driver_bind(struct pciDriver *driver,
     int ret = -1;
     char *devpath = NULL, *driverpath = NULL;
 
-    if (dev->driver) {
-        /* Device already bound */
+    if (dev->driver || PCI_ACTION_BIND & driver->fail) {
+        /* Device already bound or failing driver requested */
         errno = ENODEV;
         return ret;
     }
@@ -520,7 +558,7 @@ pci_driver_bind(struct pciDriver *driver,
 
     dev->driver = driver;
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(devpath);
     VIR_FREE(driverpath);
     return ret;
@@ -533,8 +571,8 @@ pci_driver_unbind(struct pciDriver *driver,
     int ret = -1;
     char *devpath = NULL, *driverpath = NULL;
 
-    if (dev->driver != driver) {
-        /* Device not bound to the @driver */
+    if (dev->driver != driver || PCI_ACTION_UNBIND & driver->fail) {
+        /* Device not bound to the @driver or failing driver used */
         errno = ENODEV;
         return ret;
     }
@@ -554,10 +592,26 @@ pci_driver_unbind(struct pciDriver *driver,
 
     dev->driver = NULL;
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(devpath);
     VIR_FREE(driverpath);
     return ret;
+}
+
+static int
+pci_driver_handle_drivers_probe(const char *path)
+{
+    struct pciDevice *dev;
+
+    if (!(dev = pci_device_find_by_content(path))) {
+        errno = ENODEV;
+        return -1;
+    }
+
+    if (dev->driver)
+        return 0;
+
+    return pci_device_autobind(dev);
 }
 
 static int
@@ -566,22 +620,18 @@ pci_driver_handle_change(int fd ATTRIBUTE_UNUSED, const char *path)
     int ret;
     const char *file = last_component(path);
 
-    if (STREQ(file, "bind")) {
-        /* handle write to bind */
+    if (STREQ(file, "bind"))
         ret = pci_driver_handle_bind(path);
-    } else if (STREQ(file, "unbind")) {
-        /* handle write to unbind */
+    else if (STREQ(file, "unbind"))
         ret = pci_driver_handle_unbind(path);
-    } else if (STREQ(file, "new_id")) {
-        /* handle write to new_id */
+    else if (STREQ(file, "new_id"))
         ret = pci_driver_handle_new_id(path);
-    } else if (STREQ(file, "remove_id")) {
-        /* handle write to remove_id */
+    else if (STREQ(file, "remove_id"))
         ret = pci_driver_handle_remove_id(path);
-    } else {
-        /* yet not handled write */
+    else if (STREQ(file, "drivers_probe"))
+        ret = pci_driver_handle_drivers_probe(path);
+    else
         ABORT("Not handled write to: %s", path);
-    }
     return ret;
 }
 
@@ -599,7 +649,7 @@ pci_driver_handle_bind(const char *path)
     }
 
     ret = pci_driver_bind(driver, dev);
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -616,7 +666,7 @@ pci_driver_handle_unbind(const char *path)
     }
 
     ret = pci_driver_unbind(dev->driver, dev);
-cleanup:
+ cleanup:
     return ret;
 }
 static int
@@ -628,8 +678,7 @@ pci_driver_handle_new_id(const char *path)
     int vendor, device;
     char buf[32];
 
-    if (!driver) {
-        /* This should never happen (TM) */
+    if (!driver || PCI_ACTION_NEW_ID & driver->fail) {
         errno = ENODEV;
         goto cleanup;
     }
@@ -671,7 +720,7 @@ pci_driver_handle_new_id(const char *path)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -684,8 +733,7 @@ pci_driver_handle_remove_id(const char *path)
     int vendor, device;
     char buf[32];
 
-    if (!driver) {
-        /* This should never happen (TM) */
+    if (!driver || PCI_ACTION_REMOVE_ID & driver->fail) {
         errno = ENODEV;
         goto cleanup;
     }
@@ -713,7 +761,7 @@ pci_driver_handle_remove_id(const char *path)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -747,6 +795,7 @@ init_syms(void)
     LOAD_SYM(canonicalize_file_name);
     LOAD_SYM(open);
     LOAD_SYM(close);
+    LOAD_SYM(opendir);
 }
 
 static void
@@ -758,12 +807,15 @@ init_env(void)
     if (!(fakesysfsdir = getenv("LIBVIRT_FAKE_SYSFS_DIR")))
         ABORT("Missing LIBVIRT_FAKE_SYSFS_DIR env variable\n");
 
+    make_file(fakesysfsdir, "drivers_probe", NULL, -1);
+
 # define MAKE_PCI_DRIVER(name, ...)                                     \
-    pci_driver_new(name, __VA_ARGS__, -1, -1)
+    pci_driver_new(name, 0, __VA_ARGS__, -1, -1)
 
     MAKE_PCI_DRIVER("iwlwifi", 0x8086, 0x0044);
     MAKE_PCI_DRIVER("i915", 0x8086, 0x0046, 0x8086, 0x0047);
     MAKE_PCI_DRIVER("pci-stub", -1, -1);
+    pci_driver_new("vfio-pci", PCI_ACTION_BIND, -1, -1);
 
 # define MAKE_PCI_DEVICE(Id, Vendor, Device, ...)                       \
     do {                                                                \
@@ -776,6 +828,16 @@ init_env(void)
     MAKE_PCI_DEVICE("0000:00:01.0", 0x8086, 0x0044);
     MAKE_PCI_DEVICE("0000:00:02.0", 0x8086, 0x0046);
     MAKE_PCI_DEVICE("0000:00:03.0", 0x8086, 0x0048);
+    MAKE_PCI_DEVICE("0001:00:00.0", 0x1014, 0x03b9, .class = 0x060400);
+    MAKE_PCI_DEVICE("0001:01:00.0", 0x8086, 0x105e);
+    MAKE_PCI_DEVICE("0001:01:00.1", 0x8086, 0x105e);
+    MAKE_PCI_DEVICE("0005:80:00.0", 0x10b5, 0x8112, .class = 0x060400);
+    MAKE_PCI_DEVICE("0005:90:01.0", 0x1033, 0x0035);
+    MAKE_PCI_DEVICE("0005:90:01.1", 0x1033, 0x0035);
+    MAKE_PCI_DEVICE("0005:90:01.2", 0x1033, 0x00e0);
+    MAKE_PCI_DEVICE("0000:0a:01.0", 0x8086, 0x0047);
+    MAKE_PCI_DEVICE("0000:0a:02.0", 0x8286, 0x0048);
+    MAKE_PCI_DEVICE("0000:0a:03.0", 0x8386, 0x0048);
 }
 
 
@@ -929,6 +991,24 @@ open(const char *path, int flags, ...)
         realclose(ret);
         ret = -1;
     }
+
+    VIR_FREE(newpath);
+    return ret;
+}
+
+DIR *
+opendir(const char *path)
+{
+    DIR *ret;
+    char *newpath = NULL;
+
+    init_syms();
+
+    if (STRPREFIX(path, PCI_SYSFS_PREFIX) &&
+        getrealpath(&newpath, path) < 0)
+        return NULL;
+
+    ret = realopendir(newpath ? newpath : path);
 
     VIR_FREE(newpath);
     return ret;

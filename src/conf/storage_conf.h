@@ -229,7 +229,7 @@ struct _virStoragePoolSourceDevice {
      * the geometry data is needed
      */
     struct _geometry {
-        int cyliders;
+        int cylinders;
         int heads;
         int sectors;
     } geometry;
@@ -266,7 +266,7 @@ struct _virStoragePoolSource {
     virStoragePoolSourceHostPtr hosts;
 
     /* And either one or more devices ... */
-    int ndevice;
+    size_t ndevice;
     virStoragePoolSourceDevicePtr devices;
 
     /* Or a directory */
@@ -432,6 +432,7 @@ int virStoragePoolObjDeleteDef(virStoragePoolObjPtr pool);
 
 void virStorageVolDefFree(virStorageVolDefPtr def);
 void virStoragePoolSourceClear(virStoragePoolSourcePtr source);
+void virStoragePoolSourceDeviceClear(virStoragePoolSourceDevicePtr dev);
 void virStoragePoolSourceFree(virStoragePoolSourcePtr source);
 void virStoragePoolDefFree(virStoragePoolDefPtr def);
 void virStoragePoolObjFree(virStoragePoolObjPtr pool);
@@ -574,7 +575,8 @@ VIR_ENUM_DECL(virStoragePartedFsType)
                  VIR_CONNECT_LIST_STORAGE_POOLS_SCSI     | \
                  VIR_CONNECT_LIST_STORAGE_POOLS_MPATH    | \
                  VIR_CONNECT_LIST_STORAGE_POOLS_RBD      | \
-                 VIR_CONNECT_LIST_STORAGE_POOLS_SHEEPDOG)
+                 VIR_CONNECT_LIST_STORAGE_POOLS_SHEEPDOG | \
+                 VIR_CONNECT_LIST_STORAGE_POOLS_GLUSTER)
 
 # define VIR_CONNECT_LIST_STORAGE_POOLS_FILTERS_ALL                  \
                 (VIR_CONNECT_LIST_STORAGE_POOLS_FILTERS_ACTIVE     | \

@@ -1,7 +1,7 @@
 /*
- * datatypes.h: management of structs for public data types
+ * datatypes.c: management of structs for public data types
  *
- * Copyright (C) 2006-2012 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -31,10 +31,7 @@
 
 #define VIR_FROM_THIS VIR_FROM_NONE
 
-#define virLibConnError(code, ...)                                \
-    virReportErrorHelper(VIR_FROM_THIS, code, __FILE__,           \
-                         __FUNCTION__, __LINE__, __VA_ARGS__)
-
+VIR_LOG_INIT("datatypes");
 
 virClassPtr virConnectClass;
 virClassPtr virConnectCloseCallbackDataClass;
@@ -101,9 +98,9 @@ VIR_ONCE_GLOBAL_INIT(virDataTypes)
 /**
  * virGetConnect:
  *
- * Allocates a new hypervisor connection structure
+ * Allocates a new hypervisor connection object.
  *
- * Returns a new pointer or NULL in case of error.
+ * Returns a pointer to the connection object, or NULL on error.
  */
 virConnectPtr
 virGetConnect(void)
@@ -124,19 +121,17 @@ virGetConnect(void)
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
 
 /**
  * virConnectDispose:
- * @conn: the hypervisor connection to release
+ * @obj: the hypervisor connection to release
  *
  * Unconditionally release all memory associated with a connection.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The connection obj must not
- * be used once this method returns.
+ * The connection object must not be used once this method returns.
  */
 static void
 virConnectDispose(void *obj)
@@ -203,12 +198,10 @@ virConnectCloseCallbackDataDispose(void *obj)
  * @name: pointer to the domain name
  * @uuid: pointer to the uuid
  *
- * Lookup if the domain is already registered for that connection,
- * if yes return a new pointer to it, if no allocate a new structure,
- * and register it in the table. In any case a corresponding call to
- * virObjectUnref() is needed to not leak data.
+ * Allocates a new domain object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the domain, or NULL in case of failure
+ * Returns a pointer to the domain object, or NULL on error.
  */
 virDomainPtr
 virGetDomain(virConnectPtr conn, const char *name, const unsigned char *uuid)
@@ -218,15 +211,12 @@ virGetDomain(virConnectPtr conn, const char *name, const unsigned char *uuid)
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
-    virCheckNonNullArgReturn(uuid, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(name, error);
+    virCheckNonNullArgGoto(uuid, error);
 
     if (!(ret = virObjectNew(virDomainClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->name, name) < 0)
         goto error;
@@ -237,19 +227,17 @@ virGetDomain(virConnectPtr conn, const char *name, const unsigned char *uuid)
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
 
 /**
  * virDomainDispose:
- * @domain: the domain to release
+ * @obj: the domain to release
  *
  * Unconditionally release all memory associated with a domain.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The domain obj must not
- * be used once this method returns.
+ * The domain object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -274,12 +262,10 @@ virDomainDispose(void *obj)
  * @name: pointer to the network name
  * @uuid: pointer to the uuid
  *
- * Lookup if the network is already registered for that connection,
- * if yes return a new pointer to it, if no allocate a new structure,
- * and register it in the table. In any case a corresponding call to
- * virObjectUnref() is needed to not leak data.
+ * Allocates a new network object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the network, or NULL in case of failure
+ * Returns a pointer to the network object, or NULL on error.
  */
 virNetworkPtr
 virGetNetwork(virConnectPtr conn, const char *name, const unsigned char *uuid)
@@ -289,15 +275,12 @@ virGetNetwork(virConnectPtr conn, const char *name, const unsigned char *uuid)
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
-    virCheckNonNullArgReturn(uuid, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(name, error);
+    virCheckNonNullArgGoto(uuid, error);
 
     if (!(ret = virObjectNew(virNetworkClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->name, name) < 0)
         goto error;
@@ -307,19 +290,17 @@ virGetNetwork(virConnectPtr conn, const char *name, const unsigned char *uuid)
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
 
 /**
  * virNetworkDispose:
- * @network: the network to release
+ * @obj: the network to release
  *
  * Unconditionally release all memory associated with a network.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The network obj must not
- * be used once this method returns.
+ * The network object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -344,13 +325,10 @@ virNetworkDispose(void *obj)
  * @name: pointer to the interface name
  * @mac: pointer to the mac
  *
- * Lookup if the interface is already registered for that connection,
- * if yes return a new pointer to it (possibly updating the MAC
- * address), if no allocate a new structure, and register it in the
- * table. In any case a corresponding call to virObjectUnref() is
- * needed to not leak data.
+ * Allocates a new interface object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the interface, or NULL in case of failure
+ * Returns a pointer to the interface object, or NULL on error.
  */
 virInterfacePtr
 virGetInterface(virConnectPtr conn, const char *name, const char *mac)
@@ -360,18 +338,15 @@ virGetInterface(virConnectPtr conn, const char *name, const char *mac)
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(name, error);
 
     /* a NULL mac from caller is okay. Treat it as blank */
     if (mac == NULL)
        mac = "";
 
     if (!(ret = virObjectNew(virInterfaceClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->name, name) < 0 ||
         VIR_STRDUP(ret->mac, mac) < 0)
@@ -381,19 +356,17 @@ virGetInterface(virConnectPtr conn, const char *name, const char *mac)
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
 
 /**
  * virInterfaceDispose:
- * @interface: the interface to release
+ * @obj: the interface to release
  *
  * Unconditionally release all memory associated with an interface.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The interface obj must not
- * be used once this method returns.
+ * The interface object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -418,12 +391,10 @@ virInterfaceDispose(void *obj)
  * @privateData: pointer to driver specific private data
  * @freeFunc: private data cleanup function pointer specfic to driver
  *
- * Lookup if the storage pool is already registered for that connection,
- * if yes return a new pointer to it, if no allocate a new structure,
- * and register it in the table. In any case a corresponding call to
- * virObjectUnref() is needed to not leak data.
+ * Allocates a new storage pool object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the storage pool, or NULL in case of failure
+ * Returns a pointer to the storage pool object, or NULL on error.
  */
 virStoragePoolPtr
 virGetStoragePool(virConnectPtr conn, const char *name,
@@ -435,15 +406,12 @@ virGetStoragePool(virConnectPtr conn, const char *name,
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
-    virCheckNonNullArgReturn(uuid, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(name, error);
+    virCheckNonNullArgGoto(uuid, error);
 
     if (!(ret = virObjectNew(virStoragePoolClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->name, name) < 0)
         goto error;
@@ -457,7 +425,7 @@ virGetStoragePool(virConnectPtr conn, const char *name,
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
@@ -465,12 +433,10 @@ error:
 
 /**
  * virStoragePoolDispose:
- * @pool: the pool to release
+ * @obj: the storage pool to release
  *
  * Unconditionally release all memory associated with a pool.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The pool obj must not
- * be used once this method returns.
+ * The pool object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -502,12 +468,10 @@ virStoragePoolDispose(void *obj)
  * @privateData: pointer to driver specific private data
  * @freeFunc: private data cleanup function pointer specfic to driver
  *
- * Lookup if the storage vol is already registered for that connection,
- * if yes return a new pointer to it, if no allocate a new structure,
- * and register it in the table. In any case a corresponding call to
- * virObjectUnref() is needed to not leak data.
+ * Allocates a new storage volume object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the storage vol, or NULL in case of failure
+ * Returns a pointer to the storage volume object, or NULL on error.
  */
 virStorageVolPtr
 virGetStorageVol(virConnectPtr conn, const char *pool, const char *name,
@@ -518,16 +482,13 @@ virGetStorageVol(virConnectPtr conn, const char *pool, const char *name,
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(pool, NULL);
-    virCheckNonNullArgReturn(name, NULL);
-    virCheckNonNullArgReturn(key, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(pool, error);
+    virCheckNonNullArgGoto(name, error);
+    virCheckNonNullArgGoto(key, error);
 
     if (!(ret = virObjectNew(virStorageVolClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->pool, pool) < 0 ||
         VIR_STRDUP(ret->name, name) < 0 ||
@@ -542,7 +503,7 @@ virGetStorageVol(virConnectPtr conn, const char *pool, const char *name,
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
@@ -550,12 +511,10 @@ error:
 
 /**
  * virStorageVolDispose:
- * @vol: the vol to release
+ * @obj: the storage volume to release
  *
- * Unconditionally release all memory associated with a vol.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The vol obj must not
- * be used once this method returns.
+ * Unconditionally release all memory associated with a volume.
+ * The volume object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -582,12 +541,10 @@ virStorageVolDispose(void *obj)
  * @conn: the hypervisor connection
  * @name: device name (unique on node)
  *
- * Lookup if the device is already registered for that connection,
- * if yes return a new pointer to it, if no allocate a new structure,
- * and register it in the table. In any case a corresponding call to
- * virObjectUnref() is needed to not leak data.
+ * Allocates a new node device object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the node device, or NULL in case of failure
+ * Returns a pointer to the node device object, or NULL on error.
  */
 virNodeDevicePtr
 virGetNodeDevice(virConnectPtr conn, const char *name)
@@ -597,14 +554,11 @@ virGetNodeDevice(virConnectPtr conn, const char *name)
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(name, error);
 
     if (!(ret = virObjectNew(virNodeDeviceClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->name, name) < 0)
         goto error;
@@ -612,7 +566,7 @@ virGetNodeDevice(virConnectPtr conn, const char *name)
     ret->conn = virObjectRef(conn);
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
@@ -620,12 +574,10 @@ error:
 
 /**
  * virNodeDeviceDispose:
- * @dev: the dev to release
+ * @obj: the node device to release
  *
- * Unconditionally release all memory associated with a dev.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The dev obj must not
- * be used once this method returns.
+ * Unconditionally release all memory associated with a device.
+ * The device object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -648,12 +600,10 @@ virNodeDeviceDispose(void *obj)
  * @conn: the hypervisor connection
  * @uuid: secret UUID
  *
- * Lookup if the secret is already registered for that connection, if so return
- * a pointer to it, otherwise allocate a new structure, and register it in the
- * table. In any case a corresponding call to virObjectUnref() is needed to not
- * leak data.
+ * Allocates a new secret object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the secret, or NULL in case of failure
+ * Returns a pointer to the secret object, or NULL on error.
  */
 virSecretPtr
 virGetSecret(virConnectPtr conn, const unsigned char *uuid,
@@ -664,12 +614,9 @@ virGetSecret(virConnectPtr conn, const unsigned char *uuid,
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(uuid, NULL);
-    virCheckNonNullArgReturn(usageID, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(uuid, error);
+    virCheckNonNullArgGoto(usageID, error);
 
     if (!(ret = virObjectNew(virSecretClass)))
         return NULL;
@@ -683,21 +630,20 @@ virGetSecret(virConnectPtr conn, const unsigned char *uuid,
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
 
 /**
  * virSecretDispose:
- * @secret: the secret to release
+ * @obj: the secret to release
  *
- * Unconditionally release all memory associated with a secret.  The conn.lock
- * mutex must be held prior to calling this, and will be released prior to this
- * returning. The secret obj must not be used once this method returns.
+ * Unconditionally release all memory associated with a secret.
+ * The secret object must not be used once this method returns.
  *
- * It will also unreference the associated connection object, which may also be
- * released if its ref count hits zero.
+ * It will also unreference the associated connection object,
+ * which may also be released if its ref count hits zero.
  */
 static void
 virSecretDispose(void *obj)
@@ -713,6 +659,15 @@ virSecretDispose(void *obj)
 }
 
 
+/**
+ * virGetStream:
+ * @conn: the hypervisor connection
+ *
+ * Allocates a new stream object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
+ *
+ * Returns a pointer to the stream object, or NULL on error.
+ */
 virStreamPtr
 virGetStream(virConnectPtr conn)
 {
@@ -729,6 +684,16 @@ virGetStream(virConnectPtr conn)
     return ret;
 }
 
+/**
+ * virStreamDispose:
+ * @obj: the stream to release
+ *
+ * Unconditionally release all memory associated with a stream.
+ * The stream object must not be used once this method returns.
+ *
+ * It will also unreference the associated connection object,
+ * which may also be released if its ref count hits zero.
+ */
 static void
 virStreamDispose(void *obj)
 {
@@ -745,12 +710,10 @@ virStreamDispose(void *obj)
  * @name: pointer to the network filter pool name
  * @uuid: pointer to the uuid
  *
- * Lookup if the network filter is already registered for that connection,
- * if yes return a new pointer to it, if no allocate a new structure,
- * and register it in the table. In any case a corresponding call to
- * virObjectUnref() is needed to not leak data.
+ * Allocates a new network filter object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
  *
- * Returns a pointer to the network, or NULL in case of failure
+ * Returns a pointer to the network filter object, or NULL on error.
  */
 virNWFilterPtr
 virGetNWFilter(virConnectPtr conn, const char *name,
@@ -761,15 +724,12 @@ virGetNWFilter(virConnectPtr conn, const char *name,
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_CONNECT(conn)) {
-        virLibConnError(VIR_ERR_INVALID_CONN, "%s", _("no connection"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
-    virCheckNonNullArgReturn(uuid, NULL);
+    virCheckConnectGoto(conn, error);
+    virCheckNonNullArgGoto(name, error);
+    virCheckNonNullArgGoto(uuid, error);
 
     if (!(ret = virObjectNew(virNWFilterClass)))
-        return NULL;
+        goto error;
 
     if (VIR_STRDUP(ret->name, name) < 0)
         goto error;
@@ -780,7 +740,7 @@ virGetNWFilter(virConnectPtr conn, const char *name,
 
     return ret;
 
-error:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
@@ -788,12 +748,10 @@ error:
 
 /**
  * virNWFilterDispose:
- * @nwfilter: the nwfilter to release
+ * @obj: the network filter to release
  *
  * Unconditionally release all memory associated with a nwfilter.
- * The conn.lock mutex must be held prior to calling this, and will
- * be released prior to this returning. The nwfilter obj must not
- * be used once this method returns.
+ * The nwfilter object must not be used once this method returns.
  *
  * It will also unreference the associated connection object,
  * which may also be released if its ref count hits zero.
@@ -812,6 +770,16 @@ virNWFilterDispose(void *obj)
 }
 
 
+/**
+ * virGetDomainSnapshot:
+ * @domain: the domain to snapshot
+ * @name: pointer to the domain snapshot name
+ *
+ * Allocates a new domain snapshot object. When the object is no longer needed,
+ * virObjectUnref() must be called in order to not leak data.
+ *
+ * Returns a pointer to the domain snapshot object, or NULL on error.
+ */
 virDomainSnapshotPtr
 virGetDomainSnapshot(virDomainPtr domain, const char *name)
 {
@@ -820,27 +788,34 @@ virGetDomainSnapshot(virDomainPtr domain, const char *name)
     if (virDataTypesInitialize() < 0)
         return NULL;
 
-    if (!VIR_IS_DOMAIN(domain)) {
-        virLibConnError(VIR_ERR_INVALID_DOMAIN, "%s", _("bad domain"));
-        return NULL;
-    }
-    virCheckNonNullArgReturn(name, NULL);
+    virCheckDomainGoto(domain, error);
+    virCheckNonNullArgGoto(name, error);
 
     if (!(ret = virObjectNew(virDomainSnapshotClass)))
-        return NULL;
+        goto error;
     if (VIR_STRDUP(ret->name, name) < 0)
-        goto cleanup;
+        goto error;
 
     ret->domain = virObjectRef(domain);
 
     return ret;
 
-cleanup:
+ error:
     virObjectUnref(ret);
     return NULL;
 }
 
 
+/**
+ * virDomainSnapshotDispose:
+ * @obj: the domain snapshot to release
+ *
+ * Unconditionally release all memory associated with a snapshot.
+ * The snapshot object must not be used once this method returns.
+ *
+ * It will also unreference the associated connection object,
+ * which may also be released if its ref count hits zero.
+ */
 static void
 virDomainSnapshotDispose(void *obj)
 {

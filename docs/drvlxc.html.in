@@ -555,7 +555,7 @@ and LXC. For further details about usage of virsh consult its
 manual page.
 </p>
 
-<h3><a name="usageSave">Defining (saving) container configuration></a></h3>
+<h3><a name="usageSave">Defining (saving) container configuration</a></h3>
 
 <p>
 The <code>virsh define</code> command takes an XML configuration
@@ -620,7 +620,7 @@ to PID 1 inside the container.
 
 <p>
 If the container does not respond to the graceful shutdown
-request, it can be forceably stopped using the <code>virsh destroy</code>
+request, it can be forcibly stopped using the <code>virsh destroy</code>
 </p>
 
 <pre>
@@ -659,14 +659,23 @@ running, this will turn it into a "transient" guest.
 
 <p>
 The <code>virsh console</code> command can be used to connect
-to the text console associated with a container. If the container
-has been configured with multiple console devices, then the
-<code>--devname</code> argument can be used to choose the
-console to connect to
+to the text console associated with a container.
 </p>
 
 <pre>
 # virsh -c lxc:/// console myguest
+</pre>
+
+<p>
+If the container has been configured with multiple console devices,
+then the <code>--devname</code> argument can be used to choose the
+console to connect to.
+In LXC, multiple consoles will be named
+as 'console0', 'console1', 'console2', etc.
+</p>
+
+<pre>
+# virsh -c lxc:/// console myguest --devname console1
 </pre>
 
 <h3><a name="usageEnter">Running commands in a container</a></h3>
@@ -692,6 +701,38 @@ host
 <pre>
 # virt-top -c lxc:///
 </pre>
+
+<h3><a name="usageConvert">Converting LXC container configuration</a></h3>
+
+<p>
+The <code>virsh domxml-from-native</code> command can be used to convert
+most of the LXC container configuration into a domain XML fragment
+</p>
+
+<pre>
+# virsh -c lxc:/// domxml-from-native lxc-tools /var/lib/lxc/myguest/config
+</pre>
+
+<p>
+This conversion has some limitations due to the fact that the
+domxml-from-native command output has to be independent of the host. Here
+are a few things to take care of before converting:
+</p>
+
+<ul>
+<li>
+Replace the fstab file referenced by <tt>lxc.mount</tt> by the corresponding
+lxc.mount.entry lines.
+</li>
+<li>
+Replace all relative sizes of tmpfs mount entries to absolute sizes. Also
+make sure that tmpfs entries all have a size option (default is 50%).
+</li>
+<li>
+Define <tt>lxc.cgroup.memory.limit_in_bytes</tt> to properly limit the memory
+available to the container. The conversion will use 64MiB as the default.
+</li>
+</ul>
 
   </body>
 </html>

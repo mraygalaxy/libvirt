@@ -1,7 +1,7 @@
 /*
  * viriptables.c: helper APIs for managing iptables
  *
- * Copyright (C) 2007-2013 Red Hat, Inc.
+ * Copyright (C) 2007-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -50,6 +50,8 @@
 #include "virstring.h"
 #include "virutil.h"
 
+VIR_LOG_INIT("util.iptables");
+
 bool iptables_supports_xlock = false;
 
 #if HAVE_FIREWALLD
@@ -71,6 +73,7 @@ virIpTablesOnceInit(void)
         cmd = virCommandNew(firewall_cmd_path);
 
         virCommandAddArgList(cmd, "--state", NULL);
+        /* don't log non-zero status */
         if (virCommandRun(cmd, &status) < 0 || status != 0) {
             VIR_INFO("firewall-cmd found but disabled for iptables");
             VIR_FREE(firewall_cmd_path);
@@ -88,6 +91,7 @@ virIpTablesOnceInit(void)
 
     cmd = virCommandNew(IPTABLES_PATH);
     virCommandAddArgList(cmd, "-w", "-L", "-n", NULL);
+    /* don't log non-zero status */
     if (virCommandRun(cmd, &status) < 0 || status != 0) {
         VIR_INFO("xtables locking not supported by your iptables");
     } else {
@@ -184,6 +188,28 @@ iptablesInput(int family,
                                  NULL);
 }
 
+static int
+iptablesOutput(int family,
+               const char *iface,
+               int port,
+               int action,
+               int tcp)
+{
+    char portstr[32];
+
+    snprintf(portstr, sizeof(portstr), "%d", port);
+    portstr[sizeof(portstr) - 1] = '\0';
+
+    return iptablesAddRemoveRule("filter", "OUTPUT",
+                                 family,
+                                 action,
+                                 "--out-interface", iface,
+                                 "--protocol", tcp ? "tcp" : "udp",
+                                 "--destination-port", portstr,
+                                 "--jump", "ACCEPT",
+                                 NULL);
+}
+
 /**
  * iptablesAddTcpInput:
  * @ctx: pointer to the IP table context
@@ -260,6 +286,45 @@ iptablesRemoveUdpInput(int family,
                        int port)
 {
     return iptablesInput(family, iface, port, REMOVE, 0);
+}
+
+/**
+ * iptablesAddUdpOutput:
+ * @ctx: pointer to the IP table context
+ * @iface: the interface name
+ * @port: the UDP port to add
+ *
+ * Add an output to the IP table allowing access to the given @port from
+ * the given @iface interface for UDP packets
+ *
+ * Returns 0 in case of success or an error code in case of error
+ */
+
+int
+iptablesAddUdpOutput(int family,
+                     const char *iface,
+                     int port)
+{
+    return iptablesOutput(family, iface, port, ADD, 0);
+}
+
+/**
+ * iptablesRemoveUdpOutput:
+ * @ctx: pointer to the IP table context
+ * @iface: the interface name
+ * @port: the UDP port to remove
+ *
+ * Removes an output from the IP table, hence forbidding access to the given
+ * @port from the given @iface interface for UDP packets
+ *
+ * Returns 0 in case of success or an error code in case of error
+ */
+int
+iptablesRemoveUdpOutput(int family,
+                        const char *iface,
+                        int port)
+{
+    return iptablesOutput(family, iface, port, REMOVE, 0);
 }
 
 
@@ -793,7 +858,7 @@ iptablesForwardMasquerade(virSocketAddr *netaddr,
      }
 
     ret = virCommandRun(cmd, NULL);
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     VIR_FREE(networkstr);
     VIR_FREE(addrStartStr);
@@ -887,7 +952,7 @@ iptablesForwardDontMasquerade(virSocketAddr *netaddr,
     virCommandAddArgList(cmd, "--source", networkstr,
                          "--destination", destaddr, "--jump", "RETURN", NULL);
     ret = virCommandRun(cmd, NULL);
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     VIR_FREE(networkstr);
     return ret;

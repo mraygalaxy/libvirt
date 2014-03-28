@@ -1,7 +1,7 @@
 /*
  * qemu_hostdev.h: QEMU hostdev management
  *
- * Copyright (C) 2006-2007, 2009-2010 Red Hat, Inc.
+ * Copyright (C) 2006-2007, 2009-2013 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -27,24 +27,27 @@
 # include "qemu_conf.h"
 # include "domain_conf.h"
 
-int qemuUpdateActivePciHostdevs(virQEMUDriverPtr driver,
+int qemuUpdateActivePCIHostdevs(virQEMUDriverPtr driver,
                                 virDomainDefPtr def);
-int qemuUpdateActiveUsbHostdevs(virQEMUDriverPtr driver,
+int qemuUpdateActiveUSBHostdevs(virQEMUDriverPtr driver,
                                 virDomainDefPtr def);
-int qemuUpdateActiveScsiHostdevs(virQEMUDriverPtr driver,
+int qemuUpdateActiveSCSIHostdevs(virQEMUDriverPtr driver,
                                  virDomainDefPtr def);
+bool qemuHostdevHostSupportsPassthroughLegacy(void);
+bool qemuHostdevHostSupportsPassthroughVFIO(void);
 int qemuPrepareHostdevPCIDevices(virQEMUDriverPtr driver,
                                  const char *name,
                                  const unsigned char *uuid,
                                  virDomainHostdevDefPtr *hostdevs,
                                  int nhostdevs,
-                                 virQEMUCapsPtr qemuCaps);
-int qemuFindHostdevUSBDevice(virDomainHostdevDefPtr hostdev,
-                             bool mandatory,
-                             virUSBDevicePtr *usb);
-int qemuPrepareHostdevUSBDevices(virQEMUDriverPtr driver,
-                                 const char *name,
-                                 virUSBDeviceListPtr list);
+                                 virQEMUCapsPtr qemuCaps,
+                                 unsigned int flags);
+int
+qemuPrepareHostUSBDevices(virQEMUDriverPtr driver,
+                          const char *name,
+                          virDomainHostdevDefPtr *hostdevs,
+                          int nhostdevs,
+                          unsigned int flags);
 int qemuPrepareHostdevSCSIDevices(virQEMUDriverPtr driver,
                                   const char *name,
                                   virDomainHostdevDefPtr *hostdevs,
@@ -52,23 +55,21 @@ int qemuPrepareHostdevSCSIDevices(virQEMUDriverPtr driver,
 int qemuPrepareHostDevices(virQEMUDriverPtr driver,
                            virDomainDefPtr def,
                            virQEMUCapsPtr qemuCaps,
-                           bool coldBoot);
-void qemuDomainReAttachHostScsiDevices(virQEMUDriverPtr driver,
+                           unsigned int flags);
+void
+qemuDomainReAttachHostUSBDevices(virQEMUDriverPtr driver,
+                                 const char *name,
+                                 virDomainHostdevDefPtr *hostdevs,
+                                 int nhostdevs);
+void qemuDomainReAttachHostSCSIDevices(virQEMUDriverPtr driver,
                                        const char *name,
                                        virDomainHostdevDefPtr *hostdevs,
                                        int nhostdevs);
-void qemuReattachPciDevice(virPCIDevicePtr dev, virQEMUDriverPtr driver);
 void qemuDomainReAttachHostdevDevices(virQEMUDriverPtr driver,
                                       const char *name,
                                       virDomainHostdevDefPtr *hostdevs,
                                       int nhostdevs);
 void qemuDomainReAttachHostDevices(virQEMUDriverPtr driver,
                                    virDomainDefPtr def);
-int qemuDomainHostdevIsVirtualFunction(virDomainHostdevDefPtr hostdev);
-int qemuDomainHostdevNetConfigReplace(virDomainHostdevDefPtr hostdev,
-                                      const unsigned char *uuid,
-                                      char *stateDir);
-int qemuDomainHostdevNetConfigRestore(virDomainHostdevDefPtr hostdev,
-                                      char *stateDir);
 
 #endif /* __QEMU_HOSTDEV_H__ */

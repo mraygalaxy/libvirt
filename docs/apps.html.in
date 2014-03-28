@@ -277,19 +277,24 @@
         host, and there is a subproject to allow merging changes into the
         Windows Registry in Windows guests.
       </dd>
+
+      <dt><a href="http://sandbox.libvirt.org">libvirt-sandbox</a></dt>
+      <dd>
+        A library and command line tools for simplifying the creation of
+        application sandboxes using virtualization technology. It currently
+        supports either KVM, QEMU or LXC as backends. Integration with
+        systemd facilitates sandboxing of system services like apache.
+      </dd>
+      <dt><a href="https://github.com/ohadlevy/virt#readme">Ruby
+          Libvirt Object bindings</a></dt>
+      <dd>
+        Allows using simple ruby objects to manipulate
+        hypervisors, guests, storage, network etc.  It is
+        based on top of
+        the <a href="http://libvirt.org/ruby">native ruby bindings</a>.
+      </dd>
     </dl>
 
-        <dl>
-            <dt><a href="https://github.com/ohadlevy/virt#readme">Ruby
-            Libvirt Object bindings</a></dt>
-            <dd>
-                Allows using simple ruby objects to manipulate
-                hypervisors, guests, storage, network etc.  It is
-                based on top of
-                the <a href="http://libvirt.org/ruby">native ruby
-                bindings</a>.
-            </dd>
-        </dl>
     <h2><a name="livecd">LiveCD / Appliances</a></h2>
 
     <dl>
@@ -387,6 +392,15 @@
         machines across an entire data center of hosts. It integrates
         with FreeIPA for Kerberos authentication, and in the future,
         certificate management.
+      </dd>
+      <dt><a href="http://ispsystem.com/en/software/vmmanager">VMmanager</a></dt>
+      <dd>
+        VMmanager is a software solution for virtualization management
+        that can be used both for hosting virtual machines and
+        building a cloud.  VMmanager can manage not only one server,
+        but a large cluster of hypervisors.  It delivers a number of
+        functions, such as live migration that allows for load
+        balancing between cluster nodes, monitoring CPU, memory.
       </dd>
     </dl>
 

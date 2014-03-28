@@ -144,6 +144,17 @@ foreach my $file (@ARGV) {
             $ret = 1;
             last;
         }
+
+        # Require spaces around assignment '=', compounds and '=='
+        # with the exception of virAssertCmpInt()
+        while ($data =~ /[^!<>&|\-+*\/%\^'= ]=\+[^=]/ ||
+               $data =~ /[^!<>&|\-+*\/%\^'=]=[^= \\\n]/ ||
+               $data =~ /[\S]==/ ||
+               ($data =~ /==[^\s,]/ && $data !~ /[\s]virAssertCmpInt\(/)) {
+            print "$file:$.: $line";
+            $ret = 1;
+            last;
+        }
     }
     close FILE;
 }

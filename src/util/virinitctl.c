@@ -1,7 +1,7 @@
 /*
  * virinitctl.c: API for talking to init systems via initctl
  *
- * Copyright (C) 2012 Red Hat, Inc.
+ * Copyright (C) 2012-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -111,16 +111,18 @@ struct virInitctlRequest {
 # endif
 
 /*
- * Send a message to init to change the runlevel
+ * Send a message to init to change the runlevel. This function is
+ * asynchronous-signal-safe (thus safe to use after fork of a
+ * multithreaded parent) - which is good, because it should only be
+ * used after forking and entering correct namespace.
  *
  * Returns 1 on success, 0 if initctl does not exist, -1 on error
  */
-int virInitctlSetRunLevel(virInitctlRunLevel level,
-                          const char *vroot)
+int
+virInitctlSetRunLevel(virInitctlRunLevel level)
 {
     struct virInitctlRequest req;
     int fd = -1;
-    char *path = NULL;
     int ret = -1;
 
     memset(&req, 0, sizeof(req));
@@ -131,44 +133,35 @@ int virInitctlSetRunLevel(virInitctlRunLevel level,
     /* Yes it is an 'int' field, but wants a numeric character. Go figure */
     req.runlevel = '0' + level;
 
-    if (vroot) {
-        if (virAsprintf(&path, "%s/%s", vroot, VIR_INITCTL_FIFO) < 0)
-            return -1;
-    } else {
-        if (VIR_STRDUP(path, VIR_INITCTL_FIFO) < 0)
-            return -1;
-    }
-
-    if ((fd = open(path, O_WRONLY|O_NONBLOCK|O_CLOEXEC|O_NOCTTY)) < 0) {
+    if ((fd = open(VIR_INITCTL_FIFO,
+                   O_WRONLY|O_NONBLOCK|O_CLOEXEC|O_NOCTTY)) < 0) {
         if (errno == ENOENT) {
             ret = 0;
             goto cleanup;
         }
         virReportSystemError(errno,
                              _("Cannot open init control %s"),
-                             path);
+                             VIR_INITCTL_FIFO);
         goto cleanup;
     }
 
     if (safewrite(fd, &req, sizeof(req)) != sizeof(req)) {
         virReportSystemError(errno,
                              _("Failed to send request to init control %s"),
-                             path);
+                             VIR_INITCTL_FIFO);
         goto cleanup;
     }
 
     ret = 1;
 
-cleanup:
-    VIR_FREE(path);
+ cleanup:
     VIR_FORCE_CLOSE(fd);
     return ret;
 }
 #else
-int virInitctlSetRunLevel(virInitctlRunLevel level ATTRIBUTE_UNUSED,
-                          const char *vroot ATTRIBUTE_UNUSED)
+int virInitctlSetRunLevel(virInitctlRunLevel level ATTRIBUTE_UNUSED)
 {
-   virReportError(VIR_ERR_NO_SUPPORT, "%s", __FUNCTION__);
-   return -1;
+    virReportUnsupportedError();
+    return -1;
 }
 #endif

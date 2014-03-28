@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------*/
 /*
- * Copyright (C) 2011-2012 Red Hat, Inc.
+ * Copyright (C) 2011-2014 Red Hat, Inc.
  * Copyright 2010, diateam (www.diateam.net)
  *
  * This library is free software; you can redistribute it and/or
@@ -116,13 +116,13 @@ vmwareCapsInit(void)
             goto error;
     }
 
-cleanup:
+ cleanup:
     virCPUDefFree(cpu);
     cpuDataFree(data);
 
     return caps;
 
-error:
+ error:
     virObjectUnref(caps);
     goto cleanup;
 }
@@ -194,7 +194,7 @@ vmwareLoadDomains(struct vmware_driver *driver)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     VIR_FREE(outbuf);
     virDomainDefFree(vmdef);
@@ -271,28 +271,29 @@ vmwareExtractVersion(struct vmware_driver *driver)
 
     switch (driver->type) {
         case VMWARE_DRIVER_PLAYER:
-            if (virAsprintf(&bin, "%s/%s", vmwarePath, "vmplayer"))
+            if (virAsprintf(&bin, "%s/%s", vmwarePath, "vmplayer") < 0)
                 goto cleanup;
             break;
 
         case VMWARE_DRIVER_WORKSTATION:
-            if (virAsprintf(&bin, "%s/%s", vmwarePath, "vmware"))
+            if (virAsprintf(&bin, "%s/%s", vmwarePath, "vmware") < 0)
                 goto cleanup;
             break;
 
         case VMWARE_DRIVER_FUSION:
-            if (virAsprintf(&bin, "%s/%s", vmwarePath, "vmware-vmx"))
+            if (virAsprintf(&bin, "%s/%s", vmwarePath, "vmware-vmx") < 0)
                 goto cleanup;
             break;
 
         default:
             virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                       _("invalid driver type for version detection"));
+                           _("invalid driver type for version detection"));
             goto cleanup;
     }
 
     cmd = virCommandNewArgList(bin, "-v", NULL);
     virCommandSetOutputBuffer(cmd, &outbuf);
+    virCommandSetErrorBuffer(cmd, &outbuf);
 
     if (virCommandRun(cmd, NULL) < 0)
         goto cleanup;
@@ -302,7 +303,7 @@ vmwareExtractVersion(struct vmware_driver *driver)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     VIR_FREE(outbuf);
     VIR_FREE(bin);
@@ -330,15 +331,15 @@ vmwareDomainConfigDisplay(vmwareDomainPtr pDomain, virDomainDefPtr def)
     }
 }
 
-int
-vmwareParsePath(char *path, char **directory, char **filename)
+static int
+vmwareParsePath(const char *path, char **directory, char **filename)
 {
     char *separator;
 
     separator = strrchr(path, '/');
 
     if (separator != NULL) {
-        *separator++ = '\0';
+        separator++;
 
         if (*separator == '\0') {
             virReportError(VIR_ERR_INTERNAL_ERROR,
@@ -346,7 +347,7 @@ vmwareParsePath(char *path, char **directory, char **filename)
             return -1;
         }
 
-        if (VIR_STRDUP(*directory, path) < 0)
+        if (VIR_STRNDUP(*directory, path, separator - path - 1) < 0)
             goto error;
         if (VIR_STRDUP(*filename, separator) < 0) {
             VIR_FREE(*directory);
@@ -360,7 +361,7 @@ vmwareParsePath(char *path, char **directory, char **filename)
 
     return 0;
 
-error:
+ error:
     return -1;
 }
 
@@ -387,6 +388,7 @@ vmwareVmxPath(virDomainDefPtr vmdef, char **vmxPath)
     char *fileName = NULL;
     int ret = -1;
     size_t i;
+    const char *src;
 
     /*
      * Build VMX URL. Use the source of the first file-based harddisk
@@ -404,7 +406,7 @@ vmwareVmxPath(virDomainDefPtr vmdef, char **vmxPath)
 
     for (i = 0; i < vmdef->ndisks; ++i) {
         if (vmdef->disks[i]->device == VIR_DOMAIN_DISK_DEVICE_DISK &&
-            vmdef->disks[i]->type == VIR_DOMAIN_DISK_TYPE_FILE) {
+            virDomainDiskGetType(vmdef->disks[i]) == VIR_DOMAIN_DISK_TYPE_FILE) {
             disk = vmdef->disks[i];
             break;
         }
@@ -417,21 +419,22 @@ vmwareVmxPath(virDomainDefPtr vmdef, char **vmxPath)
         goto cleanup;
     }
 
-    if (disk->src == NULL) {
+    src = virDomainDiskGetSource(disk);
+    if (!src) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("First file-based harddisk has no source, cannot "
                          "deduce datastore and path for VMX file"));
         goto cleanup;
     }
 
-    if (vmwareParsePath(disk->src, &directoryName, &fileName) < 0) {
+    if (vmwareParsePath(src, &directoryName, &fileName) < 0) {
         goto cleanup;
     }
 
     if (!virFileHasSuffix(fileName, ".vmdk")) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("Expecting source '%s' of first file-based harddisk "
-                         "to be a VMDK image"), disk->src);
+                         "to be a VMDK image"), src);
         goto cleanup;
     }
 
@@ -440,7 +443,7 @@ vmwareVmxPath(virDomainDefPtr vmdef, char **vmxPath)
 
     ret = 0;
 
-  cleanup:
+ cleanup:
     VIR_FREE(directoryName);
     VIR_FREE(fileName);
     return ret;
@@ -522,7 +525,7 @@ vmwareExtractPid(const char * vmxPath)
         goto cleanup;
     }
 
-cleanup:
+ cleanup:
     VIR_FREE(vmxDir);
     VIR_FREE(logFilePath);
     VIR_FORCE_FCLOSE(logFile);

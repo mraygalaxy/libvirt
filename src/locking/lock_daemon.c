@@ -1,7 +1,7 @@
 /*
  * lock_daemon.c: lock management daemon
  *
- * Copyright (C) 2006-2012 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -54,6 +54,8 @@
 
 #define VIR_FROM_THIS VIR_FROM_LOCKING
 
+VIR_LOG_INIT("locking.lock_daemon");
+
 #define VIR_LOCK_DAEMON_NUM_LOCKSPACES 3
 
 struct _virLockDaemon {
@@ -77,6 +79,7 @@ enum {
     VIR_LOCK_DAEMON_ERR_NETWORK,
     VIR_LOCK_DAEMON_ERR_CONFIG,
     VIR_LOCK_DAEMON_ERR_HOOKS,
+    VIR_LOCK_DAEMON_ERR_REEXEC,
 
     VIR_LOCK_DAEMON_ERR_LAST
 };
@@ -91,7 +94,8 @@ VIR_ENUM_IMPL(virDaemonErr, VIR_LOCK_DAEMON_ERR_LAST,
               "Unable to drop privileges",
               "Unable to initialize network sockets",
               "Unable to load configuration file",
-              "Unable to look for hook scripts");
+              "Unable to look for hook scripts",
+              "Unable to re-execute daemon");
 
 static void *
 virLockDaemonClientNew(virNetServerClientPtr client,
@@ -143,7 +147,7 @@ virLockDaemonNew(virLockDaemonConfigPtr config, bool privileged)
     }
 
     if (!(lockd->srv = virNetServerNew(1, 1, 0, config->max_clients,
-                                       -1, 0,
+                                       config->max_clients, -1, 0,
                                        false, NULL,
                                        virLockDaemonClientNew,
                                        virLockDaemonClientPreExecRestart,
@@ -160,7 +164,7 @@ virLockDaemonNew(virLockDaemonConfigPtr config, bool privileged)
 
     return lockd;
 
-error:
+ error:
     virLockDaemonFree(lockd);
     return NULL;
 }
@@ -242,7 +246,7 @@ virLockDaemonNewPostExecRestart(virJSONValuePtr object, bool privileged)
 
     return lockd;
 
-error:
+ error:
     virLockDaemonFree(lockd);
     return NULL;
 }
@@ -392,7 +396,7 @@ virLockDaemonPidFilePath(bool privileged,
 
     return 0;
 
-error:
+ error:
     return -1;
 }
 
@@ -427,7 +431,7 @@ virLockDaemonUnixSocketPaths(bool privileged,
     }
     return 0;
 
-error:
+ error:
     return -1;
 }
 
@@ -473,8 +477,6 @@ virLockDaemonSetupLogging(virLockDaemonConfigPtr config,
         virLogSetDefaultPriority(config->log_level);
 
     virLogSetFromEnv();
-
-    virLogSetBufferSize(config->log_buffer_size);
 
     if (virLogGetNbFilters() == 0)
         virLogParseFilters(config->log_filters);
@@ -549,7 +551,7 @@ virLockDaemonSetupLogging(virLockDaemonConfigPtr config,
 
     return 0;
 
-error:
+ error:
     return -1;
 }
 
@@ -798,25 +800,23 @@ virLockDaemonClientNew(virNetServerClientPtr client,
 
     if (!privileged) {
         if (geteuid() != clientuid) {
-            virReportError(VIR_ERR_OPERATION_DENIED,
-                           _("Disallowing client %llu with uid %llu"),
-                           (unsigned long long)priv->clientPid,
-                           (unsigned long long)clientuid);
+            virReportRestrictedError(_("Disallowing client %llu with uid %llu"),
+                                     (unsigned long long)priv->clientPid,
+                                     (unsigned long long)clientuid);
             goto error;
         }
     } else {
         if (clientuid != 0) {
-            virReportError(VIR_ERR_OPERATION_DENIED,
-                           _("Disallowing client %llu with uid %llu"),
-                           (unsigned long long)priv->clientPid,
-                           (unsigned long long)clientuid);
+            virReportRestrictedError(_("Disallowing client %llu with uid %llu"),
+                                     (unsigned long long)priv->clientPid,
+                                     (unsigned long long)clientuid);
             goto error;
         }
     }
 
     return priv;
 
-error:
+ error:
     virMutexDestroy(&priv->lock);
     VIR_FREE(priv);
     return NULL;
@@ -871,7 +871,7 @@ virLockDaemonClientNewPostExecRestart(virNetServerClientPtr client,
     }
     return priv;
 
-error:
+ error:
     virLockDaemonClientFree(priv);
     return NULL;
 }
@@ -917,13 +917,48 @@ virLockDaemonClientPreExecRestart(virNetServerClientPtr client ATTRIBUTE_UNUSED,
 
     return object;
 
-error:
+ error:
     virJSONValueFree(object);
     return NULL;
 }
 
 
-#define VIR_LOCK_DAEMON_RESTART_EXEC_FILE LOCALSTATEDIR "/run/virtlockd-restart-exec.json"
+static int
+virLockDaemonExecRestartStatePath(bool privileged,
+                                  char **state_file)
+{
+    if (privileged) {
+        if (VIR_STRDUP(*state_file, LOCALSTATEDIR "/run/virtlockd-restart-exec.json") < 0)
+            goto error;
+    } else {
+        char *rundir = NULL;
+        mode_t old_umask;
+
+        if (!(rundir = virGetUserRuntimeDirectory()))
+            goto error;
+
+        old_umask = umask(077);
+        if (virFileMakePath(rundir) < 0) {
+            umask(old_umask);
+            VIR_FREE(rundir);
+            goto error;
+        }
+        umask(old_umask);
+
+        if (virAsprintf(state_file, "%s/virtlockd-restart-exec.json", rundir) < 0) {
+            VIR_FREE(rundir);
+            goto error;
+        }
+
+        VIR_FREE(rundir);
+    }
+
+    return 0;
+
+ error:
+    return -1;
+}
+
 
 static char *
 virLockDaemonGetExecRestartMagic(void)
@@ -936,7 +971,10 @@ virLockDaemonGetExecRestartMagic(void)
 
 
 static int
-virLockDaemonPostExecRestart(bool privileged)
+virLockDaemonPostExecRestart(const char *state_file,
+                             const char *pid_file,
+                             int *pid_file_fd,
+                             bool privileged)
 {
     const char *gotmagic;
     char *wantmagic = NULL;
@@ -946,14 +984,14 @@ virLockDaemonPostExecRestart(bool privileged)
 
     VIR_DEBUG("Running post-restart exec");
 
-    if (!virFileExists(VIR_LOCK_DAEMON_RESTART_EXEC_FILE)) {
-        VIR_DEBUG("No restart file %s present",
-                  VIR_LOCK_DAEMON_RESTART_EXEC_FILE);
+    if (!virFileExists(state_file)) {
+        VIR_DEBUG("No restart state file %s present",
+                  state_file);
         ret = 0;
         goto cleanup;
     }
 
-    if (virFileReadAll(VIR_LOCK_DAEMON_RESTART_EXEC_FILE,
+    if (virFileReadAll(state_file,
                        1024 * 1024 * 10, /* 10 MB */
                        &state) < 0)
         goto cleanup;
@@ -980,13 +1018,18 @@ virLockDaemonPostExecRestart(bool privileged)
         goto cleanup;
     }
 
+    /* Re-claim PID file now as we will not be daemonizing */
+    if (pid_file &&
+        (*pid_file_fd = virPidFileAcquirePath(pid_file, false, getpid())) < 0)
+        goto cleanup;
+
     if (!(lockDaemon = virLockDaemonNewPostExecRestart(object, privileged)))
         goto cleanup;
 
     ret = 1;
 
-cleanup:
-    unlink(VIR_LOCK_DAEMON_RESTART_EXEC_FILE);
+ cleanup:
+    unlink(state_file);
     VIR_FREE(wantmagic);
     VIR_FREE(state);
     virJSONValueFree(object);
@@ -995,7 +1038,8 @@ cleanup:
 
 
 static int
-virLockDaemonPreExecRestart(virNetServerPtr srv,
+virLockDaemonPreExecRestart(const char *state_file,
+                            virNetServerPtr srv,
                             char **argv)
 {
     virJSONValuePtr child;
@@ -1063,15 +1107,15 @@ virLockDaemonPreExecRestart(virNetServerPtr srv,
 
     VIR_DEBUG("Saving state %s", state);
 
-    if (virFileWriteStr(VIR_LOCK_DAEMON_RESTART_EXEC_FILE,
+    if (virFileWriteStr(state_file,
                         state, 0700) < 0) {
         virReportSystemError(errno,
                              _("Unable to save state file %s"),
-                             VIR_LOCK_DAEMON_RESTART_EXEC_FILE);
+                             state_file);
         goto cleanup;
     }
 
-    if (execv(argv[0], argv) < 0) {
+    if (execvp(argv[0], argv) < 0) {
         virReportSystemError(errno, "%s",
                              _("Unable to restart self"));
         goto cleanup;
@@ -1079,7 +1123,7 @@ virLockDaemonPreExecRestart(virNetServerPtr srv,
 
     abort(); /* This should be impossible to reach */
 
-cleanup:
+ cleanup:
     VIR_FREE(pairs);
     VIR_FREE(state);
     virJSONValueFree(object);
@@ -1151,6 +1195,7 @@ int main(int argc, char **argv) {
     char *pid_file = NULL;
     int pid_file_fd = -1;
     char *sock_file = NULL;
+    char *state_file = NULL;
     bool implicit_conf = false;
     mode_t old_umask;
     bool privileged = false;
@@ -1201,18 +1246,14 @@ int main(int argc, char **argv) {
 
         case 'p':
             VIR_FREE(pid_file);
-            if (VIR_STRDUP_QUIET(pid_file, optarg) < 0) {
-                VIR_ERROR(_("Can't allocate memory"));
-                exit(EXIT_FAILURE);
-            }
+            if (VIR_STRDUP_QUIET(pid_file, optarg) < 0)
+                goto no_memory;
             break;
 
         case 'f':
             VIR_FREE(remote_config_file);
-            if (VIR_STRDUP_QUIET(remote_config_file, optarg) < 0) {
-                VIR_ERROR(_("Can't allocate memory"));
-                exit(EXIT_FAILURE);
-            }
+            if (VIR_STRDUP_QUIET(remote_config_file, optarg) < 0)
+                goto no_memory;
             break;
 
         case 'V':
@@ -1278,28 +1319,18 @@ int main(int argc, char **argv) {
     VIR_DEBUG("Decided on socket paths '%s'",
               sock_file);
 
-    if (godaemon) {
-        char ebuf[1024];
-
-        if (chdir("/") < 0) {
-            VIR_ERROR(_("cannot change to root directory: %s"),
-                      virStrerror(errno, ebuf, sizeof(ebuf)));
-            goto cleanup;
-        }
-
-        if ((statuswrite = virLockDaemonForkIntoBackground(argv[0])) < 0) {
-            VIR_ERROR(_("Failed to fork as daemon: %s"),
-                      virStrerror(errno, ebuf, sizeof(ebuf)));
-            goto cleanup;
-        }
+    if (virLockDaemonExecRestartStatePath(privileged,
+                                          &state_file) < 0) {
+        VIR_ERROR(_("Can't determine restart state file path"));
+        exit(EXIT_FAILURE);
     }
+    VIR_DEBUG("Decided on restart state file path '%s'",
+              state_file);
 
     /* Ensure the rundir exists (on tmpfs on some systems) */
     if (privileged) {
-        if (VIR_STRDUP_QUIET(run_dir, LOCALSTATEDIR "/run/libvirt") < 0) {
-            VIR_ERROR(_("Can't allocate memory"));
-            goto cleanup;
-        }
+        if (VIR_STRDUP_QUIET(run_dir, LOCALSTATEDIR "/run/libvirt") < 0)
+            goto no_memory;
     } else {
         if (!(run_dir = virGetUserRuntimeDirectory())) {
             VIR_ERROR(_("Can't determine user directory"));
@@ -1321,20 +1352,41 @@ int main(int argc, char **argv) {
     }
     umask(old_umask);
 
-    /* If we have a pidfile set, claim it now, exiting if already taken */
-    if ((pid_file_fd = virPidFileAcquirePath(pid_file, getpid())) < 0) {
-        ret = VIR_LOCK_DAEMON_ERR_PIDFILE;
-        goto cleanup;
-    }
-
-    if ((rv = virLockDaemonPostExecRestart(privileged)) < 0) {
+    if ((rv = virLockDaemonPostExecRestart(state_file,
+                                           pid_file,
+                                           &pid_file_fd,
+                                           privileged)) < 0) {
         ret = VIR_LOCK_DAEMON_ERR_INIT;
         goto cleanup;
     }
 
     /* rv == 1, means we setup everything from saved state,
-     * so we only setup stuff from scratch if rv == 0 */
+     * so only (possibly) daemonize and setup stuff from
+     * scratch if rv == 0
+     */
     if (rv == 0) {
+        if (godaemon) {
+            char ebuf[1024];
+
+            if (chdir("/") < 0) {
+                VIR_ERROR(_("cannot change to root directory: %s"),
+                          virStrerror(errno, ebuf, sizeof(ebuf)));
+                goto cleanup;
+            }
+
+            if ((statuswrite = virLockDaemonForkIntoBackground(argv[0])) < 0) {
+                VIR_ERROR(_("Failed to fork as daemon: %s"),
+                          virStrerror(errno, ebuf, sizeof(ebuf)));
+                goto cleanup;
+            }
+        }
+
+        /* If we have a pidfile set, claim it now, exiting if already taken */
+        if ((pid_file_fd = virPidFileAcquirePath(pid_file, false, getpid())) < 0) {
+            ret = VIR_LOCK_DAEMON_ERR_PIDFILE;
+            goto cleanup;
+        }
+
         if (!(lockDaemon = virLockDaemonNew(config, privileged))) {
             ret = VIR_LOCK_DAEMON_ERR_INIT;
             goto cleanup;
@@ -1392,12 +1444,14 @@ int main(int argc, char **argv) {
     virNetServerRun(lockDaemon->srv);
 
     if (execRestart &&
-        virLockDaemonPreExecRestart(lockDaemon->srv, argv) < 0)
-        ret = -1;
+        virLockDaemonPreExecRestart(state_file,
+                                    lockDaemon->srv,
+                                    argv) < 0)
+        ret = VIR_LOCK_DAEMON_ERR_REEXEC;
     else
         ret = 0;
 
-cleanup:
+ cleanup:
     virObjectUnref(lockProgram);
     virLockDaemonFree(lockDaemon);
     if (statuswrite != -1) {
@@ -1414,6 +1468,11 @@ cleanup:
         virPidFileReleasePath(pid_file, pid_file_fd);
     VIR_FREE(pid_file);
     VIR_FREE(sock_file);
+    VIR_FREE(state_file);
     VIR_FREE(run_dir);
     return ret;
+
+ no_memory:
+    VIR_ERROR(_("Can't allocate memory"));
+    exit(EXIT_FAILURE);
 }

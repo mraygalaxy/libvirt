@@ -26,6 +26,7 @@
 # define LXC_CONF_H
 
 # include "internal.h"
+# include "libvirt_internal.h"
 # include "domain_conf.h"
 # include "domain_event.h"
 # include "capabilities.h"
@@ -36,6 +37,7 @@
 # include "virsysinfo.h"
 # include "virusb.h"
 # include "virclosecallbacks.h"
+# include "virhostdev.h"
 
 # define LXC_DRIVER_NAME "LXC"
 
@@ -92,12 +94,10 @@ struct _virLXCDriver {
     /* Immutable pointer, self-locking APIs */
     virDomainObjListPtr domains;
 
-    /* Immutable pointer. Requires lock to be held before
-     * calling APIs. */
-    virUSBDeviceListPtr activeUsbHostdevs;
+    virHostdevManagerPtr hostdevMgr;
 
     /* Immutable pointer, self-locking APIs */
-    virDomainEventStatePtr domainEventState;
+    virObjectEventStatePtr domainEventState;
 
     /* Immutable pointer. self-locking APIs */
     virSecurityManagerPtr securityManager;

@@ -18,6 +18,7 @@ Daniel Veillard <veillard@redhat.com>
 Dave Allan <dallan@redhat.com>
 Doug Goldstein <cardoe@gentoo.org>
 Eric Blake <eblake@redhat.com>
+Gao Feng <gaofeng@cn.fujitsu.com>
 Guannan Ren <gren@redhat.com>
 Guido Günther <agx@sigxcpu.org>
 Ján Tomko <jtomko@redhat.com>
@@ -26,15 +27,16 @@ Jim Meyering <meyering@redhat.com>
 Jiří Denemark <jdenemar@redhat.com>
 John Ferlan <jferlan@redhat.com>
 John Levon <john.levon@sun.com>
-Justin Clift <jclift@redhat.com>
 Laine Stump <laine@redhat.com>
 Mark McLoughlin <markmc@redhat.com>
 Martin Kletzander <mkletzan@redhat.com>
 Matthias Bolte <matthias.bolte@googlemail.com>
 Michal Prívozník <mprivozn@redhat.com>
 Osier Yang <jyang@redhat.com>
+Pavel Hrdina <phrdina@redhat.com>
 Peter Krempa <pkrempa@redhat.com>
 Richard W.M. Jones <rjones@redhat.com>
+Roman Bogorodskiy <bogorodskiy@gmail.com>
 Stefan Berger <stefanb@us.ibm.com>
 Wen Congyang <wency@cn.fujitsu.com>
 
@@ -43,6 +45,7 @@ Previous maintainers:
 Atsushi SAKAI <sakaia@jp.fujitsu.com>
 Dan Smith <danms@us.ibm.com>
 Dave Leskovec <dlesko@linux.vnet.ibm.com>
+Justin Clift <jclift@redhat.com>
 Karel Zak <kzak@redhat.com>
 
 Patches have also been contributed by:

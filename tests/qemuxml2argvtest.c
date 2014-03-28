@@ -18,6 +18,7 @@
 # include "qemu/qemu_command.h"
 # include "qemu/qemu_domain.h"
 # include "datatypes.h"
+# include "conf/storage_conf.h"
 # include "cpu/cpu_map.h"
 # include "virstring.h"
 
@@ -75,6 +76,181 @@ static virSecretDriver fakeSecretDriver = {
     .secretUndefine = NULL,
 };
 
+
+# define STORAGE_POOL_XML_PATH "storagepoolxml2xmlout/"
+static const unsigned char fakeUUID[VIR_UUID_BUFLEN] = "fakeuuid";
+
+static virStoragePoolPtr
+fakeStoragePoolLookupByName(virConnectPtr conn,
+                            const char *name)
+{
+    char *xmlpath = NULL;
+    virStoragePoolPtr ret = NULL;
+
+    if (STRNEQ(name, "inactive")) {
+        if (virAsprintf(&xmlpath, "%s/%s%s.xml",
+                        abs_srcdir,
+                        STORAGE_POOL_XML_PATH,
+                        name) < 0)
+            return NULL;
+
+        if (!virFileExists(xmlpath)) {
+            virReportError(VIR_ERR_NO_STORAGE_POOL,
+                           "File '%s' not found", xmlpath);
+            goto cleanup;
+        }
+    }
+
+    ret = virGetStoragePool(conn, name, fakeUUID, NULL, NULL);
+
+ cleanup:
+    VIR_FREE(xmlpath);
+    return ret;
+}
+
+
+static virStorageVolPtr
+fakeStorageVolLookupByName(virStoragePoolPtr pool,
+                           const char *name)
+{
+    char **volinfo = NULL;
+    virStorageVolPtr ret = NULL;
+
+    if (STREQ(pool->name, "inactive")) {
+        virReportError(VIR_ERR_OPERATION_INVALID,
+                       "storage pool '%s' is not active", pool->name);
+        return NULL;
+    }
+
+    if (STREQ(name, "nonexistent")) {
+        virReportError(VIR_ERR_NO_STORAGE_VOL,
+                       "no storage vol with matching name '%s'", name);
+        return NULL;
+    }
+
+    if (!strchr(name, '+'))
+        goto fallback;
+
+    if (!(volinfo = virStringSplit(name, "+", 2)))
+        return NULL;
+
+    if (!volinfo[1])
+        goto fallback;
+
+    ret = virGetStorageVol(pool->conn, pool->name, volinfo[1], volinfo[0],
+                           NULL, NULL);
+
+ cleanup:
+    virStringFreeList(volinfo);
+    return ret;
+
+ fallback:
+    ret = virGetStorageVol(pool->conn, pool->name, name, "block", NULL, NULL);
+    goto cleanup;
+}
+
+static int
+fakeStorageVolGetInfo(virStorageVolPtr vol,
+                      virStorageVolInfoPtr info)
+{
+    memset(info, 0, sizeof(*info));
+
+    info->type = virStorageVolTypeFromString(vol->key);
+
+    if (info->type < 0) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       "Invalid volume type '%s'", vol->key);
+        return -1;
+    }
+
+    return 0;
+}
+
+
+static char *
+fakeStorageVolGetPath(virStorageVolPtr vol)
+{
+    char *ret = NULL;
+
+    ignore_value(virAsprintf(&ret, "/some/%s/device/%s", vol->key, vol->name));
+
+    return ret;
+}
+
+
+static char *
+fakeStoragePoolGetXMLDesc(virStoragePoolPtr pool,
+                          unsigned int flags_unused ATTRIBUTE_UNUSED)
+{
+    char *xmlpath = NULL;
+    char *xmlbuf = NULL;
+
+    if (STREQ(pool->name, "inactive")) {
+        virReportError(VIR_ERR_NO_STORAGE_POOL, NULL);
+        return NULL;
+    }
+
+    if (virAsprintf(&xmlpath, "%s/%s%s.xml",
+                    abs_srcdir,
+                    STORAGE_POOL_XML_PATH,
+                    pool->name) < 0)
+        return NULL;
+
+    if (virtTestLoadFile(xmlpath, &xmlbuf) < 0) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       "failed to load XML file '%s'",
+                       xmlpath);
+        goto cleanup;
+    }
+
+ cleanup:
+    VIR_FREE(xmlpath);
+
+    return xmlbuf;
+}
+
+static int
+fakeStorageClose(virConnectPtr conn ATTRIBUTE_UNUSED)
+{
+    return 0;
+}
+
+static int
+fakeStoragePoolIsActive(virStoragePoolPtr pool)
+{
+    if (STREQ(pool->name, "inactive"))
+        return 0;
+
+    return 1;
+}
+
+/* Test storage pool implementation
+ *
+ * These functions aid testing of storage pool related stuff when creating a
+ * qemu command line.
+ *
+ * There are a few "magic" values to pass to these functions:
+ *
+ * 1) "inactive" as a pool name to create an inactive pool. All other names are
+ * interpreted as file names in storagepoolxml2xmlout/ and are used as the
+ * definition for the pool. If the file doesn't exist the pool doesn't exist.
+ *
+ * 2) "nonexistent" returns an error while looking up a volume. Otherwise
+ * pattern VOLUME_TYPE+VOLUME_PATH can be used to simulate a volume in a pool.
+ * This creates a fake path for this volume. If the '+' sign is omitted, block
+ * type is assumed.
+ */
+static virStorageDriver fakeStorageDriver = {
+    .name = "fake_storage",
+    .storageClose = fakeStorageClose,
+    .storagePoolLookupByName = fakeStoragePoolLookupByName,
+    .storageVolLookupByName = fakeStorageVolLookupByName,
+    .storagePoolGetXMLDesc = fakeStoragePoolGetXMLDesc,
+    .storageVolGetPath = fakeStorageVolGetPath,
+    .storageVolGetInfo = fakeStorageVolGetInfo,
+    .storagePoolIsActive = fakeStoragePoolIsActive,
+};
+
 typedef enum {
     FLAG_EXPECT_ERROR       = 1 << 0,
     FLAG_EXPECT_FAILURE     = 1 << 1,
@@ -103,12 +279,19 @@ static int testCompareXMLToArgvFiles(const char *xml,
     if (!(conn = virGetConnect()))
         goto out;
     conn->secretDriver = &fakeSecretDriver;
+    conn->storageDriver = &fakeStorageDriver;
 
     if (!(vmdef = virDomainDefParseFile(xml, driver.caps, driver.xmlopt,
                                         QEMU_EXPECTED_VIRT_TYPES,
                                         VIR_DOMAIN_XML_INACTIVE))) {
-        if (flags & FLAG_EXPECT_PARSE_ERROR)
+        if (!virtTestOOMActive() &&
+            (flags & FLAG_EXPECT_PARSE_ERROR))
             goto ok;
+        goto out;
+    }
+
+    if (!virDomainDefCheckABIStability(vmdef, vmdef)) {
+        fprintf(stderr, "ABI stability check failed on %s", xml);
         goto out;
     }
 
@@ -165,12 +348,18 @@ static int testCompareXMLToArgvFiles(const char *xml,
         }
     }
 
+    for (i = 0; i < vmdef->ndisks; i++) {
+        if (qemuTranslateDiskSourcePool(conn, vmdef->disks[i]) < 0)
+            goto out;
+    }
+
     if (!(cmd = qemuBuildCommandLine(conn, &driver, vmdef, &monitor_chr,
                                      (flags & FLAG_JSON), extraFlags,
                                      migrateFrom, migrateFd, NULL,
                                      VIR_NETDEV_VPORT_PROFILE_OP_NO_OP,
-                                     &testCallbacks))) {
-        if (flags & FLAG_EXPECT_FAILURE) {
+                                     &testCallbacks, false))) {
+        if (!virtTestOOMActive() &&
+            (flags & FLAG_EXPECT_FAILURE)) {
             ret = 0;
             if (virTestGetDebug() > 1)
                 fprintf(stderr, "Got expected error: %s\n",
@@ -184,7 +373,8 @@ static int testCompareXMLToArgvFiles(const char *xml,
         goto out;
     }
 
-    if (!!virGetLastError() != !!(flags & FLAG_EXPECT_ERROR)) {
+    if (!virtTestOOMActive() &&
+        (!!virGetLastError() != !!(flags & FLAG_EXPECT_ERROR))) {
         if (virTestGetDebug() && (log = virtTestLogContentAndReset()))
             fprintf(stderr, "\n%s", log);
         goto out;
@@ -205,14 +395,15 @@ static int testCompareXMLToArgvFiles(const char *xml,
     }
 
  ok:
-    if (flags & FLAG_EXPECT_ERROR) {
+    if (!virtTestOOMActive() &&
+        (flags & FLAG_EXPECT_ERROR)) {
         /* need to suppress the errors */
         virResetLastError();
     }
 
     ret = 0;
 
-out:
+ out:
     VIR_FREE(log);
     VIR_FREE(expectargv);
     VIR_FREE(actualargv);
@@ -253,7 +444,7 @@ testCompareXMLToArgvHelper(const void *data)
                                        info->migrateFrom, info->migrateFd,
                                        flags);
 
-cleanup:
+ cleanup:
     VIR_FREE(xml);
     VIR_FREE(args);
     return result;
@@ -299,7 +490,17 @@ mymain(void)
     if (!abs_top_srcdir)
         abs_top_srcdir = abs_srcdir "/..";
 
-    driver.config = virQEMUDriverConfigNew(false);
+    /* Set the timezone because we are mocking the time() function.
+     * If we don't do that, then localtime() may return unpredictable
+     * results. In order to detect things that just work by a blind
+     * chance, we need to set an virtual timezone that no libvirt
+     * developer resides in. */
+    if (setenv("TZ", "VIR00:30", 1) < 0) {
+        perror("setenv");
+        return EXIT_FAILURE;
+    }
+
+    driver.config = virQEMUDriverConfigNew(true);
     VIR_FREE(driver.config->spiceListen);
     VIR_FREE(driver.config->vncListen);
 
@@ -418,6 +619,10 @@ mymain(void)
             QEMU_CAPS_DEVICE, QEMU_CAPS_DRIVE, QEMU_CAPS_DRIVE_BOOT,
             QEMU_CAPS_BOOTINDEX,
             QEMU_CAPS_VIRTIO_BLK_SCSI, QEMU_CAPS_VIRTIO_BLK_SG_IO);
+    DO_TEST("boot-strict",
+            QEMU_CAPS_DEVICE, QEMU_CAPS_DRIVE, QEMU_CAPS_DRIVE_BOOT,
+            QEMU_CAPS_BOOTINDEX, QEMU_CAPS_BOOT_STRICT,
+            QEMU_CAPS_VIRTIO_BLK_SCSI, QEMU_CAPS_VIRTIO_BLK_SG_IO);
     DO_TEST("bootloader", QEMU_CAPS_DOMID, QEMU_CAPS_KVM);
 
     DO_TEST("reboot-timeout-disabled", QEMU_CAPS_REBOOT_TIMEOUT);
@@ -427,16 +632,16 @@ mymain(void)
     DO_TEST("bios", QEMU_CAPS_DEVICE, QEMU_CAPS_SGA);
     DO_TEST("clock-utc", NONE);
     DO_TEST("clock-localtime", NONE);
-    /*
-     * Can't be enabled since the absolute timestamp changes every time
+    DO_TEST("clock-localtime-basis-localtime", QEMU_CAPS_RTC);
     DO_TEST("clock-variable", QEMU_CAPS_RTC);
-    */
     DO_TEST("clock-france", QEMU_CAPS_RTC);
     DO_TEST("clock-hpet-off", QEMU_CAPS_RTC, QEMU_CAPS_NO_HPET,
             QEMU_CAPS_NO_KVM_PIT);
+    DO_TEST("clock-catchup", QEMU_CAPS_RTC, QEMU_CAPS_NO_KVM_PIT);
     DO_TEST("cpu-kvmclock", QEMU_CAPS_ENABLE_KVM);
     DO_TEST("cpu-host-kvmclock", QEMU_CAPS_ENABLE_KVM, QEMU_CAPS_CPU_HOST);
     DO_TEST("kvmclock", QEMU_CAPS_KVM);
+    DO_TEST("clock-timer-hyperv-rtc", QEMU_CAPS_KVM);
 
     DO_TEST("cpu-eoi-disabled", QEMU_CAPS_ENABLE_KVM);
     DO_TEST("cpu-eoi-enabled", QEMU_CAPS_ENABLE_KVM);
@@ -608,6 +813,10 @@ mymain(void)
     DO_TEST("disk-aio",
             QEMU_CAPS_DRIVE, QEMU_CAPS_DRIVE_AIO,
             QEMU_CAPS_DRIVE_CACHE_V2, QEMU_CAPS_DRIVE_FORMAT);
+    DO_TEST("disk-source-pool",
+            QEMU_CAPS_DRIVE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
+    DO_TEST("disk-source-pool-mode",
+            QEMU_CAPS_DRIVE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
     DO_TEST("disk-ioeventfd",
             QEMU_CAPS_DRIVE, QEMU_CAPS_VIRTIO_IOEVENTFD,
             QEMU_CAPS_VIRTIO_TX_ALG, QEMU_CAPS_DEVICE,
@@ -661,7 +870,8 @@ mymain(void)
     DO_TEST("graphics-spice",
             QEMU_CAPS_VGA, QEMU_CAPS_VGA_QXL,
             QEMU_CAPS_DEVICE, QEMU_CAPS_SPICE,
-            QEMU_CAPS_DEVICE_QXL);
+            QEMU_CAPS_DEVICE_QXL,
+            QEMU_CAPS_SPICE_FILE_XFER_DISABLE);
     driver.config->spiceSASL = 1;
     ignore_value(VIR_STRDUP(driver.config->spiceSASLdir, "/root/.sasl2"));
     DO_TEST("graphics-spice-sasl",
@@ -695,6 +905,12 @@ mymain(void)
             QEMU_CAPS_PCI_MULTIFUNCTION, QEMU_CAPS_USB_HUB,
             QEMU_CAPS_ICH9_USB_EHCI1, QEMU_CAPS_USB_REDIR,
             QEMU_CAPS_CHARDEV_SPICEVMC);
+    DO_TEST("graphics-spice-agent-file-xfer",
+            QEMU_CAPS_VGA, QEMU_CAPS_VGA_QXL,
+            QEMU_CAPS_DEVICE, QEMU_CAPS_SPICE,
+            QEMU_CAPS_DEVICE_QXL_VGA,
+            QEMU_CAPS_DEVICE_QXL,
+            QEMU_CAPS_SPICE_FILE_XFER_DISABLE);
 
     DO_TEST("input-usbmouse", NONE);
     DO_TEST("input-usbtablet", NONE);
@@ -737,6 +953,13 @@ mymain(void)
     DO_TEST("serial-udp", NONE);
     DO_TEST("serial-tcp-telnet", NONE);
     DO_TEST("serial-many", NONE);
+    DO_TEST("serial-spiceport",
+            QEMU_CAPS_CHARDEV, QEMU_CAPS_DEVICE,
+            QEMU_CAPS_NODEFCONFIG, QEMU_CAPS_DEVICE_VIDEO_PRIMARY,
+            QEMU_CAPS_DEVICE_QXL, QEMU_CAPS_DEVICE_QXL_VGA,
+            QEMU_CAPS_SPICE, QEMU_CAPS_CHARDEV_SPICEPORT);
+    DO_TEST("serial-spiceport-nospice", QEMU_CAPS_NAME);
+
     DO_TEST("parallel-tcp", NONE);
     DO_TEST("console-compat", NONE);
     DO_TEST("console-compat-auto", NONE);
@@ -936,9 +1159,11 @@ mymain(void)
                     QEMU_CAPS_KVM, QEMU_CAPS_CPU_HOST);
 
     DO_TEST("memtune", QEMU_CAPS_NAME);
+    DO_TEST("memtune-unlimited", QEMU_CAPS_NAME);
     DO_TEST("blkiotune", QEMU_CAPS_NAME);
     DO_TEST("blkiotune-device", QEMU_CAPS_NAME);
     DO_TEST("cputune", QEMU_CAPS_NAME);
+    DO_TEST("cputune-zero-shares", QEMU_CAPS_NAME);
     DO_TEST("numatune-memory", NONE);
     DO_TEST("numatune-auto-nodeset-invalid", NONE);
     DO_TEST("numad", NONE);
@@ -986,6 +1211,9 @@ mymain(void)
     DO_TEST_ERROR("pseries-vio-address-clash", QEMU_CAPS_DRIVE,
             QEMU_CAPS_CHARDEV, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
     DO_TEST("pseries-nvram", QEMU_CAPS_DEVICE_NVRAM);
+    DO_TEST("pseries-usb-kbd", QEMU_CAPS_PCI_OHCI,
+            QEMU_CAPS_DEVICE_USB_KBD, QEMU_CAPS_CHARDEV,
+            QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
     DO_TEST_FAILURE("pseries-cpu-exact", QEMU_CAPS_CHARDEV, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
     DO_TEST("disk-ide-drive-split",
             QEMU_CAPS_DRIVE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
@@ -1002,7 +1230,8 @@ mymain(void)
     DO_TEST("video-device-pciaddr-default",
             QEMU_CAPS_KVM, QEMU_CAPS_VNC,
             QEMU_CAPS_DEVICE, QEMU_CAPS_DEVICE_VIDEO_PRIMARY,
-            QEMU_CAPS_DEVICE_QXL, QEMU_CAPS_DEVICE_QXL_VGA);
+            QEMU_CAPS_DEVICE_QXL, QEMU_CAPS_DEVICE_QXL_VGA,
+            QEMU_CAPS_DEVICE_PCI_BRIDGE);
 
     DO_TEST("virtio-rng-default", QEMU_CAPS_DEVICE, QEMU_CAPS_DEVICE_VIRTIO_RNG,
             QEMU_CAPS_OBJECT_RNG_RANDOM);
@@ -1110,20 +1339,31 @@ mymain(void)
             QEMU_CAPS_DRIVE, QEMU_CAPS_DEVICE_VIRTIO_MMIO,
             QEMU_CAPS_DEVICE_VIRTIO_RNG, QEMU_CAPS_OBJECT_RNG_RANDOM);
 
+    DO_TEST("aarch64-virt-virtio",
+            QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG, QEMU_CAPS_DTB,
+            QEMU_CAPS_DRIVE, QEMU_CAPS_DEVICE_VIRTIO_MMIO,
+            QEMU_CAPS_DEVICE_VIRTIO_RNG, QEMU_CAPS_OBJECT_RNG_RANDOM);
+    DO_TEST("aarch64-virt-default-nic",
+            QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
+            QEMU_CAPS_DEVICE_VIRTIO_MMIO);
+
     DO_TEST("kvm-pit-device", QEMU_CAPS_KVM_PIT_TICK_POLICY);
     DO_TEST("kvm-pit-delay", QEMU_CAPS_NO_KVM_PIT);
     DO_TEST("kvm-pit-device", QEMU_CAPS_NO_KVM_PIT,
             QEMU_CAPS_KVM_PIT_TICK_POLICY);
+
+    DO_TEST("panic", QEMU_CAPS_DEVICE_PANIC,
+            QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
 
     virObjectUnref(driver.config);
     virObjectUnref(driver.caps);
     virObjectUnref(driver.xmlopt);
     VIR_FREE(map);
 
-    return ret==0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-VIRT_TEST_MAIN(mymain)
+VIRT_TEST_MAIN_PRELOAD(mymain, abs_builddir "/.libs/qemuxml2argvmock.so")
 
 #else
 

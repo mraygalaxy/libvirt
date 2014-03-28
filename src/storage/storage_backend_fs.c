@@ -1,7 +1,7 @@
 /*
  * storage_backend_fs.c: storage backend for FS and directory handling
  *
- * Copyright (C) 2007-2013 Red Hat, Inc.
+ * Copyright (C) 2007-2014 Red Hat, Inc.
  * Copyright (C) 2007-2008 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -53,6 +53,8 @@
 #include "virstring.h"
 
 #define VIR_FROM_THIS VIR_FROM_STORAGE
+
+VIR_LOG_INIT("storage.storage_backend_fs");
 
 #define VIR_STORAGE_VOL_FS_OPEN_FLAGS       (VIR_STORAGE_VOL_OPEN_DEFAULT   |\
                                              VIR_STORAGE_VOL_OPEN_DIR)
@@ -178,10 +180,10 @@ virStorageBackendProbeTarget(virStorageVolTargetPtr target,
 
     goto cleanup;
 
-error:
+ error:
     VIR_FORCE_CLOSE(fd);
 
-cleanup:
+ cleanup:
     virStorageFileFreeMetadata(meta);
     VIR_FREE(header);
     return ret;
@@ -200,8 +202,7 @@ struct _virNetfsDiscoverState {
 typedef struct _virNetfsDiscoverState virNetfsDiscoverState;
 
 static int
-virStorageBackendFileSystemNetFindPoolSourcesFunc(virStoragePoolObjPtr pool ATTRIBUTE_UNUSED,
-                                                  char **const groups,
+virStorageBackendFileSystemNetFindPoolSourcesFunc(char **const groups,
                                                   void *data)
 {
     virNetfsDiscoverState *state = data;
@@ -236,7 +237,7 @@ virStorageBackendFileSystemNetFindPoolSourcesFunc(virStoragePoolObjPtr pool ATTR
     src->format = VIR_STORAGE_POOL_NETFS_NFS;
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -299,9 +300,9 @@ virStorageBackendFileSystemNetFindPoolSources(virConnectPtr conn ATTRIBUTE_UNUSE
                                source->hosts[0].name,
                                NULL);
 
-    if (virStorageBackendRunProgRegex(NULL, cmd, 1, regexes, vars,
-                            virStorageBackendFileSystemNetFindPoolSourcesFunc,
-                            &state, NULL) < 0)
+    if (virCommandRunRegex(cmd, 1, regexes, vars,
+                           virStorageBackendFileSystemNetFindPoolSourcesFunc,
+                           &state, NULL) < 0)
         goto cleanup;
 
     retval = virStoragePoolSourceListFormat(&state.list);
@@ -328,7 +329,8 @@ virStorageBackendFileSystemNetFindPoolSources(virConnectPtr conn ATTRIBUTE_UNUSE
  * Return 0 if not mounted, 1 if mounted, -1 on error
  */
 static int
-virStorageBackendFileSystemIsMounted(virStoragePoolObjPtr pool) {
+virStorageBackendFileSystemIsMounted(virStoragePoolObjPtr pool)
+{
     FILE *mtab;
     struct mntent ent;
     char buf[1024];
@@ -361,7 +363,8 @@ virStorageBackendFileSystemIsMounted(virStoragePoolObjPtr pool) {
  * Returns 0 if successfully mounted, -1 on error
  */
 static int
-virStorageBackendFileSystemMount(virStoragePoolObjPtr pool) {
+virStorageBackendFileSystemMount(virStoragePoolObjPtr pool)
+{
     char *src = NULL;
     /* 'mount -t auto' doesn't seem to auto determine nfs (or cifs),
      *  while plain 'mount' does. We have to craft separate argvs to
@@ -449,7 +452,7 @@ virStorageBackendFileSystemMount(virStoragePoolObjPtr pool) {
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     VIR_FREE(src);
     return ret;
@@ -460,12 +463,13 @@ cleanup:
  * @pool storage pool to unmount
  *
  * Ensure that a FS storage pool is not mounted on its target location.
- * If already unmounted, this is a no-op
+ * If already unmounted, this is a no-op.
  *
  * Returns 0 if successfully unmounted, -1 on error
  */
 static int
-virStorageBackendFileSystemUnmount(virStoragePoolObjPtr pool) {
+virStorageBackendFileSystemUnmount(virStoragePoolObjPtr pool)
+{
     virCommandPtr cmd = NULL;
     int ret = -1;
     int rc;
@@ -506,7 +510,7 @@ virStorageBackendFileSystemUnmount(virStoragePoolObjPtr pool) {
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     return ret;
 }
@@ -540,9 +544,8 @@ virStorageBackendFileSystemCheck(virConnectPtr conn ATTRIBUTE_UNUSED,
  * @conn connection to report errors against
  * @pool storage pool to start
  *
- * Starts a directory or FS based storage pool.
- *
- *  - If it is a FS based pool, mounts the unlying source device on the pool
+ * Starts a directory or FS based storage pool.  The underlying source
+ * device will be mounted for FS based pools.
  *
  * Returns 0 on success, -1 on error
  */
@@ -561,7 +564,8 @@ virStorageBackendFileSystemStart(virConnectPtr conn ATTRIBUTE_UNUSED,
 #if WITH_BLKID
 static virStoragePoolProbeResult
 virStorageBackendFileSystemProbe(const char *device,
-                                 const char *format) {
+                                 const char *format)
+{
 
     virStoragePoolProbeResult ret = FILESYSTEM_PROBE_ERROR;
     blkid_probe probe = NULL;
@@ -617,7 +621,7 @@ virStorageBackendFileSystemProbe(const char *device,
         ret = FILESYSTEM_PROBE_ERROR;
     }
 
-error:
+ error:
     VIR_FREE(libblkid_format);
 
     if (probe != NULL) {
@@ -720,7 +724,7 @@ virStorageBackendMakeFileSystem(virStoragePoolObjPtr pool,
         ret = virStorageBackendExecuteMKFS(device, format);
     }
 
-error:
+ error:
     return ret;
 }
 
@@ -739,7 +743,7 @@ error:
  * VIR_STORAGE_POOL_BUILD_OVERWRITE is set, mkfs is always executed,
  * any existed data on the target device is overwritten unconditionally.
  *
- *  - If it is a FS based pool, mounts the unlying source device on the pool
+ * The underlying source device is mounted for FS based pools.
  *
  * Returns 0 on success, -1 on error
  */
@@ -812,7 +816,7 @@ virStorageBackendFileSystemBuild(virConnectPtr conn ATTRIBUTE_UNUSED,
         ret = 0;
     }
 
-error:
+ error:
     VIR_FREE(parent);
     return ret;
 }
@@ -906,11 +910,8 @@ virStorageBackendFileSystemRefresh(virConnectPtr conn ATTRIBUTE_UNUSED,
         }
 
 
-        if (VIR_REALLOC_N(pool->volumes.objs,
-                          pool->volumes.count+1) < 0)
+        if (VIR_APPEND_ELEMENT(pool->volumes.objs, pool->volumes.count, vol) < 0)
             goto cleanup;
-        pool->volumes.objs[pool->volumes.count++] = vol;
-        vol = NULL;
     }
     closedir(dir);
 
@@ -940,12 +941,12 @@ virStorageBackendFileSystemRefresh(virConnectPtr conn ATTRIBUTE_UNUSED,
 
 /**
  * @conn connection to report errors against
- * @pool storage pool to start
+ * @pool storage pool to stop
  *
- * Stops a FS based storage pool.
+ * Stops a file storage pool.  The underlying source device is unmounted
+ * for FS based pools.  Any cached data about volumes is released.
  *
- *  - If it is a FS based pool, unmounts the unlying source device on the pool
- *  - Releases all cached data about volumes
+ * Returns 0 on success, -1 on error.
  */
 #if WITH_STORAGE_FS
 static int
@@ -962,11 +963,9 @@ virStorageBackendFileSystemStop(virConnectPtr conn ATTRIBUTE_UNUSED,
 
 /**
  * @conn connection to report errors against
- * @pool storage pool to build
+ * @pool storage pool to delete
  *
- * Build a directory or FS based storage pool.
- *
- *  - If it is a FS based pool, mounts the unlying source device on the pool
+ * Delete a directory based storage pool
  *
  * Returns 0 on success, -1 on error
  */
@@ -1267,7 +1266,7 @@ virStorageBackendFileSystemVolResize(virConnectPtr conn ATTRIBUTE_UNUSED,
 
     if (vol->target.format == VIR_STORAGE_FILE_RAW) {
         return virStorageFileResize(vol->target.path, capacity,
-                                    vol->capacity, pre_allocate);
+                                    vol->allocation, pre_allocate);
     } else {
         if (pre_allocate) {
             virReportError(VIR_ERR_OPERATION_UNSUPPORTED, "%s",
@@ -1330,4 +1329,52 @@ virStorageBackend virStorageBackendNetFileSystem = {
     .deleteVol = virStorageBackendFileSystemVolDelete,
     .resizeVol = virStorageBackendFileSystemVolResize,
 };
+
+
+static int
+virStorageFileBackendFileUnlink(virStorageFilePtr file)
+{
+    int ret;
+
+    ret = unlink(file->path);
+    /* preserve errno */
+
+    VIR_DEBUG("removing storage file %p(%s): ret=%d, errno=%d",
+              file, file->path, ret, errno);
+
+    return ret;
+}
+
+
+static int
+virStorageFileBackendFileStat(virStorageFilePtr file,
+                              struct stat *st)
+{
+    int ret;
+
+    ret = stat(file->path, st);
+    /* preserve errno */
+
+    VIR_DEBUG("stat of storage file %p(%s): ret=%d, errno=%d",
+              file, file->path, ret, errno);
+
+    return ret;
+}
+
+
+virStorageFileBackend virStorageFileBackendFile = {
+    .type = VIR_DOMAIN_DISK_TYPE_FILE,
+
+    .storageFileUnlink = virStorageFileBackendFileUnlink,
+    .storageFileStat = virStorageFileBackendFileStat,
+};
+
+
+virStorageFileBackend virStorageFileBackendBlock = {
+    .type = VIR_DOMAIN_DISK_TYPE_BLOCK,
+
+    .storageFileStat = virStorageFileBackendFileStat,
+};
+
+
 #endif /* WITH_STORAGE_FS */

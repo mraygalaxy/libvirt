@@ -1,7 +1,7 @@
 /*
  * libvirtd.h: daemon data structure definitions
  *
- * Copyright (C) 2006-2013 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -32,7 +32,6 @@
 # include "remote_protocol.h"
 # include "lxc_protocol.h"
 # include "qemu_protocol.h"
-# include "virlog.h"
 # include "virthread.h"
 # if WITH_SASL
 #  include "virnetsaslcontext.h"
@@ -43,13 +42,20 @@ typedef struct daemonClientStream daemonClientStream;
 typedef daemonClientStream *daemonClientStreamPtr;
 typedef struct daemonClientPrivate daemonClientPrivate;
 typedef daemonClientPrivate *daemonClientPrivatePtr;
+typedef struct daemonClientEventCallback daemonClientEventCallback;
+typedef daemonClientEventCallback *daemonClientEventCallbackPtr;
 
 /* Stores the per-client connection state */
 struct daemonClientPrivate {
     /* Hold while accessing any data except conn */
     virMutex lock;
 
-    int domainEventCallbackID[VIR_DOMAIN_EVENT_ID_LAST];
+    daemonClientEventCallbackPtr *domainEventCallbacks;
+    size_t ndomainEventCallbacks;
+    daemonClientEventCallbackPtr *networkEventCallbacks;
+    size_t nnetworkEventCallbacks;
+    daemonClientEventCallbackPtr *qemuEventCallbacks;
+    size_t nqemuEventCallbacks;
 
 # if WITH_SASL
     virNetSASLSessionPtr sasl;

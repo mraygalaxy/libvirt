@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2013 Red Hat, Inc.
+ * Copyright (C) 2012-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -30,6 +30,8 @@
 #include "virstring.h"
 
 #define VIR_FROM_THIS VIR_FROM_NONE
+
+VIR_LOG_INIT("tests.stringtest");
 
 struct testSplitData {
     const char *string;
@@ -78,7 +80,7 @@ static int testSplit(const void *args)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     virStringFreeList(got);
 
     return ret;
@@ -101,7 +103,7 @@ static int testJoin(const void *args)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(got);
 
     return ret;
@@ -190,7 +192,7 @@ testStrdup(const void *data ATTRIBUTE_UNUSED)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     for (i = 0; i < ARRAY_CARDINALITY(array); i++)
         VIR_FREE(array[i]);
     return ret;
@@ -226,10 +228,150 @@ testStrndupNegative(const void *opaque ATTRIBUTE_UNUSED)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(dst);
     return ret;
 }
+
+
+static int
+testStringSortCompare(const void *opaque ATTRIBUTE_UNUSED)
+{
+    const char *randlist[] = {
+        "tasty", "astro", "goat", "chicken", "turducken",
+    };
+    const char *randrlist[] = {
+        "tasty", "astro", "goat", "chicken", "turducken",
+    };
+    const char *sortlist[] = {
+        "astro", "chicken", "goat", "tasty", "turducken",
+    };
+    const char *sortrlist[] = {
+        "turducken", "tasty", "goat", "chicken", "astro",
+    };
+    int ret = -1;
+    size_t i;
+
+    qsort(randlist, ARRAY_CARDINALITY(randlist), sizeof(randlist[0]),
+          virStringSortCompare);
+    qsort(randrlist, ARRAY_CARDINALITY(randrlist), sizeof(randrlist[0]),
+          virStringSortRevCompare);
+
+    for (i = 0; i < ARRAY_CARDINALITY(randlist); i++) {
+        if (STRNEQ(randlist[i], sortlist[i])) {
+            fprintf(stderr, "sortlist[%zu] '%s' != randlist[%zu] '%s'\n",
+                    i, sortlist[i], i, randlist[i]);
+            goto cleanup;
+        }
+        if (STRNEQ(randrlist[i], sortrlist[i])) {
+            fprintf(stderr, "sortrlist[%zu] '%s' != randrlist[%zu] '%s'\n",
+                    i, sortrlist[i], i, randrlist[i]);
+            goto cleanup;
+        }
+    }
+
+    ret = 0;
+ cleanup:
+    return ret;
+}
+
+
+struct stringSearchData {
+    const char *str;
+    const char *regexp;
+    size_t maxMatches;
+    size_t expectNMatches;
+    const char **expectMatches;
+    bool expectError;
+};
+
+static int
+testStringSearch(const void *opaque ATTRIBUTE_UNUSED)
+{
+    const struct stringSearchData *data = opaque;
+    char **matches = NULL;
+    ssize_t nmatches;
+    int ret = -1;
+
+    nmatches = virStringSearch(data->str, data->regexp,
+                               data->maxMatches, &matches);
+
+    if (data->expectError) {
+        if (nmatches != -1) {
+            fprintf(stderr, "expected error on %s but got %zd matches\n",
+                    data->str, nmatches);
+            goto cleanup;
+        }
+    } else {
+        size_t i;
+
+        if (nmatches < 0) {
+            fprintf(stderr, "expected %zu matches on %s but got error\n",
+                    data->expectNMatches, data->str);
+            goto cleanup;
+        }
+
+        if (nmatches != data->expectNMatches) {
+            fprintf(stderr, "expected %zu matches on %s but got %zd\n",
+                    data->expectNMatches, data->str, nmatches);
+            goto cleanup;
+        }
+
+        if (virStringListLength(matches) != nmatches) {
+            fprintf(stderr, "expected %zu matches on %s but got %zd matches\n",
+                    data->expectNMatches, data->str,
+                    virStringListLength(matches));
+            goto cleanup;
+        }
+
+        for (i = 0; i < nmatches; i++) {
+            if (STRNEQ(matches[i], data->expectMatches[i])) {
+                fprintf(stderr, "match %zu expected '%s' but got '%s'\n",
+                        i, data->expectMatches[i], matches[i]);
+                goto cleanup;
+            }
+        }
+    }
+
+    ret = 0;
+
+ cleanup:
+    virStringFreeList(matches);
+    return ret;
+}
+
+
+struct stringReplaceData {
+    const char *haystack;
+    const char *oldneedle;
+    const char *newneedle;
+    const char *result;
+};
+
+static int
+testStringReplace(const void *opaque ATTRIBUTE_UNUSED)
+{
+    const struct stringReplaceData *data = opaque;
+    char *result;
+    int ret = -1;
+
+    result = virStringReplace(data->haystack,
+                              data->oldneedle,
+                              data->newneedle);
+
+    if (STRNEQ_NULLABLE(data->result, result)) {
+        fprintf(stderr, "Expected '%s' but got '%s'\n",
+                data->result, NULLSTR(result));
+        goto cleanup;
+    }
+
+    ret = 0;
+
+ cleanup:
+    VIR_FREE(result);
+    return ret;
+}
+
 
 static int
 mymain(void)
@@ -282,7 +424,76 @@ mymain(void)
     if (virtTestRun("strdup", testStrndupNegative, NULL) < 0)
         ret = -1;
 
-    return ret==0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    if (virtTestRun("virStringSortCompare", testStringSortCompare, NULL) < 0)
+        ret = -1;
+
+#define TEST_SEARCH(s, r, x, n, m, e)                                   \
+    do {                                                                \
+        struct stringSearchData data = {                                \
+            .str = s,                                                   \
+            .maxMatches = x,                                            \
+            .regexp = r,                                                \
+            .expectNMatches = n,                                        \
+            .expectMatches = m,                                         \
+            .expectError = e,                                           \
+        };                                                              \
+        if (virtTestRun("virStringSearch " s, testStringSearch, &data) < 0) \
+            ret = -1;                                                   \
+    } while (0)
+
+    /* error due to missing () in regexp */
+    TEST_SEARCH("foo", "bar", 10, 0, NULL, true);
+
+    /* error due to too many () in regexp */
+    TEST_SEARCH("foo", "(b)(a)(r)", 10, 0, NULL, true);
+
+    /* None matching */
+    TEST_SEARCH("foo", "(bar)", 10, 0, NULL, false);
+
+    /* Full match */
+    const char *matches1[] = { "foo" };
+    TEST_SEARCH("foo", "(foo)", 10, 1, matches1, false);
+
+    /* Multi matches */
+    const char *matches2[] = { "foo", "bar", "eek" };
+    TEST_SEARCH("1foo2bar3eek", "([a-z]+)", 10, 3, matches2, false);
+
+    /* Multi matches, limited returns */
+    const char *matches3[] = { "foo", "bar" };
+    TEST_SEARCH("1foo2bar3eek", "([a-z]+)", 2, 2, matches3, false);
+
+#define TEST_REPLACE(h, o, n, r)                                        \
+    do {                                                                \
+        struct stringReplaceData data = {                               \
+            .haystack = h,                                              \
+            .oldneedle = o,                                             \
+            .newneedle = n,                                             \
+            .result = r                                                 \
+        };                                                              \
+        if (virtTestRun("virStringReplace " h, testStringReplace, &data) < 0) \
+            ret = -1;                                                   \
+    } while (0)
+
+    /* no matches */
+    TEST_REPLACE("foo", "bar", "eek", "foo");
+
+    /* complete match */
+    TEST_REPLACE("foo", "foo", "bar", "bar");
+
+    /* middle match */
+    TEST_REPLACE("foobarwizz", "bar", "eek", "fooeekwizz");
+
+    /* many matches */
+    TEST_REPLACE("foofoofoofoo", "foo", "bar", "barbarbarbar");
+
+    /* many matches */
+    TEST_REPLACE("fooooofoooo", "foo", "bar", "barooobaroo");
+
+    /* different length old/new needles */
+    TEST_REPLACE("fooooofoooo", "foo", "barwizzeek", "barwizzeekooobarwizzeekoo");
+    TEST_REPLACE("fooooofoooo", "foooo", "foo", "fooofoo");
+
+    return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 VIRT_TEST_MAIN(mymain)

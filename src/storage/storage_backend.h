@@ -1,7 +1,7 @@
 /*
  * storage_backend.h: internal storage driver backend contract
  *
- * Copyright (C) 2007-2010, 2012-2013 Red Hat, Inc.
+ * Copyright (C) 2007-2010, 2012-2014 Red Hat, Inc.
  * Copyright (C) 2007-2008 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -29,23 +29,44 @@
 # include "internal.h"
 # include "storage_conf.h"
 # include "vircommand.h"
+# include "storage_driver.h"
 
-typedef char * (*virStorageBackendFindPoolSources)(virConnectPtr conn, const char *srcSpec, unsigned int flags);
-typedef int (*virStorageBackendCheckPool)(virConnectPtr conn, virStoragePoolObjPtr pool, bool *active);
-typedef int (*virStorageBackendStartPool)(virConnectPtr conn, virStoragePoolObjPtr pool);
-typedef int (*virStorageBackendBuildPool)(virConnectPtr conn, virStoragePoolObjPtr pool, unsigned int flags);
-typedef int (*virStorageBackendRefreshPool)(virConnectPtr conn, virStoragePoolObjPtr pool);
-typedef int (*virStorageBackendStopPool)(virConnectPtr conn, virStoragePoolObjPtr pool);
-typedef int (*virStorageBackendDeletePool)(virConnectPtr conn, virStoragePoolObjPtr pool, unsigned int flags);
-
+typedef char * (*virStorageBackendFindPoolSources)(virConnectPtr conn,
+                                                   const char *srcSpec,
+                                                   unsigned int flags);
+typedef int (*virStorageBackendCheckPool)(virConnectPtr conn,
+                                          virStoragePoolObjPtr pool,
+                                          bool *active);
+typedef int (*virStorageBackendStartPool)(virConnectPtr conn,
+                                          virStoragePoolObjPtr pool);
+typedef int (*virStorageBackendBuildPool)(virConnectPtr conn,
+                                          virStoragePoolObjPtr pool,
+                                          unsigned int flags);
+typedef int (*virStorageBackendRefreshPool)(virConnectPtr conn,
+                                            virStoragePoolObjPtr pool);
+typedef int (*virStorageBackendStopPool)(virConnectPtr conn,
+                                         virStoragePoolObjPtr pool);
+typedef int (*virStorageBackendDeletePool)(virConnectPtr conn,
+                                           virStoragePoolObjPtr pool,
+                                           unsigned int flags);
 typedef int (*virStorageBackendBuildVol)(virConnectPtr conn,
-                                         virStoragePoolObjPtr pool, virStorageVolDefPtr vol,
+                                         virStoragePoolObjPtr pool,
+                                         virStorageVolDefPtr vol,
                                          unsigned int flags);
-typedef int (*virStorageBackendCreateVol)(virConnectPtr conn, virStoragePoolObjPtr pool, virStorageVolDefPtr vol);
-typedef int (*virStorageBackendRefreshVol)(virConnectPtr conn, virStoragePoolObjPtr pool, virStorageVolDefPtr vol);
-typedef int (*virStorageBackendDeleteVol)(virConnectPtr conn, virStoragePoolObjPtr pool, virStorageVolDefPtr vol, unsigned int flags);
-typedef int (*virStorageBackendBuildVolFrom)(virConnectPtr conn, virStoragePoolObjPtr pool,
-                                             virStorageVolDefPtr origvol, virStorageVolDefPtr newvol,
+typedef int (*virStorageBackendCreateVol)(virConnectPtr conn,
+                                          virStoragePoolObjPtr pool,
+                                          virStorageVolDefPtr vol);
+typedef int (*virStorageBackendRefreshVol)(virConnectPtr conn,
+                                           virStoragePoolObjPtr pool,
+                                           virStorageVolDefPtr vol);
+typedef int (*virStorageBackendDeleteVol)(virConnectPtr conn,
+                                          virStoragePoolObjPtr pool,
+                                          virStorageVolDefPtr vol,
+                                          unsigned int flags);
+typedef int (*virStorageBackendBuildVolFrom)(virConnectPtr conn,
+                                             virStoragePoolObjPtr pool,
+                                             virStorageVolDefPtr origvol,
+                                             virStorageVolDefPtr newvol,
                                              unsigned int flags);
 typedef int (*virStorageBackendVolumeResize)(virConnectPtr conn,
                                              virStoragePoolObjPtr pool,
@@ -109,7 +130,6 @@ enum {
 
 # define VIR_STORAGE_VOL_OPEN_DEFAULT (VIR_STORAGE_VOL_OPEN_ERROR    |\
                                        VIR_STORAGE_VOL_OPEN_REG      |\
-                                       VIR_STORAGE_VOL_OPEN_CHAR     |\
                                        VIR_STORAGE_VOL_OPEN_BLOCK)
 
 int virStorageBackendVolOpenCheckMode(const char *path, struct stat *sb,
@@ -119,7 +139,6 @@ int virStorageBackendVolOpenCheckMode(const char *path, struct stat *sb,
 
 int virStorageBackendUpdateVolInfo(virStorageVolDefPtr vol,
                                    int withCapacity);
-
 int virStorageBackendUpdateVolInfoFlags(virStorageVolDefPtr vol,
                                         int withCapacity,
                                         unsigned int openflags);
@@ -132,35 +151,12 @@ int virStorageBackendUpdateVolTargetInfoFD(virStorageVolTargetPtr target,
                                            struct stat *sb,
                                            unsigned long long *allocation,
                                            unsigned long long *capacity);
-int
-virStorageBackendDetectBlockVolFormatFD(virStorageVolTargetPtr target,
-                                        int fd);
+int virStorageBackendDetectBlockVolFormatFD(virStorageVolTargetPtr target,
+                                            int fd);
 
 char *virStorageBackendStablePath(virStoragePoolObjPtr pool,
                                   const char *devpath,
                                   bool loop);
-
-typedef int (*virStorageBackendListVolRegexFunc)(virStoragePoolObjPtr pool,
-                                                 char **const groups,
-                                                 void *data);
-typedef int (*virStorageBackendListVolNulFunc)(virStoragePoolObjPtr pool,
-                                               size_t n_tokens,
-                                               char **const groups,
-                                               void *data);
-
-int virStorageBackendRunProgRegex(virStoragePoolObjPtr pool,
-                                  virCommandPtr cmd,
-                                  int nregex,
-                                  const char **regex,
-                                  int *nvars,
-                                  virStorageBackendListVolRegexFunc func,
-                                  void *data, const char *cmd_to_ignore);
-
-int virStorageBackendRunProgNul(virStoragePoolObjPtr pool,
-                                virCommandPtr cmd,
-                                size_t n_columns,
-                                virStorageBackendListVolNulFunc func,
-                                void *data);
 
 virCommandPtr
 virStorageBackendCreateQemuImgCmd(virConnectPtr conn,
@@ -170,5 +166,42 @@ virStorageBackendCreateQemuImgCmd(virConnectPtr conn,
                                   unsigned int flags,
                                   const char *create_tool,
                                   int imgformat);
+
+/* ------- virStorageFile backends ------------ */
+typedef int
+(*virStorageFileBackendInit)(virStorageFilePtr file);
+
+typedef void
+(*virStorageFileBackendDeinit)(virStorageFilePtr file);
+
+typedef int
+(*virStorageFileBackendCreate)(virStorageFilePtr file);
+
+typedef int
+(*virStorageFileBackendUnlink)(virStorageFilePtr file);
+
+typedef int
+(*virStorageFileBackendStat)(virStorageFilePtr file,
+                             struct stat *st);
+
+virStorageFileBackendPtr virStorageFileBackendForType(int type, int protocol);
+
+struct _virStorageFileBackend {
+    int type;
+    int protocol;
+
+    /* All storage file callbacks may be omitted if not implemented */
+
+    /* The following group of callbacks is expected to set a libvirt
+     * error on failure. */
+    virStorageFileBackendInit backendInit;
+    virStorageFileBackendDeinit backendDeinit;
+
+    /* The following group of callbacks is expected to set errno
+     * and return -1 on error. No libvirt error shall be reported */
+    virStorageFileBackendCreate storageFileCreate;
+    virStorageFileBackendUnlink storageFileUnlink;
+    virStorageFileBackendStat   storageFileStat;
+};
 
 #endif /* __VIR_STORAGE_BACKEND_H__ */

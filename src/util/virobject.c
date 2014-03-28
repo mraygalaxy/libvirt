@@ -28,9 +28,12 @@
 #include "viratomic.h"
 #include "virerror.h"
 #include "virlog.h"
+#include "virprobe.h"
 #include "virstring.h"
 
 #define VIR_FROM_THIS VIR_FROM_NONE
+
+VIR_LOG_INIT("util.object");
 
 static unsigned int magicCounter = 0xCAFE0000;
 
@@ -144,7 +147,7 @@ virClassPtr virClassNew(virClassPtr parent,
 
     return klass;
 
-error:
+ error:
     VIR_FREE(klass);
     return NULL;
 }
@@ -192,9 +195,9 @@ void *virObjectNew(virClassPtr klass)
                       klass->objectSize - sizeof(virObject)) < 0)
         return NULL;
 
-    obj->magic = klass->magic;
+    obj->u.s.magic = klass->magic;
     obj->klass = klass;
-    virAtomicIntSet(&obj->refs, 1);
+    virAtomicIntSet(&obj->u.s.refs, 1);
 
     PROBE(OBJECT_NEW, "obj=%p classname=%s", obj, obj->klass->name);
 
@@ -252,7 +255,7 @@ bool virObjectUnref(void *anyobj)
     if (!obj)
         return false;
 
-    bool lastRef = virAtomicIntDecAndTest(&obj->refs);
+    bool lastRef = virAtomicIntDecAndTest(&obj->u.s.refs);
     PROBE(OBJECT_UNREF, "obj=%p", obj);
     if (lastRef) {
         PROBE(OBJECT_DISPOSE, "obj=%p", obj);
@@ -265,7 +268,7 @@ bool virObjectUnref(void *anyobj)
 
         /* Clear & poison object */
         memset(obj, 0, obj->klass->objectSize);
-        obj->magic = 0xDEADBEEF;
+        obj->u.s.magic = 0xDEADBEEF;
         obj->klass = (void*)0xDEADBEEF;
         VIR_FREE(obj);
     }
@@ -289,7 +292,7 @@ void *virObjectRef(void *anyobj)
 
     if (!obj)
         return NULL;
-    virAtomicIntInc(&obj->refs);
+    virAtomicIntInc(&obj->u.s.refs);
     PROBE(OBJECT_REF, "obj=%p", obj);
     return anyobj;
 }

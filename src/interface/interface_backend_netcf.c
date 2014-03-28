@@ -1,8 +1,8 @@
 /*
- * interface_driver.c: backend driver methods to handle physical
- *                     interface configuration using the netcf library.
+ * interface_backend_netcf.c: backend driver methods to handle physical
+ *                            interface configuration using the netcf library.
  *
- * Copyright (C) 2006-2013 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -35,6 +35,8 @@
 #include "viraccessapicheck.h"
 
 #define VIR_FROM_THIS VIR_FROM_INTERFACE
+
+VIR_LOG_INIT("interface.interface_backend_netcf");
 
 #define INTERFACE_DRIVER_NAME "netcf"
 
@@ -139,7 +141,7 @@ netcfStateReload(void)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     virObjectUnlock(driverState);
 
     return ret;
@@ -168,7 +170,7 @@ netcfGetMinimalDefForDevice(struct netcf_if *iface)
 
     return def;
 
-cleanup:
+ cleanup:
     virInterfaceDefFree(def);
     return NULL;
 }
@@ -236,6 +238,32 @@ static struct netcf_if *interfaceDriverGetNetcfIF(struct netcf *ncf, virInterfac
         }
     }
     return iface;
+}
+
+static int
+netcfInterfaceObjIsActive(struct netcf_if *iface,
+                          bool *active)
+{
+    int ret = -1;
+    unsigned int flags = 0;
+
+    virObjectRef(driverState);
+    if (ncf_if_status(iface, &flags) < 0) {
+        const char *errmsg, *details;
+        int errcode = ncf_error(driverState->netcf, &errmsg, &details);
+        virReportError(netcf_to_vir_err(errcode),
+                       _("failed to get status of interface %s: %s%s%s"),
+                       ncf_if_name(iface), errmsg, details ? " - " : "",
+                       details ? details : "");
+        goto cleanup;
+    }
+
+    *active = flags & NETCF_IFACE_ACTIVE;
+    ret = 0;
+
+ cleanup:
+    virObjectUnref(driverState);
+    return ret;
 }
 
 static virDrvOpenStatus
@@ -349,7 +377,7 @@ static int netcfConnectNumOfInterfacesImpl(virConnectPtr conn,
 
     ret = want;
 
-cleanup:
+ cleanup:
     if (names && count > 0)
         for (i = 0; i < count; i++)
             VIR_FREE(names[i]);
@@ -446,7 +474,7 @@ static int netcfConnectListInterfacesImpl(virConnectPtr conn,
 
     ret = want;
 
-cleanup:
+ cleanup:
     if (allnames && count > 0)
         for (i = 0; i < count; i++)
             VIR_FREE(allnames[i]);
@@ -539,7 +567,7 @@ netcfConnectListAllInterfaces(virConnectPtr conn,
     struct netcf_if *iface = NULL;
     virInterfacePtr *tmp_iface_objs = NULL;
     virInterfacePtr iface_obj = NULL;
-    unsigned int status;
+    bool active;
     int niface_objs = 0;
     int ret = -1;
     char **names = NULL;
@@ -611,15 +639,8 @@ netcfConnectListAllInterfaces(virConnectPtr conn,
             }
         }
 
-        if (ncf_if_status(iface, &status) < 0) {
-            const char *errmsg, *details;
-            int errcode = ncf_error(driver->netcf, &errmsg, &details);
-            virReportError(netcf_to_vir_err(errcode),
-                           _("failed to get status of interface %s: %s%s%s"),
-                           names[i], errmsg, details ? " - " : "",
-                           details ? details : "");
+        if (netcfInterfaceObjIsActive(iface, &active) < 0)
             goto cleanup;
-        }
 
         if (!(def = netcfGetMinimalDefForDevice(iface)))
             goto cleanup;
@@ -636,10 +657,8 @@ netcfConnectListAllInterfaces(virConnectPtr conn,
          * except active|inactive are supported.
          */
         if (MATCH(VIR_CONNECT_LIST_INTERFACES_FILTERS_ACTIVE) &&
-            !((MATCH(VIR_CONNECT_LIST_INTERFACES_ACTIVE) &&
-               (status & NETCF_IFACE_ACTIVE)) ||
-              (MATCH(VIR_CONNECT_LIST_INTERFACES_INACTIVE) &&
-               (status & NETCF_IFACE_INACTIVE)))) {
+            !((MATCH(VIR_CONNECT_LIST_INTERFACES_ACTIVE) && active) ||
+              (MATCH(VIR_CONNECT_LIST_INTERFACES_INACTIVE) && !active))) {
             ncf_if_free(iface);
             iface = NULL;
             continue;
@@ -664,7 +683,7 @@ netcfConnectListAllInterfaces(virConnectPtr conn,
 
     ret = niface_objs;
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
 
     if (names && count > 0)
@@ -718,7 +737,7 @@ static virInterfacePtr netcfInterfaceLookupByName(virConnectPtr conn,
 
     ret = virGetInterface(conn, ncf_if_name(iface), ncf_if_mac_string(iface));
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     virInterfaceDefFree(def);
     virObjectUnlock(driver);
@@ -767,7 +786,7 @@ static virInterfacePtr netcfInterfaceLookupByMACString(virConnectPtr conn,
 
     ret = virGetInterface(conn, ncf_if_name(iface), ncf_if_mac_string(iface));
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     virInterfaceDefFree(def);
     virObjectUnlock(driver);
@@ -823,7 +842,7 @@ static char *netcfInterfaceGetXMLDesc(virInterfacePtr ifinfo,
         goto cleanup;
     }
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     VIR_FREE(xmlstr);
     virInterfaceDefFree(ifacedef);
@@ -873,7 +892,7 @@ static virInterfacePtr netcfInterfaceDefineXML(virConnectPtr conn,
 
     ret = virGetInterface(conn, ncf_if_name(iface), ncf_if_mac_string(iface));
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     VIR_FREE(xmlstr);
     virInterfaceDefFree(ifacedef);
@@ -881,7 +900,8 @@ cleanup:
     return ret;
 }
 
-static int netcfInterfaceUndefine(virInterfacePtr ifinfo) {
+static int netcfInterfaceUndefine(virInterfacePtr ifinfo)
+{
     virNetcfDriverStatePtr driver = ifinfo->conn->interfacePrivateData;
     struct netcf_if *iface = NULL;
     virInterfaceDefPtr def = NULL;
@@ -913,7 +933,7 @@ static int netcfInterfaceUndefine(virInterfacePtr ifinfo) {
         goto cleanup;
     }
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     virInterfaceDefFree(def);
     virObjectUnlock(driver);
@@ -927,6 +947,7 @@ static int netcfInterfaceCreate(virInterfacePtr ifinfo,
     struct netcf_if *iface = NULL;
     virInterfaceDefPtr def = NULL;
     int ret = -1;
+    bool active;
 
     virCheckFlags(0, -1);
 
@@ -945,6 +966,15 @@ static int netcfInterfaceCreate(virInterfacePtr ifinfo,
     if (virInterfaceCreateEnsureACL(ifinfo->conn, def) < 0)
        goto cleanup;
 
+    if (netcfInterfaceObjIsActive(iface, &active) < 0)
+        goto cleanup;
+
+    if (active) {
+        virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                       _("interface is already running"));
+        goto cleanup;
+    }
+
     ret = ncf_if_up(iface);
     if (ret < 0) {
         const char *errmsg, *details;
@@ -956,7 +986,7 @@ static int netcfInterfaceCreate(virInterfacePtr ifinfo,
         goto cleanup;
     }
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     virInterfaceDefFree(def);
     virObjectUnlock(driver);
@@ -970,6 +1000,7 @@ static int netcfInterfaceDestroy(virInterfacePtr ifinfo,
     struct netcf_if *iface = NULL;
     virInterfaceDefPtr def = NULL;
     int ret = -1;
+    bool active;
 
     virCheckFlags(0, -1);
 
@@ -988,6 +1019,15 @@ static int netcfInterfaceDestroy(virInterfacePtr ifinfo,
     if (virInterfaceDestroyEnsureACL(ifinfo->conn, def) < 0)
        goto cleanup;
 
+    if (netcfInterfaceObjIsActive(iface, &active) < 0)
+        goto cleanup;
+
+    if (!active) {
+        virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                       _("interface is not running"));
+        goto cleanup;
+    }
+
     ret = ncf_if_down(iface);
     if (ret < 0) {
         const char *errmsg, *details;
@@ -999,7 +1039,7 @@ static int netcfInterfaceDestroy(virInterfacePtr ifinfo,
         goto cleanup;
     }
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     virInterfaceDefFree(def);
     virObjectUnlock(driver);
@@ -1010,9 +1050,9 @@ static int netcfInterfaceIsActive(virInterfacePtr ifinfo)
 {
     virNetcfDriverStatePtr driver = ifinfo->conn->interfacePrivateData;
     struct netcf_if *iface = NULL;
-    unsigned int flags = 0;
     virInterfaceDefPtr def = NULL;
     int ret = -1;
+    bool active;
 
     virObjectLock(driver);
 
@@ -1022,26 +1062,18 @@ static int netcfInterfaceIsActive(virInterfacePtr ifinfo)
         goto cleanup;
     }
 
-
     if (!(def = netcfGetMinimalDefForDevice(iface)))
         goto cleanup;
 
     if (virInterfaceIsActiveEnsureACL(ifinfo->conn, def) < 0)
        goto cleanup;
 
-    if (ncf_if_status(iface, &flags) < 0) {
-        const char *errmsg, *details;
-        int errcode = ncf_error(driver->netcf, &errmsg, &details);
-        virReportError(netcf_to_vir_err(errcode),
-                       _("failed to get status of interface %s: %s%s%s"),
-                       ifinfo->name, errmsg, details ? " - " : "",
-                       details ? details : "");
+    if (netcfInterfaceObjIsActive(iface, &active) < 0)
         goto cleanup;
-    }
 
-    ret = flags & NETCF_IFACE_ACTIVE ? 1 : 0;
+    ret = active ? 1 : 0;
 
-cleanup:
+ cleanup:
     ncf_if_free(iface);
     virInterfaceDefFree(def);
     virObjectUnlock(driver);
@@ -1159,12 +1191,14 @@ static virStateDriver interfaceStateDriver = {
     .stateReload = netcfStateReload,
 };
 
-int netcfIfaceRegister(void) {
+int netcfIfaceRegister(void)
+{
     if (virRegisterInterfaceDriver(&interfaceDriver) < 0) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("failed to register netcf interface driver"));
         return -1;
     }
-    virRegisterStateDriver(&interfaceStateDriver);
+    if (virRegisterStateDriver(&interfaceStateDriver) < 0)
+        return -1;
     return 0;
 }

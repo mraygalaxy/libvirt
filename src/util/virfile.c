@@ -1,7 +1,7 @@
 /*
  * virfile.c: safer file handling
  *
- * Copyright (C) 2010-2013 Red Hat, Inc.
+ * Copyright (C) 2010-2014 Red Hat, Inc.
  * Copyright (C) 2010 IBM Corporation
  * Copyright (C) 2010 Stefan Berger
  * Copyright (C) 2010 Eric Blake
@@ -62,6 +62,8 @@
 #include "c-ctype.h"
 
 #define VIR_FROM_THIS VIR_FROM_NONE
+
+VIR_LOG_INIT("util.file");
 
 int virFileClose(int *fdptr, virFileCloseFlags flags)
 {
@@ -265,7 +267,7 @@ virFileWrapperFdNew(int *fd, const char *name, unsigned int flags)
     *fd = pipefd[output];
     return ret;
 
-error:
+ error:
     VIR_FORCE_CLOSE(pipefd[0]);
     VIR_FORCE_CLOSE(pipefd[1]);
     virFileWrapperFdFree(ret);
@@ -339,13 +341,14 @@ virFileWrapperFdFree(virFileWrapperFdPtr wfd)
  * @shared: type of lock to acquire
  * @start: byte offset to start lock
  * @len: length of lock (0 to acquire entire remaining file from @start)
+ * @waitForLock: wait for previously held lock or not
  *
  * Attempt to acquire a lock on the file @fd. If @shared
  * is true, then a shared lock will be acquired,
  * otherwise an exclusive lock will be acquired. If
  * the lock cannot be acquired, an error will be
- * returned. This will not wait to acquire the lock if
- * another process already holds it.
+ * returned. If @waitForLock is true, this will wait
+ * for the lock if another process has already acquired it.
  *
  * The lock will be released when @fd is closed. The lock
  * will also be released if *any* other open file descriptor
@@ -356,7 +359,7 @@ virFileWrapperFdFree(virFileWrapperFdPtr wfd)
  *
  * Returns 0 on success, or -errno otherwise
  */
-int virFileLock(int fd, bool shared, off_t start, off_t len)
+int virFileLock(int fd, bool shared, off_t start, off_t len, bool waitForLock)
 {
     struct flock fl = {
         .l_type = shared ? F_RDLCK : F_WRLCK,
@@ -365,7 +368,9 @@ int virFileLock(int fd, bool shared, off_t start, off_t len)
         .l_len = len,
     };
 
-    if (fcntl(fd, F_SETLK, &fl) < 0)
+    int cmd = waitForLock ? F_SETLKW : F_SETLK;
+
+    if (fcntl(fd, cmd, &fl) < 0)
         return -errno;
 
     return 0;
@@ -402,7 +407,8 @@ int virFileUnlock(int fd, off_t start, off_t len)
 int virFileLock(int fd ATTRIBUTE_UNUSED,
                 bool shared ATTRIBUTE_UNUSED,
                 off_t start ATTRIBUTE_UNUSED,
-                off_t len ATTRIBUTE_UNUSED)
+                off_t len ATTRIBUTE_UNUSED,
+                bool waitForLock ATTRIBUTE_UNUSED)
 {
     return -ENOSYS;
 }
@@ -459,7 +465,7 @@ virFileRewrite(const char *path,
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FORCE_CLOSE(fd);
     if (newfile) {
         unlink(newfile);
@@ -637,7 +643,7 @@ static int virFileLoopDeviceOpenSearch(char **dev_name)
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("Unable to find a free loop device in /dev"));
 
-cleanup:
+ cleanup:
     if (fd != -1) {
         VIR_DEBUG("Got free loop device %s %d", looppath, fd);
         *dev_name = looppath;
@@ -713,7 +719,7 @@ int virFileLoopDeviceAssociate(const char *file,
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(loname);
     VIR_FORCE_CLOSE(fsfd);
     if (ret == -1)
@@ -746,7 +752,7 @@ virFileNBDDeviceIsBusy(const char *devname)
     }
     ret = 1;
 
-cleanup:
+ cleanup:
     VIR_FREE(path);
     return ret;
 }
@@ -788,7 +794,7 @@ virFileNBDDeviceFindUnused(void)
         virReportSystemError(EBUSY, "%s",
                              _("No free NBD devices"));
 
-cleanup:
+ cleanup:
     closedir(dh);
     return ret;
 }
@@ -844,7 +850,7 @@ int virFileNBDDeviceAssociate(const char *file,
     nbddev = NULL;
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(nbddev);
     VIR_FREE(qemunbd);
     virCommandFree(cmd);
@@ -951,7 +957,7 @@ int virFileDeleteTree(const char *dir)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(filepath);
     closedir(dh);
     return ret;
@@ -1131,7 +1137,7 @@ virFileFindMountPoint(const char *type)
     if (!ret)
         errno = ENOENT;
 
-cleanup:
+ cleanup:
     endmntent(f);
 
     return ret;
@@ -1591,6 +1597,120 @@ int virFileIsMountPoint(const char *file)
     return ret;
 }
 
+
+#if defined HAVE_MNTENT_H && defined HAVE_GETMNTENT_R
+static int
+virFileGetMountSubtreeImpl(const char *mtabpath,
+                           const char *prefix,
+                           char ***mountsret,
+                           size_t *nmountsret,
+                           bool reverse)
+{
+    FILE *procmnt;
+    struct mntent mntent;
+    char mntbuf[1024];
+    int ret = -1;
+    char **mounts = NULL;
+    size_t nmounts = 0;
+
+    VIR_DEBUG("prefix=%s", prefix);
+
+    *mountsret = NULL;
+    *nmountsret = 0;
+
+    if (!(procmnt = setmntent(mtabpath, "r"))) {
+        virReportSystemError(errno,
+                             _("Failed to read %s"), mtabpath);
+        return -1;
+    }
+
+    while (getmntent_r(procmnt, &mntent, mntbuf, sizeof(mntbuf)) != NULL) {
+        if (!(STREQ(mntent.mnt_dir, prefix) ||
+              (STRPREFIX(mntent.mnt_dir, prefix) &&
+               mntent.mnt_dir[strlen(prefix)] == '/')))
+            continue;
+
+        if (VIR_EXPAND_N(mounts, nmounts, nmounts ? 1 : 2) < 0)
+            goto cleanup;
+        if (VIR_STRDUP(mounts[nmounts - 2], mntent.mnt_dir) < 0)
+            goto cleanup;
+    }
+
+    if (mounts)
+        qsort(mounts, nmounts - 1, sizeof(mounts[0]),
+              reverse ? virStringSortRevCompare : virStringSortCompare);
+
+    *mountsret = mounts;
+    *nmountsret = nmounts ? nmounts - 1 : 0;
+    ret = 0;
+
+ cleanup:
+    if (ret < 0)
+        virStringFreeList(mounts);
+    endmntent(procmnt);
+    return ret;
+}
+#else /* ! defined HAVE_MNTENT_H && defined HAVE_GETMNTENT_R */
+static int
+virFileGetMountSubtreeImpl(const char *mtabpath ATTRIBUTE_UNUSED,
+                           const char *prefix ATTRIBUTE_UNUSED,
+                           char ***mountsret ATTRIBUTE_UNUSED,
+                           size_t *nmountsret ATTRIBUTE_UNUSED,
+                           bool reverse ATTRIBUTE_UNUSED)
+{
+    virReportSystemError(ENOSYS, "%s",
+                         _("Unable to determine mount table on this platform"));
+    return -1;
+}
+#endif /* ! defined HAVE_MNTENT_H && defined HAVE_GETMNTENT_R */
+
+/**
+ * virFileGetMountSubtree:
+ * @mtabpath: mount file to parser (eg /proc/mounts)
+ * @prefix: mount path prefix to match
+ * @mountsret: allocated and filled with matching mounts
+ * @nmountsret: filled with number of matching mounts, not counting NULL terminator
+ *
+ * Return the list of mounts from @mtabpath which contain
+ * the path @prefix, sorted from shortest to longest path.
+ *
+ * The @mountsret array will be NULL terminated and should
+ * be freed with virStringFreeList
+ *
+ * Returns 0 on success, -1 on error
+ */
+int virFileGetMountSubtree(const char *mtabpath,
+                           const char *prefix,
+                           char ***mountsret,
+                           size_t *nmountsret)
+{
+    return virFileGetMountSubtreeImpl(mtabpath, prefix, mountsret, nmountsret, false);
+}
+
+/**
+ * virFileGetMountReverseSubtree:
+ * @mtabpath: mount file to parser (eg /proc/mounts)
+ * @prefix: mount path prefix to match
+ * @mountsret: allocated and filled with matching mounts
+ * @nmountsret: filled with number of matching mounts, not counting NULL terminator
+ *
+ * Return the list of mounts from @mtabpath which contain
+ * the path @prefix, sorted from longest to shortest path.
+ * ie opposite order to which they appear in @mtabpath
+ *
+ * The @mountsret array will be NULL terminated and should
+ * be freed with virStringFreeList
+ *
+ * Returns 0 on success, -1 on error
+ */
+int virFileGetMountReverseSubtree(const char *mtabpath,
+                                  const char *prefix,
+                                  char ***mountsret,
+                                  size_t *nmountsret)
+{
+    return virFileGetMountSubtreeImpl(mtabpath, prefix, mountsret, nmountsret, true);
+}
+
 #ifndef WIN32
 /* Check that a file is accessible under certain
  * user & gid.
@@ -1616,7 +1736,7 @@ virFileAccessibleAs(const char *path, int mode,
     if (ngroups < 0)
         return -1;
 
-    forkRet = virFork(&pid);
+    pid = virFork();
 
     if (pid < 0) {
         VIR_FREE(groups);
@@ -1625,19 +1745,14 @@ virFileAccessibleAs(const char *path, int mode,
 
     if (pid) { /* parent */
         VIR_FREE(groups);
-        if (virProcessWait(pid, &status) < 0) {
-            /* virProcessWait() already
-             * reported error */
-            return -1;
-        }
-
-        if (!WIFEXITED(status)) {
+        if (virProcessWait(pid, &status, false) < 0) {
+            /* virProcessWait() already reported error */
             errno = EINTR;
             return -1;
         }
 
         if (status) {
-            errno = WEXITSTATUS(status);
+            errno = status;
             return -1;
         }
 
@@ -1661,7 +1776,7 @@ virFileAccessibleAs(const char *path, int mode,
     if (access(path, mode) < 0)
         ret = errno;
 
-childerror:
+ childerror:
     if ((ret & 0xFF) != ret) {
         VIR_WARN("unable to pass desired return value %d", ret);
         ret = 0xFF;
@@ -1728,7 +1843,6 @@ virFileOpenForked(const char *path, int openflags, mode_t mode,
     int waitret, status, ret = 0;
     int fd = -1;
     int pair[2] = { -1, -1 };
-    int forkRet;
     gid_t *groups;
     int ngroups;
 
@@ -1750,7 +1864,7 @@ virFileOpenForked(const char *path, int openflags, mode_t mode,
         return ret;
     }
 
-    forkRet = virFork(&pid);
+    pid = virFork();
     if (pid < 0)
         return -errno;
 
@@ -1758,15 +1872,8 @@ virFileOpenForked(const char *path, int openflags, mode_t mode,
 
         /* child */
 
-        VIR_FORCE_CLOSE(pair[0]); /* preserves errno */
-        if (forkRet < 0) {
-            /* error encountered and logged in virFork() after the fork. */
-            ret = -errno;
-            goto childerror;
-        }
-
         /* set desired uid/gid, then attempt to create the file */
-
+        VIR_FORCE_CLOSE(pair[0]);
         if (virSetUIDGID(uid, gid, groups, ngroups) < 0) {
             ret = -errno;
             goto childerror;
@@ -1957,7 +2064,7 @@ virFileOpenAs(const char *path, int openflags, mode_t mode,
     /* File is successfully opened */
     return fd;
 
-error:
+ error:
     if (fd >= 0) {
         /* some other failure after the open succeeded */
         VIR_FORCE_CLOSE(fd);
@@ -2003,7 +2110,7 @@ virDirCreateNoFork(const char *path,
                              path, mode);
         goto error;
     }
-error:
+ error:
     return ret;
 }
 
@@ -2037,7 +2144,7 @@ virDirCreate(const char *path,
     if (ngroups < 0)
         return -errno;
 
-    int forkRet = virFork(&pid);
+    pid = virFork();
 
     if (pid < 0) {
         ret = -errno;
@@ -2061,19 +2168,13 @@ virDirCreate(const char *path,
              * some cases */
             return virDirCreateNoFork(path, mode, uid, gid, flags);
         }
-parenterror:
+ parenterror:
         return ret;
     }
 
     /* child */
 
-    if (forkRet < 0) {
-        /* error encountered and logged in virFork() after the fork. */
-        goto childerror;
-    }
-
     /* set desired uid/gid, then attempt to create the directory */
-
     if (virSetUIDGID(uid, gid, groups, ngroups) < 0) {
         ret = -errno;
         goto childerror;
@@ -2109,7 +2210,7 @@ parenterror:
                              path, mode);
         goto childerror;
     }
-childerror:
+ childerror:
     _exit(ret);
 }
 
@@ -2221,10 +2322,39 @@ virFileMakePathWithMode(const char *path,
 
     ret = virFileMakePathHelper(tmp, mode);
 
-cleanup:
+ cleanup:
     VIR_FREE(tmp);
     return ret;
 }
+
+
+int
+virFileMakeParentPath(const char *path)
+{
+    char *p;
+    char *tmp;
+    int ret = -1;
+
+    VIR_DEBUG("path=%s", path);
+
+    if (VIR_STRDUP(tmp, path) < 0) {
+        errno = ENOMEM;
+        return -1;
+    }
+
+    if ((p = strrchr(tmp, '/')) == NULL) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    *p = '\0';
+
+    ret = virFileMakePathHelper(tmp, 0777);
+
+ cleanup:
+    VIR_FREE(tmp);
+    return ret;
+}
+
 
 /* Build up a fully qualified path for a config file to be
  * associated with a persistent guest or network */
@@ -2313,7 +2443,7 @@ virFileOpenTty(int *ttymaster, char **ttyName, int rawmode)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     if (ret != 0)
         VIR_FORCE_CLOSE(*ttymaster);
     VIR_FORCE_CLOSE(slave);
@@ -2511,7 +2641,7 @@ int virFilePrintf(FILE *fp, const char *msg, ...)
 
     VIR_FREE(str);
 
-cleanup:
+ cleanup:
     va_end(vargs);
 
     return ret;

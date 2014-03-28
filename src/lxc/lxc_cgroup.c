@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2012 Red Hat, Inc.
+ * Copyright (C) 2010-2014 Red Hat, Inc.
  * Copyright IBM Corp. 2008
  *
  * lxc_cgroup.c: LXC cgroup helpers
@@ -32,13 +32,22 @@
 
 #define VIR_FROM_THIS VIR_FROM_LXC
 
+VIR_LOG_INIT("lxc.lxc_cgroup");
+
 static int virLXCCgroupSetupCpuTune(virDomainDefPtr def,
                                     virCgroupPtr cgroup)
 {
     int ret = -1;
-    if (def->cputune.shares != 0 &&
-        virCgroupSetCpuShares(cgroup, def->cputune.shares) < 0)
-        goto cleanup;
+
+    if (def->cputune.sharesSpecified) {
+        unsigned long long val;
+        if (virCgroupSetCpuShares(cgroup, def->cputune.shares) < 0)
+            goto cleanup;
+
+        if (virCgroupGetCpuShares(cgroup, &val) < 0)
+            goto cleanup;
+        def->cputune.shares = val;
+    }
 
     if (def->cputune.quota != 0 &&
         virCgroupSetCpuCfsQuota(cgroup, def->cputune.quota) < 0)
@@ -49,7 +58,7 @@ static int virLXCCgroupSetupCpuTune(virDomainDefPtr def,
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -95,7 +104,7 @@ static int virLXCCgroupSetupCpusetTune(virDomainDefPtr def,
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(mask);
     return ret;
 }
@@ -112,10 +121,31 @@ static int virLXCCgroupSetupBlkioTune(virDomainDefPtr def,
 
     if (def->blkio.ndevices) {
         for (i = 0; i < def->blkio.ndevices; i++) {
-            virBlkioDeviceWeightPtr dw = &def->blkio.devices[i];
-            if (!dw->weight)
-                continue;
-            if (virCgroupSetBlkioDeviceWeight(cgroup, dw->path, dw->weight) < 0)
+            virBlkioDevicePtr dev = &def->blkio.devices[i];
+
+            if (dev->weight &&
+                (virCgroupSetBlkioDeviceWeight(cgroup, dev->path,
+                                               dev->weight) < 0))
+                return -1;
+
+            if (dev->riops &&
+                (virCgroupSetBlkioDeviceReadIops(cgroup, dev->path,
+                                                 dev->riops) < 0))
+                return -1;
+
+            if (dev->wiops &&
+                (virCgroupSetBlkioDeviceWriteIops(cgroup, dev->path,
+                                                  dev->wiops) < 0))
+                return -1;
+
+            if (dev->rbps &&
+                (virCgroupSetBlkioDeviceReadBps(cgroup, dev->path,
+                                                dev->rbps) < 0))
+                return -1;
+
+            if (dev->wbps &&
+                (virCgroupSetBlkioDeviceWriteBps(cgroup, dev->path,
+                                                 dev->wbps) < 0))
                 return -1;
         }
     }
@@ -145,7 +175,7 @@ static int virLXCCgroupSetupMemTune(virDomainDefPtr def,
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -240,7 +270,7 @@ static int virLXCCgroupGetMemStat(virCgroupPtr cgroup,
     }
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(line);
     VIR_FREE(statFile);
     VIR_FORCE_FCLOSE(statfd);
@@ -269,7 +299,7 @@ int virLXCCgroupGetMeminfo(virLXCMeminfoPtr meminfo)
     virLXCCgroupGetMemSwapUsage(cgroup, meminfo);
 
     ret = 0;
-cleanup:
+ cleanup:
     virCgroupFree(&cgroup);
     return ret;
 }
@@ -349,11 +379,11 @@ static int virLXCCgroupSetupDeviceACL(virDomainDefPtr def,
 
     VIR_DEBUG("Allowing any disk block devs");
     for (i = 0; i < def->ndisks; i++) {
-        if (def->disks[i]->type != VIR_DOMAIN_DISK_TYPE_BLOCK)
+        if (!virDomainDiskSourceIsBlockType(def->disks[i]))
             continue;
 
         if (virCgroupAllowDevicePath(cgroup,
-                                     def->disks[i]->src,
+                                     virDomainDiskGetSource(def->disks[i]),
                                      (def->disks[i]->readonly ?
                                       VIR_CGROUP_DEVICE_READ :
                                       VIR_CGROUP_DEVICE_RW) |
@@ -429,7 +459,7 @@ static int virLXCCgroupSetupDeviceACL(virDomainDefPtr def,
     VIR_DEBUG("Device whitelist complete");
 
     ret = 0;
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -463,7 +493,19 @@ virCgroupPtr virLXCCgroupCreate(virDomainDefPtr def)
                             &cgroup) < 0)
         goto cleanup;
 
-cleanup:
+    /* setup control group permissions for user namespace */
+    if (def->idmap.uidmap) {
+        if (virCgroupSetOwner(cgroup,
+                              def->idmap.uidmap[0].target,
+                              def->idmap.gidmap[0].target,
+                              (1 << VIR_CGROUP_CONTROLLER_SYSTEMD)) < 0) {
+            virCgroupFree(&cgroup);
+            cgroup = NULL;
+            goto cleanup;
+        }
+    }
+
+ cleanup:
     return cgroup;
 }
 
@@ -491,6 +533,6 @@ int virLXCCgroupSetup(virDomainDefPtr def,
 
     ret = 0;
 
-cleanup:
+ cleanup:
     return ret;
 }

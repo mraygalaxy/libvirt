@@ -1,4 +1,3 @@
-
 #include <config.h>
 
 #include <stdio.h>
@@ -40,6 +39,11 @@ testCompareFiles(const char *xml, const char *sexpr, int xendConfigVersion)
                                       1 << VIR_DOMAIN_VIRT_XEN,
                                       VIR_DOMAIN_XML_INACTIVE)))
       goto fail;
+
+  if (!virDomainDefCheckABIStability(def, def)) {
+      fprintf(stderr, "ABI stability check failed on %s", xml);
+      goto fail;
+  }
 
   if (!(gotsexpr = xenFormatSxpr(NULL, def, xendConfigVersion)))
       goto fail;
@@ -84,7 +88,7 @@ testCompareHelper(const void *data)
 
     result = testCompareFiles(xml, args, info->version);
 
-cleanup:
+ cleanup:
     VIR_FREE(xml);
     VIR_FREE(args);
 
@@ -180,7 +184,7 @@ mymain(void)
     virObjectUnref(caps);
     virObjectUnref(xmlopt);
 
-    return ret==0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 VIRT_TEST_MAIN(mymain)

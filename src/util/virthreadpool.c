@@ -1,6 +1,7 @@
 /*
  * virthreadpool.c: a generic thread pool implementation
  *
+ * Copyright (C) 2014 Red Hat, Inc.
  * Copyright (C) 2010 Hu Tao
  * Copyright (C) 2010 Daniel P. Berrange
  *
@@ -146,12 +147,12 @@ static void virThreadPoolWorker(void *opaque)
         virMutexLock(&pool->mutex);
     }
 
-out:
+ out:
     if (priority)
         pool->nPrioWorkers--;
     else
         pool->nWorkers--;
-    if (pool->nWorkers == 0 && pool->nPrioWorkers==0)
+    if (pool->nWorkers == 0 && pool->nPrioWorkers == 0)
         virCondSignal(&pool->quit_cond);
     virMutexUnlock(&pool->mutex);
 }
@@ -230,7 +231,7 @@ virThreadPoolPtr virThreadPoolNew(size_t minWorkers,
 
     return pool;
 
-error:
+ error:
     VIR_FREE(data);
     virThreadPoolFree(pool);
     return NULL;
@@ -241,11 +242,16 @@ void virThreadPoolFree(virThreadPoolPtr pool)
 {
     virThreadPoolJobPtr job;
     bool priority = false;
+    size_t i;
+    size_t nWorkers;
+    size_t nPrioWorkers;
 
     if (!pool)
         return;
 
     virMutexLock(&pool->mutex);
+    nWorkers = pool->nWorkers;
+    nPrioWorkers = pool->nPrioWorkers;
     pool->quit = true;
     if (pool->nWorkers > 0)
         virCondBroadcast(&pool->cond);
@@ -261,6 +267,12 @@ void virThreadPoolFree(virThreadPoolPtr pool)
         pool->jobList.head = pool->jobList.head->next;
         VIR_FREE(job);
     }
+
+    for (i = 0; i < nWorkers; i++)
+        virThreadJoin(&pool->workers[i]);
+
+    for (i = 0; i < nPrioWorkers; i++)
+        virThreadJoin(&pool->prioWorkers[i]);
 
     VIR_FREE(pool->workers);
     virMutexUnlock(&pool->mutex);
@@ -354,7 +366,7 @@ int virThreadPoolSendJob(virThreadPoolPtr pool,
     virMutexUnlock(&pool->mutex);
     return 0;
 
-error:
+ error:
     virMutexUnlock(&pool->mutex);
     return -1;
 }

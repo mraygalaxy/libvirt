@@ -1,7 +1,7 @@
 /*
  * openvz_conf.c: config functions for managing OpenVZ VEs
  *
- * Copyright (C) 2010-2012 Red Hat, Inc.
+ * Copyright (C) 2010-2012, 2014 Red Hat, Inc.
  * Copyright (C) 2006, 2007 Binary Karma
  * Copyright (C) 2006 Shuveb Hussain
  * Copyright (C) 2007 Anoop Joe Cyriac
@@ -105,7 +105,7 @@ openvzExtractVersionInfo(const char *cmdstr, int *retversion)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virCommandFree(cmd);
     VIR_FREE(help);
 
@@ -136,6 +136,7 @@ openvzParseBarrierLimit(const char* value,
     char *token;
     char *saveptr = NULL;
     char *str;
+    int ret = -1;
 
     if (VIR_STRDUP(str, value) < 0)
         goto error;
@@ -158,10 +159,10 @@ openvzParseBarrierLimit(const char* value,
                 goto error;
         }
     }
-    return 0;
-error:
+    ret = 0;
+ error:
     VIR_FREE(str);
-    return -1;
+    return ret;
 }
 
 
@@ -196,7 +197,7 @@ virCapsPtr openvzCapsInit(void)
 
     return caps;
 
-no_memory:
+ no_memory:
     virObjectUnref(caps);
     return NULL;
 }
@@ -204,7 +205,8 @@ no_memory:
 
 int
 openvzReadNetworkConf(virDomainDefPtr def,
-                      int veid) {
+                      int veid)
+{
     int ret;
     virDomainNetDefPtr net = NULL;
     char *temp = NULL;
@@ -231,10 +233,8 @@ openvzReadNetworkConf(virDomainDefPtr def,
             if (VIR_STRDUP(net->data.ethernet.ipaddr, token) < 0)
                 goto error;
 
-            if (VIR_REALLOC_N(def->nets, def->nnets + 1) < 0)
+            if (VIR_APPEND_ELEMENT_COPY(def->nets, def->nnets, net) < 0)
                 goto error;
-            def->nets[def->nnets++] = net;
-            net = NULL;
 
             token = strtok_r(NULL, " ", &saveptr);
         }
@@ -325,10 +325,8 @@ openvzReadNetworkConf(virDomainDefPtr def,
                 p = ++next;
             } while (p < token + strlen(token));
 
-            if (VIR_REALLOC_N(def->nets, def->nnets + 1) < 0)
+            if (VIR_APPEND_ELEMENT_COPY(def->nets, def->nnets, net) < 0)
                 goto error;
-            def->nets[def->nnets++] = net;
-            net = NULL;
 
             token = strtok_r(NULL, ";", &saveptr);
         }
@@ -338,7 +336,7 @@ openvzReadNetworkConf(virDomainDefPtr def,
 
     return 0;
 
-error:
+ error:
     VIR_FREE(temp);
     virDomainNetDefFree(net);
     return -1;
@@ -381,7 +379,8 @@ openvz_replace(const char* str,
 
 static int
 openvzReadFSConf(virDomainDefPtr def,
-                 int veid) {
+                 int veid)
+{
     int ret;
     virDomainFSDefPtr fs = NULL;
     char *veid_str = NULL;
@@ -449,17 +448,15 @@ openvzReadFSConf(virDomainDefPtr def,
         }
     }
 
-    if (VIR_REALLOC_N(def->fss, def->nfss + 1) < 0)
+    if (VIR_APPEND_ELEMENT(def->fss, def->nfss, fs) < 0)
         goto error;
-    def->fss[def->nfss++] = fs;
-    fs = NULL;
 
     VIR_FREE(temp);
 
     return 0;
-no_memory:
+ no_memory:
     virReportOOMError();
-error:
+ error:
     VIR_FREE(temp);
     virDomainFSDefFree(fs);
     return -1;
@@ -529,7 +526,7 @@ openvzReadMemConf(virDomainDefPtr def, int veid)
     }
 
     ret = 0;
-error:
+ error:
     VIR_FREE(temp);
     return ret;
 }
@@ -550,7 +547,8 @@ openvzFreeDriver(struct openvz_driver *driver)
 
 
 
-int openvzLoadDomains(struct openvz_driver *driver) {
+int openvzLoadDomains(struct openvz_driver *driver)
+{
     int veid, ret;
     char *status;
     char uuidstr[VIR_UUID_STRING_BUFLEN];
@@ -731,7 +729,7 @@ openvzWriteConfigParam(const char * conf_file, const char *param, const char *va
 
     return 0;
 
-error:
+ error:
     VIR_FREE(line);
     VIR_FORCE_FCLOSE(fp);
     VIR_FORCE_CLOSE(temp_fd);
@@ -864,7 +862,7 @@ openvz_copyfile(char* from_path, char* to_path)
 
     return 0;
 
-error:
+ error:
     VIR_FREE(line);
     VIR_FORCE_FCLOSE(fp);
     VIR_FORCE_CLOSE(copy_fd);
@@ -903,7 +901,7 @@ openvzCopyDefaultConfig(int vpsid)
         goto cleanup;
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FREE(confdir);
     VIR_FREE(default_conf_file);
     VIR_FREE(configfile_value);
@@ -936,7 +934,7 @@ static char *
 openvzLocateConfDir(void)
 {
     const char *conf_dir_list[] = {"/etc/vz/conf", "/usr/local/etc/conf", NULL};
-    int i=0;
+    size_t i = 0;
     char *ret = NULL;
 
     while (conf_dir_list[i]) {
@@ -947,7 +945,7 @@ openvzLocateConfDir(void)
         i++;
     }
 
-cleanup:
+ cleanup:
     return ret;
 }
 
@@ -1018,7 +1016,7 @@ openvzGetVPSUUID(int vpsid, char *uuidstr, size_t len)
         }
     }
     retval = 0;
-cleanup:
+ cleanup:
     VIR_FREE(line);
     VIR_FORCE_FCLOSE(fp);
     VIR_FREE(conf_file);
@@ -1061,14 +1059,15 @@ openvzSetDefinedUUID(int vpsid, unsigned char *uuid)
     }
 
     ret = 0;
-cleanup:
+ cleanup:
     VIR_FORCE_FCLOSE(fp);
     VIR_FREE(conf_file);
     return ret;
 }
 
 static int
-openvzSetUUID(int vpsid){
+openvzSetUUID(int vpsid)
+{
     unsigned char uuid[VIR_UUID_BUFLEN];
 
     if (virUUIDGenerate(uuid)) {
@@ -1133,7 +1132,8 @@ static int openvzAssignUUIDs(void)
  *
  */
 
-int openvzGetVEID(const char *name) {
+int openvzGetVEID(const char *name)
+{
     virCommandPtr cmd;
     char *outbuf;
     char *temp;

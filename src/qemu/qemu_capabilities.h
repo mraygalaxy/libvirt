@@ -1,7 +1,7 @@
 /*
  * qemu_capabilities.h: QEMU capabilities generation
  *
- * Copyright (C) 2006-2013 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -198,7 +198,13 @@ enum virQEMUCapsFlags {
     QEMU_CAPS_DEVICE_VIRTIO_MMIO = 157, /* -device virtio-mmio */
     QEMU_CAPS_DEVICE_ICH9_INTEL_HDA = 158, /* -device ich9-intel-hda */
     QEMU_CAPS_KVM_PIT_TICK_POLICY = 159, /* kvm-pit.lost_tick_policy */
-    QEMU_CAPS_MIGRATE_QEMU_RDMA  = 160, /* have qemu rdma migration */
+    QEMU_CAPS_BOOT_STRICT        = 160, /* -boot strict */
+    QEMU_CAPS_DEVICE_PANIC       = 161, /* -device pvpanic */
+    QEMU_CAPS_ENABLE_FIPS        = 162, /* -enable-fips */
+    QEMU_CAPS_SPICE_FILE_XFER_DISABLE = 163, /* -spice disable-agent-file-xfer */
+    QEMU_CAPS_CHARDEV_SPICEPORT  = 164, /* -chardev spiceport */
+    QEMU_CAPS_DEVICE_USB_KBD     = 165, /* -device usb-kbd */
+    QEMU_CAPS_MIGRATE_QEMU_RDMA  = 166, /* have qemu rdma migration */
 
     QEMU_CAPS_LAST,                   /* this must always be the last item */
 };
@@ -213,6 +219,7 @@ virQEMUCapsPtr virQEMUCapsNew(void);
 virQEMUCapsPtr virQEMUCapsNewCopy(virQEMUCapsPtr qemuCaps);
 virQEMUCapsPtr virQEMUCapsNewForBinary(const char *binary,
                                        const char *libDir,
+                                       const char *cacheDir,
                                        uid_t runUid,
                                        gid_t runGid);
 
@@ -257,6 +264,7 @@ bool virQEMUCapsIsValid(virQEMUCapsPtr qemuCaps);
 
 
 virQEMUCapsCachePtr virQEMUCapsCacheNew(const char *libDir,
+                                        const char *cacheDir,
                                         uid_t uid, gid_t gid);
 virQEMUCapsPtr virQEMUCapsCacheLookup(virQEMUCapsCachePtr cache,
                                       const char *binary);
@@ -287,5 +295,12 @@ bool virQEMUCapsUsedQMP(virQEMUCapsPtr qemuCaps);
 bool virQEMUCapsSupportsChardev(virDomainDefPtr def,
                                 virQEMUCapsPtr qemuCaps,
                                 virDomainChrDefPtr chr);
+
+int virQEMUCapsInitGuestFromBinary(virCapsPtr caps,
+                                   const char *binary,
+                                   virQEMUCapsPtr qemubinCaps,
+                                   const char *kvmbin,
+                                   virQEMUCapsPtr kvmbinCaps,
+                                   virArch guestarch);
 
 #endif /* __QEMU_CAPABILITIES_H__*/

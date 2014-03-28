@@ -29,6 +29,7 @@
 # include "capabilities.h"
 # include "network_conf.h"
 # include "domain_conf.h"
+# include "snapshot_conf.h"
 # include "domain_event.h"
 # include "virthread.h"
 # include "security/security_manager.h"
@@ -43,6 +44,7 @@
 # include "locking/lock_manager.h"
 # include "qemu_capabilities.h"
 # include "virclosecallbacks.h"
+# include "virhostdev.h"
 
 # ifdef CPU_SETSIZE /* Linux */
 #  define QEMUD_CPUMASK_LEN CPU_SETSIZE
@@ -51,6 +53,8 @@
 # else
 #  error "Port me"
 # endif
+
+# define QEMU_DRIVER_NAME "QEMU"
 
 typedef struct _virQEMUDriver virQEMUDriver;
 typedef virQEMUDriver *virQEMUDriverPtr;
@@ -207,18 +211,12 @@ struct _virQEMUDriver {
     virQEMUCapsCachePtr qemuCapsCache;
 
     /* Immutable pointer, self-locking APIs */
-    virDomainEventStatePtr domainEventState;
+    virObjectEventStatePtr domainEventState;
 
     /* Immutable pointer. self-locking APIs */
     virSecurityManagerPtr securityManager;
 
-    /* Immutable pointers. Requires locks to be held before
-     * calling APIs. activePciHostdevs must be locked before
-     * inactivePciHostdevs */
-    virPCIDeviceListPtr activePciHostdevs;
-    virPCIDeviceListPtr inactivePciHostdevs;
-    virUSBDeviceListPtr activeUsbHostdevs;
-    virSCSIDeviceListPtr activeScsiHostdevs;
+    virHostdevManagerPtr hostdevMgr;
 
     /* Immutable pointer. Unsafe APIs. XXX */
     virHashTablePtr sharedDevices;
@@ -245,7 +243,7 @@ struct _virQEMUDriver {
 typedef struct _qemuDomainCmdlineDef qemuDomainCmdlineDef;
 typedef qemuDomainCmdlineDef *qemuDomainCmdlineDefPtr;
 struct _qemuDomainCmdlineDef {
-    unsigned int num_args;
+    size_t num_args;
     char **args;
 
     unsigned int num_env;
@@ -306,5 +304,8 @@ virDomainXMLOptionPtr virQEMUDriverCreateXMLConf(virQEMUDriverPtr driver);
 
 int qemuTranslateDiskSourcePool(virConnectPtr conn,
                                 virDomainDiskDefPtr def);
+
+int qemuTranslateSnapshotDiskSourcePool(virConnectPtr conn,
+                                        virDomainSnapshotDiskDefPtr def);
 
 #endif /* __QEMUD_CONF_H */

@@ -1,5 +1,5 @@
 /*
- * xen_inofify.c: Xen notification of xml file activity in the
+ * xen_inotify.c: Xen notification of xml file activity in the
  *                following dirs:
  *                /etc/xen
  *                /var/lib/xend/domains
@@ -43,6 +43,8 @@
 #include "xm_internal.h" /* for xenXMDomainConfigParse */
 
 #define VIR_FROM_THIS VIR_FROM_XEN_INOTIFY
+
+VIR_LOG_INIT("xen.xen_inotify");
 
 static int
 xenInotifyXenCacheLookup(virConnectPtr conn,
@@ -135,20 +137,20 @@ xenInotifyDomainLookup(virConnectPtr conn,
         return xenInotifyXendDomainsDirLookup(conn, filename, name, uuid);
 }
 
-static virDomainEventPtr
+static virObjectEventPtr
 xenInotifyDomainEventFromFile(virConnectPtr conn,
                               const char *filename,
                               int type,
                               int detail)
 {
-    virDomainEventPtr event;
+    virObjectEventPtr event;
     char *name = NULL;
     unsigned char uuid[VIR_UUID_BUFLEN];
 
     if (xenInotifyDomainLookup(conn, filename, &name, uuid) < 0)
         return NULL;
 
-    event = virDomainEventNew(-1, name, uuid, type, detail);
+    event = virDomainEventLifecycleNew(-1, name, uuid, type, detail);
     VIR_FREE(name);
     return event;
 }
@@ -173,17 +175,8 @@ xenInotifyXendDomainsDirRemoveEntry(virConnectPtr conn, const char *fname)
             VIR_FREE(priv->configInfoList->doms[i]->name);
             VIR_FREE(priv->configInfoList->doms[i]);
 
-            if (i < (priv->configInfoList->count - 1))
-                memmove(priv->configInfoList->doms + i,
-                        priv->configInfoList->doms + i + 1,
-                        sizeof(*(priv->configInfoList->doms)) *
-                                (priv->configInfoList->count - (i + 1)));
-
-            if (VIR_REALLOC_N(priv->configInfoList->doms,
-                              priv->configInfoList->count - 1) < 0) {
-                ; /* Failure to reduce memory allocation isn't fatal */
-            }
-            priv->configInfoList->count--;
+            VIR_DELETE_ELEMENT(priv->configInfoList->doms, i,
+                               priv->configInfoList->count);
             return 0;
         }
     }
@@ -258,7 +251,7 @@ xenInotifyEvent(int watch ATTRIBUTE_UNUSED,
 
     xenUnifiedLock(priv);
 
-reread:
+ reread:
     got = read(fd, buf, sizeof(buf));
     if (got == -1) {
         if (errno == EINTR)
@@ -290,7 +283,7 @@ reread:
                  priv->configDir, name);
 
         if (e->mask & (IN_DELETE | IN_MOVED_FROM)) {
-            virDomainEventPtr event =
+            virObjectEventPtr event =
                 xenInotifyDomainEventFromFile(conn, fname,
                                               VIR_DOMAIN_EVENT_UNDEFINED,
                                               VIR_DOMAIN_EVENT_UNDEFINED_REMOVED);
@@ -306,7 +299,7 @@ reread:
                 goto cleanup;
             }
         } else if (e->mask & (IN_CREATE | IN_CLOSE_WRITE | IN_MOVED_TO)) {
-            virDomainEventPtr event;
+            virObjectEventPtr event;
             if (xenInotifyAddDomainConfigInfo(conn, fname) < 0) {
                 virReportError(VIR_ERR_INTERNAL_ERROR,
                                "%s", _("Error adding file to config cache"));
@@ -327,7 +320,7 @@ reread:
 
     }
 
-cleanup:
+ cleanup:
     xenUnifiedUnlock(priv);
 }
 

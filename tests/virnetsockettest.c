@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Red Hat, Inc.
+ * Copyright (C) 2011, 2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -39,6 +39,8 @@
 
 #define VIR_FROM_THIS VIR_FROM_RPC
 
+VIR_LOG_INIT("tests.netsockettest");
+
 #if HAVE_IFADDRS_H
 # define BASE_PORT 5672
 
@@ -60,8 +62,10 @@ checkProtocols(bool *hasIPv4, bool *hasIPv6,
     *hasIPv4 = *hasIPv6 = false;
     *freePort = 0;
 
-    if (getifaddrs(&ifaddr) < 0)
+    if (getifaddrs(&ifaddr) < 0) {
+        perror("getifaddrs");
         goto cleanup;
+    }
 
     for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
         if (!ifa->ifa_addr)
@@ -137,7 +141,7 @@ checkProtocols(bool *hasIPv4, bool *hasIPv6,
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FORCE_CLOSE(s4);
     VIR_FORCE_CLOSE(s6);
     return ret;
@@ -190,7 +194,7 @@ static int testSocketTCPAccept(const void *opaque)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virObjectUnref(ssock);
     for (i = 0; i < nlsock; i++)
         virObjectUnref(lsock[i]);
@@ -241,7 +245,7 @@ static int testSocketUNIXAccept(const void *data ATTRIBUTE_UNUSED)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(path);
     virObjectUnref(lsock);
     virObjectUnref(ssock);
@@ -319,7 +323,7 @@ static int testSocketUNIXAddrs(const void *data ATTRIBUTE_UNUSED)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     VIR_FREE(path);
     virObjectUnref(lsock);
     virObjectUnref(ssock);
@@ -352,7 +356,7 @@ static int testSocketCommandNormal(const void *data ATTRIBUTE_UNUSED)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virObjectUnref(csock);
     return ret;
 }
@@ -375,7 +379,7 @@ static int testSocketCommandFail(const void *data ATTRIBUTE_UNUSED)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virObjectUnref(csock);
     return ret;
 }
@@ -444,7 +448,7 @@ static int testSocketSSH(const void *opaque)
 
     ret = 0;
 
-cleanup:
+ cleanup:
     virObjectUnref(csock);
     return ret;
 }
@@ -608,7 +612,7 @@ mymain(void)
 
 #endif
 
-    return ret==0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 VIRT_TEST_MAIN(mymain)
