@@ -72,12 +72,8 @@ static int virLXCCgroupSetupCpusetTune(virDomainDefPtr def,
 
     if (def->placement_mode != VIR_DOMAIN_CPU_PLACEMENT_MODE_AUTO &&
         def->cpumask) {
-        mask = virBitmapFormat(def->cpumask);
-        if (!mask) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("failed to convert cpumask"));
+        if (!(mask = virBitmapFormat(def->cpumask)))
             return -1;
-        }
 
         if (virCgroupSetCpusetCpus(cgroup, mask) < 0)
             goto cleanup;
@@ -93,11 +89,8 @@ static int virLXCCgroupSetupCpusetTune(virDomainDefPtr def,
         else
             mask = virBitmapFormat(def->numatune.memory.nodemask);
 
-        if (!mask) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("failed to convert memory nodemask"));
+        if (!mask)
             return -1;
-        }
 
         if (virCgroupSetCpusetMems(cgroup, mask) < 0)
             goto cleanup;
@@ -317,7 +310,7 @@ struct _virLXCCgroupDevicePolicy {
 
 
 int
-virLXCSetupHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
+virLXCSetupHostUSBDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
                                const char *path,
                                void *opaque)
 {
@@ -325,7 +318,7 @@ virLXCSetupHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
 
     VIR_DEBUG("Process path '%s' for USB device", path);
     if (virCgroupAllowDevicePath(cgroup, path,
-                                 VIR_CGROUP_DEVICE_RW) < 0)
+                                 VIR_CGROUP_DEVICE_RWM) < 0)
         return -1;
 
     return 0;
@@ -333,7 +326,7 @@ virLXCSetupHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
 
 
 int
-virLXCTeardownHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
+virLXCTeardownHostUSBDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
                                   const char *path,
                                   void *opaque)
 {
@@ -341,7 +334,7 @@ virLXCTeardownHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
 
     VIR_DEBUG("Process path '%s' for USB device", path);
     if (virCgroupDenyDevicePath(cgroup, path,
-                                VIR_CGROUP_DEVICE_RW) < 0)
+                                VIR_CGROUP_DEVICE_RWM) < 0)
         return -1;
 
     return 0;
@@ -421,7 +414,7 @@ static int virLXCCgroupSetupDeviceACL(virDomainDefPtr def,
                                        NULL)) == NULL)
                 goto cleanup;
 
-            if (virUSBDeviceFileIterate(usb, virLXCSetupHostUsbDeviceCgroup,
+            if (virUSBDeviceFileIterate(usb, virLXCSetupHostUSBDeviceCgroup,
                                         cgroup) < 0) {
                 virUSBDeviceFree(usb);
                 goto cleanup;

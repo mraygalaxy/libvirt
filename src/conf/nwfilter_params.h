@@ -27,17 +27,17 @@
 # include "virbuffer.h"
 # include "virmacaddr.h"
 
-enum virNWFilterVarValueType {
+typedef enum {
     NWFILTER_VALUE_TYPE_SIMPLE,
     NWFILTER_VALUE_TYPE_ARRAY,
 
     NWFILTER_VALUE_TYPE_LAST
-};
+} virNWFilterVarValueType;
 
 typedef struct _virNWFilterVarValue virNWFilterVarValue;
 typedef virNWFilterVarValue *virNWFilterVarValuePtr;
 struct _virNWFilterVarValue {
-    enum virNWFilterVarValueType valType;
+    virNWFilterVarValueType valType;
     union {
         struct {
             char *value;
@@ -60,15 +60,13 @@ unsigned int virNWFilterVarValueGetCardinality(const virNWFilterVarValue *);
 bool virNWFilterVarValueEqual(const virNWFilterVarValue *a,
                               const virNWFilterVarValue *b);
 int virNWFilterVarValueAddValue(virNWFilterVarValuePtr val, char *value);
+int virNWFilterVarValueAddValueCopy(virNWFilterVarValuePtr val, const char *value);
 int virNWFilterVarValueDelValue(virNWFilterVarValuePtr val, const char *value);
 
 typedef struct _virNWFilterHashTable virNWFilterHashTable;
 typedef virNWFilterHashTable *virNWFilterHashTablePtr;
 struct _virNWFilterHashTable {
     virHashTablePtr hashTable;
-
-    size_t nNames;
-    char **names;
 };
 
 
@@ -81,8 +79,7 @@ virNWFilterHashTablePtr virNWFilterHashTableCreate(int n);
 void virNWFilterHashTableFree(virNWFilterHashTablePtr table);
 int virNWFilterHashTablePut(virNWFilterHashTablePtr table,
                             const char *name,
-                            virNWFilterVarValuePtr val,
-                            int freeName);
+                            virNWFilterVarValuePtr val);
 void *virNWFilterHashTableRemoveEntry(virNWFilterHashTablePtr table,
                                       const char *name);
 int virNWFilterHashTablePutAll(virNWFilterHashTablePtr src,
@@ -101,17 +98,17 @@ bool virNWFilterHashTableEqual(virNWFilterHashTablePtr a,
 # define NWFILTER_VARNAME_CTRL_IP_LEARNING "CTRL_IP_LEARNING"
 # define NWFILTER_VARNAME_DHCPSERVER "DHCPSERVER"
 
-enum virNWFilterVarAccessType {
+typedef enum {
     VIR_NWFILTER_VAR_ACCESS_ELEMENT = 0,
     VIR_NWFILTER_VAR_ACCESS_ITERATOR = 1,
 
     VIR_NWFILTER_VAR_ACCESS_LAST,
-};
+} virNWFilterVarAccessType;
 
 typedef struct _virNWFilterVarAccess virNWFilterVarAccess;
 typedef virNWFilterVarAccess *virNWFilterVarAccessPtr;
 struct  _virNWFilterVarAccess {
-    enum virNWFilterVarAccessType accessType;
+    virNWFilterVarAccessType accessType;
     union {
         struct {
             unsigned int index;
@@ -131,7 +128,7 @@ virNWFilterVarAccessPtr virNWFilterVarAccessParse(const char *varAccess);
 void virNWFilterVarAccessPrint(virNWFilterVarAccessPtr vap,
                                virBufferPtr buf);
 const char *virNWFilterVarAccessGetVarName(const virNWFilterVarAccess *vap);
-enum virNWFilterVarAccessType virNWFilterVarAccessGetType(
+virNWFilterVarAccessType virNWFilterVarAccessGetType(
                                            const virNWFilterVarAccess *vap);
 unsigned int virNWFilterVarAccessGetIterId(const virNWFilterVarAccess *vap);
 unsigned int virNWFilterVarAccessGetIndex(const virNWFilterVarAccess *vap);

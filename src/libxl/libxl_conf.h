@@ -43,6 +43,9 @@
 # define LIBXL_VNC_PORT_MIN  5900
 # define LIBXL_VNC_PORT_MAX  65535
 
+# define LIBXL_MIGRATION_PORT_MIN  49152
+# define LIBXL_MIGRATION_PORT_MAX  49216
+
 # define LIBXL_CONFIG_DIR SYSCONFDIR "/libvirt/libxl"
 # define LIBXL_AUTOSTART_DIR LIBXL_CONFIG_DIR "/autostart"
 # define LIBXL_STATE_DIR LOCALSTATEDIR "/run/libvirt/libxl"
@@ -115,6 +118,9 @@ struct _libxlDriverPrivate {
     /* Immutable pointer, self-locking APIs */
     virPortAllocatorPtr reservedVNCPorts;
 
+    /* Immutable pointer, self-locking APIs */
+    virPortAllocatorPtr migrationPorts;
+
     /* Immutable pointer, lockless APIs*/
     virSysinfoDefPtr hostsysinfo;
 };
@@ -152,15 +158,20 @@ libxlMakeNic(virDomainDefPtr def,
              virDomainNetDefPtr l_nic,
              libxl_device_nic *x_nic);
 int
-libxlMakeVfb(libxlDriverPrivatePtr driver,
+libxlMakeVfb(virPortAllocatorPtr graphicsports,
              virDomainGraphicsDefPtr l_vfb, libxl_device_vfb *x_vfb);
 
 int
-libxlMakePci(virDomainHostdevDefPtr hostdev, libxl_device_pci *pcidev);
+libxlMakePCI(virDomainHostdevDefPtr hostdev, libxl_device_pci *pcidev);
+
+virDomainXMLOptionPtr
+libxlCreateXMLConf(void);
 
 int
-libxlBuildDomainConfig(libxlDriverPrivatePtr driver,
-                       virDomainObjPtr vm, libxl_domain_config *d_config);
+libxlBuildDomainConfig(virPortAllocatorPtr graphicsports,
+                       virDomainDefPtr def,
+                       libxl_ctx *ctx,
+                       libxl_domain_config *d_config);
 
 static inline void
 libxlDriverLock(libxlDriverPrivatePtr driver)

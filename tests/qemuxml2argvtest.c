@@ -483,7 +483,6 @@ static int
 mymain(void)
 {
     int ret = 0;
-    char *map = NULL;
     bool skipLegacyCPUs = false;
 
     abs_top_srcdir = getenv("abs_top_srcdir");
@@ -500,7 +499,12 @@ mymain(void)
         return EXIT_FAILURE;
     }
 
-    driver.config = virQEMUDriverConfigNew(true);
+    driver.config = virQEMUDriverConfigNew(false);
+    if (driver.config == NULL)
+        return EXIT_FAILURE;
+    else
+        driver.config->privileged = true;
+
     VIR_FREE(driver.config->spiceListen);
     VIR_FREE(driver.config->vncListen);
 
@@ -527,11 +531,6 @@ mymain(void)
     driver.config->spiceTLS = 1;
     if (VIR_STRDUP_QUIET(driver.config->spicePassword, "123456") < 0)
         return EXIT_FAILURE;
-    if (virAsprintf(&map, "%s/src/cpu/cpu_map.xml", abs_top_srcdir) < 0 ||
-        cpuMapOverride(map) < 0) {
-        VIR_FREE(map);
-        return EXIT_FAILURE;
-    }
 
 # define DO_TEST_FULL(name, migrateFrom, migrateFd, flags, ...)         \
     do {                                                                \
@@ -579,6 +578,7 @@ mymain(void)
     unsetenv("SDL_AUDIODRIVER");
 
     DO_TEST("minimal", QEMU_CAPS_NAME);
+    DO_TEST("minimal-msg-timestamp", QEMU_CAPS_NAME, QEMU_CAPS_MSG_TIMESTAMP);
     DO_TEST("minimal-s390", QEMU_CAPS_NAME);
     DO_TEST("machine-aliases1", NONE);
     DO_TEST("machine-aliases2", QEMU_CAPS_KVM);
@@ -736,6 +736,9 @@ mymain(void)
     DO_TEST("disk-drive-cache-unsafe",
             QEMU_CAPS_DRIVE, QEMU_CAPS_DRIVE_CACHE_V2,
             QEMU_CAPS_DRIVE_CACHE_UNSAFE, QEMU_CAPS_DRIVE_FORMAT);
+    DO_TEST("disk-drive-copy-on-read",
+            QEMU_CAPS_DRIVE, QEMU_CAPS_DRIVE_CACHE_V2,
+            QEMU_CAPS_DRIVE_COPY_ON_READ, QEMU_CAPS_DRIVE_FORMAT);
     DO_TEST("disk-drive-network-nbd",
             QEMU_CAPS_DRIVE, QEMU_CAPS_DRIVE_FORMAT);
     DO_TEST("disk-drive-network-nbd-export",
@@ -940,9 +943,21 @@ mymain(void)
     DO_TEST("net-mcast", NONE);
     DO_TEST("net-hostdev",
             QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG);
+    DO_TEST("net-hostdev-multidomain",
+            QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
+            QEMU_CAPS_HOST_PCI_MULTIDOMAIN);
+    DO_TEST_FAILURE("net-hostdev-multidomain",
+                    QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE,
+                    QEMU_CAPS_NODEFCONFIG);
     DO_TEST("net-hostdev-vfio",
             QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
             QEMU_CAPS_DEVICE_VFIO_PCI);
+    DO_TEST("net-hostdev-vfio-multidomain",
+            QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
+            QEMU_CAPS_DEVICE_VFIO_PCI, QEMU_CAPS_HOST_PCI_MULTIDOMAIN);
+    DO_TEST_FAILURE("net-hostdev-vfio-multidomain",
+                    QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE,
+                    QEMU_CAPS_NODEFCONFIG, QEMU_CAPS_DEVICE_VFIO_PCI);
 
     DO_TEST("serial-vc", NONE);
     DO_TEST("serial-pty", NONE);
@@ -1119,6 +1134,12 @@ mymain(void)
     DO_TEST("hostdev-vfio",
             QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
             QEMU_CAPS_DEVICE_VFIO_PCI);
+    DO_TEST("hostdev-vfio-multidomain",
+            QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
+            QEMU_CAPS_DEVICE_VFIO_PCI, QEMU_CAPS_HOST_PCI_MULTIDOMAIN);
+    DO_TEST_FAILURE("hostdev-vfio-multidomain",
+                    QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE,
+                    QEMU_CAPS_NODEFCONFIG, QEMU_CAPS_DEVICE_VFIO_PCI);
     DO_TEST("pci-rom",
             QEMU_CAPS_PCIDEVICE, QEMU_CAPS_DEVICE, QEMU_CAPS_NODEFCONFIG,
             QEMU_CAPS_PCI_ROMBAR);
@@ -1258,6 +1279,7 @@ mymain(void)
             QEMU_CAPS_DEVICE_VIRTIO_RNG, QEMU_CAPS_OBJECT_RNG_RANDOM);
 
     DO_TEST("ppc-dtb", QEMU_CAPS_KVM, QEMU_CAPS_DTB);
+    DO_TEST("ppce500-serial", QEMU_CAPS_KVM, QEMU_CAPS_DEVICE, QEMU_CAPS_CHARDEV);
 
     DO_TEST("tpm-passthrough", QEMU_CAPS_DEVICE,
             QEMU_CAPS_DEVICE_TPM_PASSTHROUGH, QEMU_CAPS_DEVICE_TPM_TIS);
@@ -1358,7 +1380,6 @@ mymain(void)
     virObjectUnref(driver.config);
     virObjectUnref(driver.caps);
     virObjectUnref(driver.xmlopt);
-    VIR_FREE(map);
 
     return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

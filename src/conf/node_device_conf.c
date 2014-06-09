@@ -346,6 +346,9 @@ char *virNodeDeviceDefFormat(const virNodeDeviceDef *def)
                 virBufferAdjustIndent(&buf, -2);
                 virBufferAddLit(&buf, "</iommuGroup>\n");
             }
+            if (data->pci_dev.numa_node >= 0)
+                virBufferAsprintf(&buf, "<numa node='%d'/>\n",
+                                  data->pci_dev.numa_node);
             break;
         case VIR_NODE_DEV_CAP_USB_DEV:
             virBufferAsprintf(&buf, "<bus>%d</bus>\n", data->usb_dev.bus);
@@ -520,6 +523,41 @@ char *virNodeDeviceDefFormat(const virNodeDeviceDef *def)
     return NULL;
 }
 
+/**
+ * virNodeDevCapsDefParseIntOptional:
+ * @xpath:  XPath to evaluate
+ * @ctxt:   Context
+ * @value:  Where to store parsed value
+ * @def:    Node device which is parsed
+ * @invalid_error_fmt:  error message to print on invalid format
+ *
+ * Returns: -1 on error (invalid int format under @xpath)
+ *           0 if @xpath was not found (@value is untouched)
+ *           1 on success
+ */
+static int
+virNodeDevCapsDefParseIntOptional(const char *xpath,
+                                  xmlXPathContextPtr ctxt,
+                                  int *value,
+                                  virNodeDeviceDefPtr def,
+                                  const char *invalid_error_fmt)
+{
+    int ret;
+    int val;
+
+    ret = virXPathInt(xpath, ctxt, &val);
+    if (ret < -1) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       invalid_error_fmt,
+                       def->name);
+        return -1;
+    } else if (ret == -1) {
+        return 0;
+    }
+    *value = val;
+    return 1;
+}
+
 static int
 virNodeDevCapsDefParseULong(const char *xpath,
                             xmlXPathContextPtr ctxt,
@@ -662,7 +700,7 @@ virNodeDevCapStorageParseXML(xmlXPathContextPtr ctxt,
 }
 
 static int
-virNodeDevCapScsiParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapSCSIParseXML(xmlXPathContextPtr ctxt,
                           virNodeDeviceDefPtr def,
                           xmlNodePtr node,
                           union _virNodeDevCapData *data)
@@ -707,7 +745,7 @@ virNodeDevCapScsiParseXML(xmlXPathContextPtr ctxt,
 
 
 static int
-virNodeDevCapScsiTargetParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapSCSITargetParseXML(xmlXPathContextPtr ctxt,
                                 virNodeDeviceDefPtr def,
                                 xmlNodePtr node,
                                 union _virNodeDevCapData *data)
@@ -735,7 +773,7 @@ virNodeDevCapScsiTargetParseXML(xmlXPathContextPtr ctxt,
 
 
 static int
-virNodeDevCapScsiHostParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapSCSIHostParseXML(xmlXPathContextPtr ctxt,
                               virNodeDeviceDefPtr def,
                               xmlNodePtr node,
                               union _virNodeDevCapData *data,
@@ -876,7 +914,7 @@ virNodeDevCapNetParseXML(xmlXPathContextPtr ctxt,
 }
 
 static int
-virNodeDevCapUsbInterfaceParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapUSBInterfaceParseXML(xmlXPathContextPtr ctxt,
                                   virNodeDeviceDefPtr def,
                                   xmlNodePtr node,
                                   union _virNodeDevCapData *data)
@@ -943,7 +981,7 @@ virNodeDevCapsDefParseHexId(const char *xpath,
 }
 
 static int
-virNodeDevCapUsbDevParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapUSBDevParseXML(xmlXPathContextPtr ctxt,
                             virNodeDeviceDefPtr def,
                             xmlNodePtr node,
                             union _virNodeDevCapData *data)
@@ -988,7 +1026,7 @@ virNodeDevCapUsbDevParseXML(xmlXPathContextPtr ctxt,
 }
 
 static int
-virNodeDevCapPciDevIommuGroupParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapPCIDevIommuGroupParseXML(xmlXPathContextPtr ctxt,
                                       xmlNodePtr iommuGroupNode,
                                       union _virNodeDevCapData *data)
 {
@@ -1045,7 +1083,7 @@ virNodeDevCapPciDevIommuGroupParseXML(xmlXPathContextPtr ctxt,
 
 
 static int
-virNodeDevCapPciDevParseXML(xmlXPathContextPtr ctxt,
+virNodeDevCapPCIDevParseXML(xmlXPathContextPtr ctxt,
                             virNodeDeviceDefPtr def,
                             xmlNodePtr node,
                             union _virNodeDevCapData *data)
@@ -1096,11 +1134,17 @@ virNodeDevCapPciDevParseXML(xmlXPathContextPtr ctxt,
     data->pci_dev.product_name = virXPathString("string(./product[1])", ctxt);
 
     if ((iommuGroupNode = virXPathNode("./iommuGroup[1]", ctxt))) {
-        if (virNodeDevCapPciDevIommuGroupParseXML(ctxt, iommuGroupNode,
+        if (virNodeDevCapPCIDevIommuGroupParseXML(ctxt, iommuGroupNode,
                                                   data) < 0) {
             goto out;
         }
     }
+
+    if (virNodeDevCapsDefParseIntOptional("number(./numa[1]/@node)", ctxt,
+                                          &data->pci_dev.numa_node, def,
+                                          _("invalid NUMA node ID supplied for '%s'")) < 0)
+        goto out;
+
     ret = 0;
  out:
     ctxt->node = orignode;
@@ -1186,28 +1230,28 @@ virNodeDevCapsDefParseXML(xmlXPathContextPtr ctxt,
         ret = virNodeDevCapSystemParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_PCI_DEV:
-        ret = virNodeDevCapPciDevParseXML(ctxt, def, node, &caps->data);
+        ret = virNodeDevCapPCIDevParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_USB_DEV:
-        ret = virNodeDevCapUsbDevParseXML(ctxt, def, node, &caps->data);
+        ret = virNodeDevCapUSBDevParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_USB_INTERFACE:
-        ret = virNodeDevCapUsbInterfaceParseXML(ctxt, def, node, &caps->data);
+        ret = virNodeDevCapUSBInterfaceParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_NET:
         ret = virNodeDevCapNetParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_SCSI_HOST:
-        ret = virNodeDevCapScsiHostParseXML(ctxt, def, node,
+        ret = virNodeDevCapSCSIHostParseXML(ctxt, def, node,
                                             &caps->data,
                                             create,
                                             virt_type);
         break;
     case VIR_NODE_DEV_CAP_SCSI_TARGET:
-        ret = virNodeDevCapScsiTargetParseXML(ctxt, def, node, &caps->data);
+        ret = virNodeDevCapSCSITargetParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_SCSI:
-        ret = virNodeDevCapScsiParseXML(ctxt, def, node, &caps->data);
+        ret = virNodeDevCapSCSIParseXML(ctxt, def, node, &caps->data);
         break;
     case VIR_NODE_DEV_CAP_STORAGE:
         ret = virNodeDevCapStorageParseXML(ctxt, def, node, &caps->data);

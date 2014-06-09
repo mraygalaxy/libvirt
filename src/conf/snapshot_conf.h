@@ -1,7 +1,7 @@
 /*
  * snapshot_conf.h: domain snapshot XML processing
  *
- * Copyright (C) 2006-2013 Red Hat, Inc.
+ * Copyright (C) 2006-2014 Red Hat, Inc.
  * Copyright (C) 2006-2008 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -29,20 +29,20 @@
 
 /* Items related to snapshot state */
 
-enum virDomainSnapshotLocation {
+typedef enum {
     VIR_DOMAIN_SNAPSHOT_LOCATION_DEFAULT = 0,
     VIR_DOMAIN_SNAPSHOT_LOCATION_NONE,
     VIR_DOMAIN_SNAPSHOT_LOCATION_INTERNAL,
     VIR_DOMAIN_SNAPSHOT_LOCATION_EXTERNAL,
 
     VIR_DOMAIN_SNAPSHOT_LOCATION_LAST
-};
+} virDomainSnapshotLocation;
 
-enum virDomainSnapshotState {
+typedef enum {
     /* Inherit the VIR_DOMAIN_* states from virDomainState.  */
     VIR_DOMAIN_DISK_SNAPSHOT = VIR_DOMAIN_LAST,
     VIR_DOMAIN_SNAPSHOT_STATE_LAST
-};
+} virDomainSnapshotState;
 
 /* Stores disk-snapshot information */
 typedef struct _virDomainSnapshotDiskDef virDomainSnapshotDiskDef;
@@ -50,13 +50,11 @@ typedef virDomainSnapshotDiskDef *virDomainSnapshotDiskDefPtr;
 struct _virDomainSnapshotDiskDef {
     char *name;     /* name matching the <target dev='...' of the domain */
     int index;      /* index within snapshot->dom->disks that matches name */
-    int snapshot;   /* enum virDomainSnapshotLocation */
-    int type;       /* enum virDomainDiskType */
-    char *file;     /* new source file when snapshot is external */
-    int format;     /* enum virStorageFileFormat */
-    int protocol;   /* network source protocol */
-    size_t nhosts;  /* network source hosts count */
-    virDomainDiskHostDefPtr hosts; /* network source hosts */
+    int snapshot;   /* virDomainSnapshotLocation */
+
+    /* details of wrapper external file. src is always non-NULL.
+     * XXX optimize this to allow NULL for internal snapshots? */
+    virStorageSourcePtr src;
 };
 
 /* Stores the complete snapshot metadata */
@@ -68,9 +66,9 @@ struct _virDomainSnapshotDef {
     char *description;
     char *parent;
     long long creationTime; /* in seconds */
-    int state; /* enum virDomainSnapshotState */
+    int state; /* virDomainSnapshotState */
 
-    int memory; /* enum virDomainMemorySnapshot */
+    int memory; /* virDomainMemorySnapshot */
     char *file; /* memory state file when snapshot is external */
 
     size_t ndisks; /* should not exceed dom->ndisks */
@@ -186,8 +184,6 @@ int virDomainSnapshotRedefinePrep(virDomainPtr domain,
                                   virDomainSnapshotObjPtr *snap,
                                   bool *update_current,
                                   unsigned int flags);
-
-int virDomainSnapshotDiskGetActualType(virDomainSnapshotDiskDefPtr def);
 
 VIR_ENUM_DECL(virDomainSnapshotLocation)
 VIR_ENUM_DECL(virDomainSnapshotState)

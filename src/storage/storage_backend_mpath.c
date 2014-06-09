@@ -1,7 +1,7 @@
 /*
  * storage_backend_mpath.c: storage backend for multipath handling
  *
- * Copyright (C) 2009-2011, 2013 Red Hat, Inc.
+ * Copyright (C) 2009-2014 Red Hat, Inc.
  * Copyright (C) 2009-2008 Dave Allan
  *
  * This library is free software; you can redistribute it and/or
@@ -42,37 +42,6 @@
 VIR_LOG_INIT("storage.storage_backend_mpath");
 
 static int
-virStorageBackendMpathUpdateVolTargetInfo(virStorageVolTargetPtr target,
-                                          unsigned long long *allocation,
-                                          unsigned long long *capacity)
-{
-    int ret = -1;
-    int fdret, fd = -1;
-    struct stat sb;
-
-    if ((fdret = virStorageBackendVolOpenCheckMode(target->path, &sb,
-                                                   VIR_STORAGE_VOL_OPEN_DEFAULT)) < 0)
-        goto out;
-    fd = fdret;
-
-    if (virStorageBackendUpdateVolTargetInfoFD(target,
-                                               fd,
-                                               &sb,
-                                               allocation,
-                                               capacity) < 0)
-        goto out;
-
-    if (virStorageBackendDetectBlockVolFormatFD(target, fd) < 0)
-        goto out;
-
-    ret = 0;
- out:
-    VIR_FORCE_CLOSE(fd);
-    return ret;
-}
-
-
-static int
 virStorageBackendMpathNewVol(virStoragePoolObjPtr pool,
                              const int devnum,
                              const char *dev)
@@ -91,9 +60,8 @@ virStorageBackendMpathNewVol(virStoragePoolObjPtr pool,
     if (virAsprintf(&vol->target.path, "/dev/%s", dev) < 0)
         goto cleanup;
 
-    if (virStorageBackendMpathUpdateVolTargetInfo(&vol->target,
-                                                  &vol->allocation,
-                                                  &vol->capacity) < 0) {
+    if (virStorageBackendUpdateVolInfo(vol, true, true,
+                                       VIR_STORAGE_VOL_OPEN_DEFAULT) < 0) {
         goto cleanup;
     }
 
@@ -103,8 +71,8 @@ virStorageBackendMpathNewVol(virStoragePoolObjPtr pool,
 
     if (VIR_APPEND_ELEMENT_COPY(pool->volumes.objs, pool->volumes.count, vol) < 0)
         goto cleanup;
-    pool->def->capacity += vol->capacity;
-    pool->def->allocation += vol->allocation;
+    pool->def->capacity += vol->target.capacity;
+    pool->def->allocation += vol->target.allocation;
     ret = 0;
 
  cleanup:

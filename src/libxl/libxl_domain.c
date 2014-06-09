@@ -526,7 +526,7 @@ libxlDomainShutdownThread(void *opaque)
         dom_event = virDomainEventLifecycleNewFromObj(vm,
                                            VIR_DOMAIN_EVENT_STOPPED,
                                            VIR_DOMAIN_EVENT_STOPPED_SHUTDOWN);
-        switch ((enum virDomainLifecycleAction) vm->def->onPoweroff) {
+        switch ((virDomainLifecycleAction) vm->def->onPoweroff) {
         case VIR_DOMAIN_LIFECYCLE_DESTROY:
             reason = VIR_DOMAIN_SHUTOFF_SHUTDOWN;
             goto destroy;
@@ -541,7 +541,7 @@ libxlDomainShutdownThread(void *opaque)
         dom_event = virDomainEventLifecycleNewFromObj(vm,
                                            VIR_DOMAIN_EVENT_STOPPED,
                                            VIR_DOMAIN_EVENT_STOPPED_CRASHED);
-        switch ((enum virDomainLifecycleCrashAction) vm->def->onCrash) {
+        switch ((virDomainLifecycleCrashAction) vm->def->onCrash) {
         case VIR_DOMAIN_LIFECYCLE_CRASH_DESTROY:
             reason = VIR_DOMAIN_SHUTOFF_CRASHED;
             goto destroy;
@@ -562,7 +562,7 @@ libxlDomainShutdownThread(void *opaque)
         dom_event = virDomainEventLifecycleNewFromObj(vm,
                                            VIR_DOMAIN_EVENT_STOPPED,
                                            VIR_DOMAIN_EVENT_STOPPED_SHUTDOWN);
-        switch ((enum virDomainLifecycleAction) vm->def->onReboot) {
+        switch ((virDomainLifecycleAction) vm->def->onReboot) {
         case VIR_DOMAIN_LIFECYCLE_DESTROY:
             reason = VIR_DOMAIN_SHUTOFF_SHUTDOWN;
             goto destroy;
@@ -1100,6 +1100,8 @@ libxlDomainStart(libxlDriverPrivatePtr driver, virDomainObjPtr vm,
 #endif
     virHostdevManagerPtr hostdev_mgr = driver->hostdevMgr;
 
+    libxl_domain_config_init(&d_config);
+
     if (libxlDomainObjPrivateInitCtx(vm) < 0)
         return ret;
 
@@ -1149,9 +1151,8 @@ libxlDomainStart(libxlDriverPrivatePtr driver, virDomainObjPtr vm,
         VIR_FREE(managed_save_path);
     }
 
-    libxl_domain_config_init(&d_config);
-
-    if (libxlBuildDomainConfig(driver, vm, &d_config) < 0)
+    if (libxlBuildDomainConfig(driver->reservedVNCPorts, vm->def,
+                               priv->ctx, &d_config) < 0)
         goto endjob;
 
     if (cfg->autoballoon && libxlDomainFreeMem(priv, &d_config) < 0) {
@@ -1252,6 +1253,29 @@ libxlDomainStart(libxlDriverPrivatePtr driver, virDomainObjPtr vm,
     VIR_FREE(managed_save_path);
     virDomainDefFree(def);
     VIR_FORCE_CLOSE(managed_save_fd);
+    virObjectUnref(cfg);
+    return ret;
+}
+
+bool
+libxlDomainDefCheckABIStability(libxlDriverPrivatePtr driver,
+                                virDomainDefPtr src,
+                                virDomainDefPtr dst)
+{
+    virDomainDefPtr migratableDefSrc = NULL;
+    virDomainDefPtr migratableDefDst = NULL;
+    libxlDriverConfigPtr cfg = libxlDriverConfigGet(driver);
+    bool ret = false;
+
+    if (!(migratableDefSrc = virDomainDefCopy(src, cfg->caps, driver->xmlopt, true)) ||
+        !(migratableDefDst = virDomainDefCopy(dst, cfg->caps, driver->xmlopt, true)))
+        goto cleanup;
+
+    ret = virDomainDefCheckABIStability(migratableDefSrc, migratableDefDst);
+
+ cleanup:
+    virDomainDefFree(migratableDefSrc);
+    virDomainDefFree(migratableDefDst);
     virObjectUnref(cfg);
     return ret;
 }

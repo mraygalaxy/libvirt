@@ -962,13 +962,16 @@ printTCPFlags(virBufferPtr buf, uint8_t flags)
 }
 
 
-void
-virNWFilterPrintTCPFlags(virBufferPtr buf,
-                         uint8_t mask, char sep, uint8_t flags)
+char *
+virNWFilterPrintTCPFlags(uint8_t flags)
 {
-    printTCPFlags(buf, mask);
-    virBufferAddChar(buf, sep);
-    printTCPFlags(buf, flags);
+    virBuffer buf = VIR_BUFFER_INITIALIZER;
+    printTCPFlags(&buf, flags);
+    if (virBufferError(&buf)) {
+        virReportOOMError();
+        return NULL;
+    }
+    return virBufferContentAndReset(&buf);
 }
 
 
@@ -977,10 +980,9 @@ tcpFlagsFormatter(virBufferPtr buf,
                   virNWFilterRuleDefPtr nwf ATTRIBUTE_UNUSED,
                   nwItemDesc *item)
 {
-    virNWFilterPrintTCPFlags(buf,
-                             item->u.tcpFlags.mask,
-                             '/',
-                             item->u.tcpFlags.flags);
+    printTCPFlags(buf, item->u.tcpFlags.mask);
+    virBufferAddLit(buf, "/");
+    printTCPFlags(buf, item->u.tcpFlags.flags);
 
     return true;
 }
@@ -1751,7 +1753,7 @@ typedef struct _virAttributes virAttributes;
 struct _virAttributes {
     const char *id;
     const virXMLAttr2Struct *att;
-    enum virNWFilterRuleProtocolType prtclType;
+    virNWFilterRuleProtocolType prtclType;
 };
 
 #define PROTOCOL_ENTRY(ID, ATT, PRTCLTYPE) \
@@ -1797,7 +1799,7 @@ virNWFilterRuleDetailsParse(xmlNodePtr node,
     char *prop;
     bool found = false;
     enum attrDatatype datatype, att_datatypes;
-    enum virNWFilterEntryItemFlags *flags, match_flag = 0, flags_set = 0;
+    virNWFilterEntryItemFlags *flags, match_flag = 0, flags_set = 0;
     nwItemDesc *item;
     int int_val;
     unsigned int uint_val;
@@ -2091,6 +2093,66 @@ virNWFilterRuleDefFixupIPSet(ipHdrDataDefPtr ipHdr)
         ipHdr->dataIPSet.flags = 0;
         ipHdr->dataIPSetFlags.flags = 0;
     }
+}
+
+
+/*
+ * virNWFilterRuleValidate
+ *
+ * Perform some basic rule validation to prevent rules from being
+ * defined that cannot be instantiated.
+ */
+static int
+virNWFilterRuleValidate(virNWFilterRuleDefPtr rule)
+{
+    int ret = 0;
+    portDataDefPtr portData = NULL;
+    nwItemDescPtr dataProtocolID = NULL;
+    const char *protocol = NULL;
+
+    switch (rule->prtclType) {
+    case VIR_NWFILTER_RULE_PROTOCOL_IP:
+        portData = &rule->p.ipHdrFilter.portData;
+        protocol = "IP";
+        dataProtocolID = &rule->p.ipHdrFilter.ipHdr.dataProtocolID;
+        /* fall through */
+    case VIR_NWFILTER_RULE_PROTOCOL_IPV6:
+        if (portData == NULL) {
+            portData = &rule->p.ipv6HdrFilter.portData;
+            protocol = "IPv6";
+            dataProtocolID = &rule->p.ipv6HdrFilter.ipHdr.dataProtocolID;
+        }
+        if (HAS_ENTRY_ITEM(&portData->dataSrcPortStart) ||
+            HAS_ENTRY_ITEM(&portData->dataDstPortStart) ||
+            HAS_ENTRY_ITEM(&portData->dataSrcPortEnd) ||
+            HAS_ENTRY_ITEM(&portData->dataDstPortEnd)) {
+            if (HAS_ENTRY_ITEM(dataProtocolID)) {
+                switch (dataProtocolID->u.u8) {
+                case 6:   /* tcp */
+                case 17:  /* udp */
+                case 33:  /* dccp */
+                case 132: /* sctp */
+                    break;
+                default:
+                    ret = -1;
+                }
+            } else {
+                ret = -1;
+            }
+            if (ret < 0) {
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                               _("%s rule with port specification requires "
+                                 "protocol specification with protocol to be "
+                                 "either one of tcp(6), udp(17), dccp(33), or "
+                                 "sctp(132)"), protocol);
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    return ret;
 }
 
 static void
@@ -2389,6 +2451,8 @@ virNWFilterRuleParse(xmlNodePtr node)
                                                     virAttr[i].att) < 0) {
                         goto err_exit;
                     }
+                    if (virNWFilterRuleValidate(ret) < 0)
+                        goto err_exit;
                     break;
                 }
                 if (!found) {
@@ -2447,7 +2511,7 @@ virNWFilterIsValidChainName(const char *chainname)
 static const char *
 virNWFilterIsAllowedChain(const char *chainname)
 {
-    enum virNWFilterChainSuffixType i;
+    virNWFilterChainSuffixType i;
     const char *name;
     char *msg;
     virBuffer buf = VIR_BUFFER_INITIALIZER;
@@ -3095,6 +3159,7 @@ virNWFilterLoadAllConfigs(virNWFilterObjListPtr nwfilters,
 {
     DIR *dir;
     struct dirent *entry;
+    int ret = -1;
 
     if (!(dir = opendir(configDir))) {
         if (errno == ENOENT) {
@@ -3105,7 +3170,7 @@ virNWFilterLoadAllConfigs(virNWFilterObjListPtr nwfilters,
         return -1;
     }
 
-    while ((entry = readdir(dir))) {
+    while ((ret = virDirRead(dir, &entry, configDir)) > 0) {
         char *path;
         virNWFilterObjPtr nwfilter;
 
@@ -3126,8 +3191,7 @@ virNWFilterLoadAllConfigs(virNWFilterObjListPtr nwfilters,
     }
 
     closedir(dir);
-
-    return 0;
+    return ret;
 }
 
 
@@ -3223,7 +3287,7 @@ virNWFilterRuleDefDetailsFormat(virBufferPtr buf,
         VIR_WARNINGS_NO_CAST_ALIGN
         item = (nwItemDesc *)((char *)def + att[i].dataIdx);
         VIR_WARNINGS_RESET
-        enum virNWFilterEntryItemFlags flags = item->flags;
+        virNWFilterEntryItemFlags flags = item->flags;
         if ((flags & NWFILTER_ENTRY_ITEM_FLAG_EXISTS)) {
             if (!typeShown) {
                 virBufferAsprintf(buf, "<%s", type);
@@ -3483,4 +3547,30 @@ void virNWFilterObjLock(virNWFilterObjPtr obj)
 void virNWFilterObjUnlock(virNWFilterObjPtr obj)
 {
     virMutexUnlock(&obj->lock);
+}
+
+
+bool virNWFilterRuleIsProtocolIPv4(virNWFilterRuleDefPtr rule)
+{
+    if (rule->prtclType >= VIR_NWFILTER_RULE_PROTOCOL_TCP &&
+        rule->prtclType <= VIR_NWFILTER_RULE_PROTOCOL_ALL)
+        return true;
+    return false;
+}
+
+
+bool virNWFilterRuleIsProtocolIPv6(virNWFilterRuleDefPtr rule)
+{
+    if (rule->prtclType >= VIR_NWFILTER_RULE_PROTOCOL_TCPoIPV6 &&
+        rule->prtclType <= VIR_NWFILTER_RULE_PROTOCOL_ALLoIPV6)
+        return true;
+    return false;
+}
+
+
+bool virNWFilterRuleIsProtocolEthernet(virNWFilterRuleDefPtr rule)
+{
+    if (rule->prtclType <= VIR_NWFILTER_RULE_PROTOCOL_IPV6)
+        return true;
+    return false;
 }

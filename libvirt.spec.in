@@ -132,6 +132,7 @@
 %define with_libssh2       0%{!?_without_libssh2:0}
 %define with_wireshark     0%{!?_without_wireshark:0}
 %define with_systemd_daemon 0%{!?_without_systemd_daemon:0}
+%define with_pm_utils      1
 
 # Non-server/HV driver defaults which are always enabled
 %define with_sasl          0%{!?_without_sasl:1}
@@ -182,6 +183,7 @@
 %if 0%{?fedora} >= 17 || 0%{?rhel} >= 7
     %define with_systemd 1
     %define with_systemd_daemon 1
+    %define with_pm_utils 0
 %endif
 
 # Fedora 18 / RHEL-7 are first where firewalld support is enabled
@@ -260,16 +262,11 @@
 %endif
 
 # Enable sanlock library for lock management with QEMU
-# Sanlock is available only on i686 x86_64 for RHEL
+# Sanlock is available only on x86_64 for RHEL
 %if 0%{?fedora} >= 16
     %define with_sanlock 0%{!?_without_sanlock:%{server_drivers}}
 %endif
-%if 0%{?rhel} == 6
-    %ifarch %{ix86} x86_64
-        %define with_sanlock 0%{!?_without_sanlock:%{server_drivers}}
-    %endif
-%endif
-%if 0%{?rhel} >= 7
+%if 0%{?rhel} >= 6
     %ifarch x86_64
         %define with_sanlock 0%{!?_without_sanlock:%{server_drivers}}
     %endif
@@ -1138,8 +1135,10 @@ Requires: nc
 Requires: gettext
 # Needed by virt-pki-validate script.
 Requires: gnutls-utils
+%if %{with_pm_utils}
 # Needed for probing the power management features of the host.
 Requires: pm-utils
+%endif
 %if %{with_sasl}
 Requires: cyrus-sasl
 # Not technically required, but makes 'out-of-box' config
@@ -1395,6 +1394,10 @@ driver
     %define _without_systemd_daemon --without-systemd-daemon
 %endif
 
+%if ! %{with_pm_utils}
+    %define _without_pm_utils --without-pm-utils
+%endif
+
 %define when  %(date +"%%F-%%T")
 %define where %(hostname)
 %define who   %{?packager}%{!?packager:Unknown}
@@ -1471,6 +1474,7 @@ rm -f po/stamp-po
            %{?_with_firewalld} \
            %{?_without_wireshark} \
            %{?_without_systemd_daemon} \
+           %{?_without_pm_utils} \
            %{with_packager} \
            %{with_packager_version} \
            --with-qemu-user=%{qemu_user} \
@@ -1489,7 +1493,7 @@ rm -fr %{buildroot}
 # on RHEL 5, thus we need to expand it here.
 make install DESTDIR=%{?buildroot} SYSTEMD_UNIT_DIR=%{_unitdir}
 
-for i in object-events dominfo domsuspend hellolibvirt openauth xml/nwfilter systemtap
+for i in object-events dominfo domsuspend hellolibvirt openauth xml/nwfilter systemtap dommigrate
 do
   (cd examples/$i ; make clean ; rm -rf .deps .libs Makefile Makefile.in)
 done
@@ -1874,7 +1878,9 @@ exit 0
 %{_datadir}/augeas/lenses/virtlockd.aug
 %{_datadir}/augeas/lenses/tests/test_virtlockd.aug
 %{_datadir}/augeas/lenses/libvirt_lockd.aug
+    %if %{with_qemu}
 %{_datadir}/augeas/lenses/tests/test_libvirt_lockd.aug
+    %endif
 
     %if %{with_polkit}
         %if 0%{?fedora} >= 12 || 0%{?rhel} >= 6
@@ -1911,6 +1917,7 @@ exit 0
 %dir %attr(0700, root, root) %{_sysconfdir}/libvirt/qemu/networks/autostart
 %dir %attr(0700, root, root) %{_localstatedir}/lib/libvirt/network/
 %dir %attr(0755, root, root) %{_localstatedir}/lib/libvirt/dnsmasq/
+%attr(0755, root, root) %{_libexecdir}/libvirt_leaseshelper
         %endif
         %if %{with_nwfilter}
 %dir %attr(0700, root, root) %{_sysconfdir}/libvirt/nwfilter/
@@ -1986,6 +1993,7 @@ exit 0
 %ghost %dir %{_localstatedir}/run/libvirt/network/
 %dir %attr(0700, root, root) %{_localstatedir}/lib/libvirt/network/
 %dir %attr(0755, root, root) %{_localstatedir}/lib/libvirt/dnsmasq/
+%attr(0755, root, root) %{_libexecdir}/libvirt_leaseshelper
 %{_libdir}/%{name}/connection-driver/libvirt_driver_network.so
         %endif
 
@@ -2162,8 +2170,7 @@ exit 0
 %{_datadir}/libvirt/schemas/nodedev.rng
 %{_datadir}/libvirt/schemas/nwfilter.rng
 %{_datadir}/libvirt/schemas/secret.rng
-%{_datadir}/libvirt/schemas/storageencryption.rng
-%{_datadir}/libvirt/schemas/storagefilefeatures.rng
+%{_datadir}/libvirt/schemas/storagecommon.rng
 %{_datadir}/libvirt/schemas/storagepool.rng
 %{_datadir}/libvirt/schemas/storagevol.rng
 
@@ -2214,11 +2221,29 @@ exit 0
 %doc examples/object-events
 %doc examples/dominfo
 %doc examples/domsuspend
+%doc examples/dommigrate
 %doc examples/openauth
 %doc examples/xml
 %doc examples/systemtap
 
 %changelog
+* Mon Jun  2 2014 Daniel Veillard <veillard@redhat.com> - 1.2.5-1
+- LSN-2014-0003: Don't expand entities when parsing XML (security)
+- Introduce virDomain{Get,Set}Time APIs
+- Introduce virDomainFSFreeze() and virDomainFSThaw() public API
+- various improvements and bug fixes
+
+* Sun May  4 2014 Daniel Veillard <veillard@redhat.com> - 1.2.4-1
+- various improvements and bug fixes
+- lot of internal code refactoring
+
+* Tue Apr  1 2014 Daniel Veillard <veillard@redhat.com> - 1.2.3-1
+- add new virDomainCoreDumpWithFormat API
+- conf: Introduce virDomainDeviceGetInfo API
+- more features and fixes on bhyve driver
+- lot of cleanups and improvement on the Xen driver
+- a lot of various improvements and bug fixes
+
 * Sun Mar  2 2014 Daniel Veillard <veillard@redhat.com> - 1.2.2-1
 - add LXC from native conversion tool
 - vbox: add support for v4.2.20+ and v4.3.4+

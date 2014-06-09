@@ -49,6 +49,7 @@ domain-xml                        <=>   vmx
                                         virtualHW.version = "7"                 # essential for ESX 4.0
                                         virtualHW.version = "8"                 # essential for ESX 5.0
                                         virtualHW.version = "9"                 # essential for ESX 5.1
+                                        virtualHW.version = "10"                # essential for ESX 5.5
 
 
 ???                               <=>   guestOS = "<value>"                     # essential, FIXME: not representable
@@ -524,7 +525,7 @@ VIR_ENUM_IMPL(virVMXControllerModelSCSI, VIR_DOMAIN_CONTROLLER_MODEL_SCSI_LAST,
  */
 
 virDomainDefParserConfig virVMXDomainDefParserConfig = {
-    .hasWideScsiBus = true,
+    .hasWideSCSIBus = true,
     .macPrefix = {0x00, 0x0c, 0x29},
 };
 
@@ -1315,11 +1316,10 @@ virVMXParseConfig(virVMXContext *ctx,
         goto cleanup;
     }
 
-    if (virtualHW_version != 4 && virtualHW_version != 7 &&
-        virtualHW_version != 8 && virtualHW_version != 9) {
+    if (virtualHW_version < 4) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("Expecting VMX entry 'virtualHW.version' to be "
-                         "4, 7, 8 or 9 but found %lld"),
+                         "4 or higher but found %lld"),
                        virtualHW_version);
         goto cleanup;
     }
@@ -1996,7 +1996,7 @@ virVMXParseDisk(virVMXContext *ctx, virDomainXMLOptionPtr xmlopt, virConfPtr con
         return -1;
     }
 
-    if (VIR_ALLOC(*def) < 0)
+    if (!(*def = virDomainDiskDefNew()))
         return -1;
 
     (*def)->device = device;
@@ -2187,7 +2187,7 @@ virVMXParseDisk(virVMXContext *ctx, virDomainXMLOptionPtr xmlopt, virConfPtr con
                 }
             }
 
-            virDomainDiskSetType(*def, VIR_DOMAIN_DISK_TYPE_FILE);
+            virDomainDiskSetType(*def, VIR_STORAGE_TYPE_FILE);
             if (!(tmp = ctx->parseFileName(fileName, ctx->opaque)))
                 goto cleanup;
             if (virDomainDiskSetSource(*def, tmp) < 0) {
@@ -2231,7 +2231,7 @@ virVMXParseDisk(virVMXContext *ctx, virDomainXMLOptionPtr xmlopt, virConfPtr con
                 }
             }
 
-            virDomainDiskSetType(*def, VIR_DOMAIN_DISK_TYPE_FILE);
+            virDomainDiskSetType(*def, VIR_STORAGE_TYPE_FILE);
             if (!(tmp = ctx->parseFileName(fileName, ctx->opaque)))
                 goto cleanup;
             if (virDomainDiskSetSource(*def, tmp) < 0) {
@@ -2248,7 +2248,7 @@ virVMXParseDisk(virVMXContext *ctx, virDomainXMLOptionPtr xmlopt, virConfPtr con
              */
             goto ignore;
         } else if (STRCASEEQ(deviceType, "atapi-cdrom")) {
-            virDomainDiskSetType(*def, VIR_DOMAIN_DISK_TYPE_BLOCK);
+            virDomainDiskSetType(*def, VIR_STORAGE_TYPE_BLOCK);
 
             if (STRCASEEQ(fileName, "auto detect")) {
                 ignore_value(virDomainDiskSetSource(*def, NULL));
@@ -2259,7 +2259,7 @@ virVMXParseDisk(virVMXContext *ctx, virDomainXMLOptionPtr xmlopt, virConfPtr con
         } else if (STRCASEEQ(deviceType, "cdrom-raw")) {
             /* Raw access CD-ROMs actually are device='lun' */
             (*def)->device = VIR_DOMAIN_DISK_DEVICE_LUN;
-            virDomainDiskSetType(*def, VIR_DOMAIN_DISK_TYPE_BLOCK);
+            virDomainDiskSetType(*def, VIR_STORAGE_TYPE_BLOCK);
 
             if (STRCASEEQ(fileName, "auto detect")) {
                 ignore_value(virDomainDiskSetSource(*def, NULL));
@@ -2277,13 +2277,13 @@ virVMXParseDisk(virVMXContext *ctx, virDomainXMLOptionPtr xmlopt, virConfPtr con
         }
     } else if (device == VIR_DOMAIN_DISK_DEVICE_FLOPPY) {
         if (fileType != NULL && STRCASEEQ(fileType, "device")) {
-            virDomainDiskSetType(*def, VIR_DOMAIN_DISK_TYPE_BLOCK);
+            virDomainDiskSetType(*def, VIR_STORAGE_TYPE_BLOCK);
             if (virDomainDiskSetSource(*def, fileName) < 0)
                 goto cleanup;
         } else if (fileType != NULL && STRCASEEQ(fileType, "file")) {
             char *tmp;
 
-            virDomainDiskSetType(*def, VIR_DOMAIN_DISK_TYPE_FILE);
+            virDomainDiskSetType(*def, VIR_STORAGE_TYPE_FILE);
             if (!(tmp = ctx->parseFileName(fileName, ctx->opaque)))
                 goto cleanup;
             if (virDomainDiskSetSource(*def, tmp) < 0) {
@@ -3438,14 +3438,14 @@ virVMXFormatDisk(virVMXContext *ctx, virDomainDiskDefPtr def,
     }
 
     /* We only support type='file' and type='block' */
-    if (type != VIR_DOMAIN_DISK_TYPE_FILE &&
-        type != VIR_DOMAIN_DISK_TYPE_BLOCK) {
+    if (type != VIR_STORAGE_TYPE_FILE &&
+        type != VIR_STORAGE_TYPE_BLOCK) {
         virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
                        _("%s %s '%s' has unsupported type '%s', expecting "
                          "'%s' or '%s'"), busType, deviceType, def->dst,
                        diskType,
-                       virDomainDiskTypeToString(VIR_DOMAIN_DISK_TYPE_FILE),
-                       virDomainDiskTypeToString(VIR_DOMAIN_DISK_TYPE_BLOCK));
+                       virStorageTypeToString(VIR_STORAGE_TYPE_FILE),
+                       virStorageTypeToString(VIR_STORAGE_TYPE_BLOCK));
         return -1;
     }
 
@@ -3467,11 +3467,11 @@ virVMXFormatDisk(virVMXContext *ctx, virDomainDiskDefPtr def,
     }
 
     if (def->device == VIR_DOMAIN_DISK_DEVICE_DISK &&
-        type == VIR_DOMAIN_DISK_TYPE_FILE) {
+        type == VIR_STORAGE_TYPE_FILE) {
         vmxDeviceType = (def->bus == VIR_DOMAIN_DISK_BUS_SCSI) ?
             "scsi-hardDisk" : "ata-hardDisk";
     } else if (def->device == VIR_DOMAIN_DISK_DEVICE_CDROM) {
-        if (type == VIR_DOMAIN_DISK_TYPE_FILE)
+        if (type == VIR_STORAGE_TYPE_FILE)
             vmxDeviceType = "cdrom-image";
         else
             vmxDeviceType = "atapi-cdrom";
@@ -3489,7 +3489,7 @@ virVMXFormatDisk(virVMXContext *ctx, virDomainDiskDefPtr def,
     virBufferAsprintf(buffer, "%s%d:%d.deviceType = \"%s\"\n",
                       busType, controllerOrBus, unit, vmxDeviceType);
 
-    if (type == VIR_DOMAIN_DISK_TYPE_FILE) {
+    if (type == VIR_STORAGE_TYPE_FILE) {
         const char *src = virDomainDiskGetSource(def);
 
         if (src && ! virFileHasSuffix(src, fileExt)) {
@@ -3510,7 +3510,7 @@ virVMXFormatDisk(virVMXContext *ctx, virDomainDiskDefPtr def,
                           busType, controllerOrBus, unit, fileName);
 
         VIR_FREE(fileName);
-    } else if (type == VIR_DOMAIN_DISK_TYPE_BLOCK) {
+    } else if (type == VIR_STORAGE_TYPE_BLOCK) {
         const char *src = virDomainDiskGetSource(def);
 
         if (!src &&
@@ -3567,7 +3567,7 @@ virVMXFormatFloppy(virVMXContext *ctx, virDomainDiskDefPtr def,
 
     virBufferAsprintf(buffer, "floppy%d.present = \"true\"\n", unit);
 
-    if (type == VIR_DOMAIN_DISK_TYPE_FILE) {
+    if (type == VIR_STORAGE_TYPE_FILE) {
         virBufferAsprintf(buffer, "floppy%d.fileType = \"file\"\n", unit);
 
         if (src) {
@@ -3582,7 +3582,7 @@ virVMXFormatFloppy(virVMXContext *ctx, virDomainDiskDefPtr def,
 
             VIR_FREE(fileName);
         }
-    } else if (type == VIR_DOMAIN_DISK_TYPE_BLOCK) {
+    } else if (type == VIR_STORAGE_TYPE_BLOCK) {
         virBufferAsprintf(buffer, "floppy%d.fileType = \"device\"\n", unit);
 
         if (src) {
@@ -3593,9 +3593,9 @@ virVMXFormatFloppy(virVMXContext *ctx, virDomainDiskDefPtr def,
         virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
                        _("Floppy '%s' has unsupported type '%s', expecting '%s' "
                          "or '%s'"), def->dst,
-                       virDomainDiskTypeToString(type),
-                       virDomainDiskTypeToString(VIR_DOMAIN_DISK_TYPE_FILE),
-                       virDomainDiskTypeToString(VIR_DOMAIN_DISK_TYPE_BLOCK));
+                       virStorageTypeToString(type),
+                       virStorageTypeToString(VIR_STORAGE_TYPE_FILE),
+                       virStorageTypeToString(VIR_STORAGE_TYPE_BLOCK));
         return -1;
     }
 

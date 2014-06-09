@@ -5723,10 +5723,16 @@ virDomainMigrate3(virDomainPtr domain,
                             __FUNCTION__);
         goto error;
     }
-    if (flags & (VIR_MIGRATE_PEER2PEER | VIR_MIGRATE_TUNNELLED)) {
+    if (flags & VIR_MIGRATE_PEER2PEER) {
         virReportInvalidArg(flags, "%s",
                             _("use virDomainMigrateToURI3 for peer-to-peer "
                               "migration"));
+        goto error;
+    }
+    if (flags & VIR_MIGRATE_TUNNELLED) {
+        virReportInvalidArg(flags, "%s",
+                            _("cannot perform tunnelled migration "
+                              "without using peer2peer flag"));
         goto error;
     }
 
@@ -7850,7 +7856,7 @@ virDomainSetSchedulerParametersFlags(virDomainPtr domain,
  * devices attached to the domain.
  *
  * The @disk parameter is either the device target shorthand (the
- * <target dev='...'/> sub-element, such as "xvda"), or (since 0.9.8)
+ * <target dev='...'/> sub-element, such as "vda"), or (since 0.9.8)
  * an unambiguous source name of the block device (the <source
  * file='...'/> sub-element, such as "/path/to/image").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
@@ -7918,7 +7924,7 @@ virDomainBlockStats(virDomainPtr dom, const char *disk,
  * devices attached to the domain.
  *
  * The @disk parameter is either the device target shorthand (the
- * <target dev='...'/> sub-element, such as "xvda"), or (since 0.9.8)
+ * <target dev='...'/> sub-element, such as "vda"), or (since 0.9.8)
  * an unambiguous source name of the block device (the <source
  * file='...'/> sub-element, such as "/path/to/image").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
@@ -8270,7 +8276,7 @@ virDomainMemoryStats(virDomainPtr dom, virDomainMemoryStatPtr stats,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -8348,7 +8354,7 @@ virDomainBlockPeek(virDomainPtr dom,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -8510,7 +8516,7 @@ virDomainMemoryPeek(virDomainPtr dom,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -9368,8 +9374,11 @@ virDomainSendProcessSignal(virDomainPtr domain,
  *
  * Dynamically change the number of virtual CPUs used by the domain.
  * Note that this call may fail if the underlying virtualization hypervisor
- * does not support it or if growing the number is arbitrary limited.
+ * does not support it or if growing the number is arbitrarily limited.
  * This function may require privileged access to the hypervisor.
+ *
+ * Note that if this call is executed before the guest has finished booting,
+ * the guest may fail to process the change.
  *
  * This command only changes the runtime configuration of the domain,
  * so can only be called on an active domain.  It is hypervisor-dependent
@@ -9417,7 +9426,7 @@ virDomainSetVcpus(virDomainPtr domain, unsigned int nvcpus)
  *
  * Dynamically change the number of virtual CPUs used by the domain.
  * Note that this call may fail if the underlying virtualization hypervisor
- * does not support it or if growing the number is arbitrary limited.
+ * does not support it or if growing the number is arbitrarily limited.
  * This function may require privileged access to the hypervisor.
  *
  * @flags may include VIR_DOMAIN_AFFECT_LIVE to affect a running
@@ -9428,6 +9437,9 @@ virDomainSetVcpus(virDomainPtr domain, unsigned int nvcpus)
  * then an inactive domain modifies persistent setup, while an active domain
  * is hypervisor-dependent on whether just live or both live and persistent
  * state is changed.
+ *
+ * Note that if this call is executed before the guest has finished booting,
+ * the guest may fail to process the change.
  *
  * If @flags includes VIR_DOMAIN_VCPU_MAXIMUM, then
  * VIR_DOMAIN_AFFECT_LIVE must be clear, and only the maximum virtual
@@ -10097,14 +10109,14 @@ virDomainGetSecurityLabelList(virDomainPtr domain,
 /**
  * virDomainSetMetadata:
  * @domain: a domain object
- * @type: type of description, from virDomainMetadataType
+ * @type: type of metadata, from virDomainMetadataType
  * @metadata: new metadata text
  * @key: XML namespace key, or NULL
  * @uri: XML namespace URI, or NULL
  * @flags: bitwise-OR of virDomainModificationImpact
  *
  * Sets the appropriate domain element given by @type to the
- * value of @description.  A @type of VIR_DOMAIN_METADATA_DESCRIPTION
+ * value of @metadata.  A @type of VIR_DOMAIN_METADATA_DESCRIPTION
  * is free-form text; VIR_DOMAIN_METADATA_TITLE is free-form, but no
  * newlines are permitted, and should be short (although the length is
  * not enforced). For these two options @key and @uri are irrelevant and
@@ -10190,7 +10202,7 @@ virDomainSetMetadata(virDomainPtr domain,
 /**
  * virDomainGetMetadata:
  * @domain: a domain object
- * @type: type of description, from virDomainMetadataType
+ * @type: type of metadata, from virDomainMetadataType
  * @uri: XML namespace identifier
  * @flags: bitwise-OR of virDomainModificationImpact
  *
@@ -10313,6 +10325,10 @@ virNodeGetSecurityModel(virConnectPtr conn, virSecurityModelPtr secmodel)
  * in an existing CDROM/Floppy device, however, applications are
  * recommended to use the virDomainUpdateDeviceFlag method instead.
  *
+ * Be aware that hotplug changes might not persist across a domain going
+ * into S4 state (also known as hibernation) unless you also modify the
+ * persistent domain definition.
+ *
  * Returns 0 in case of success, -1 in case of failure.
  */
 int
@@ -10368,6 +10384,10 @@ virDomainAttachDevice(virDomainPtr domain, const char *xml)
  * in an existing CDROM/Floppy device, however, applications are
  * recommended to use the virDomainUpdateDeviceFlag method instead.
  *
+ * Be aware that hotplug changes might not persist across a domain going
+ * into S4 state (also known as hibernation) unless you also modify the
+ * persistent domain definition.
+ *
  * Returns 0 in case of success, -1 in case of failure.
  */
 int
@@ -10409,6 +10429,10 @@ virDomainAttachDeviceFlags(virDomainPtr domain,
  *
  * Destroy a virtual device attachment to backend.  This function,
  * having hot-unplug semantics, is only allowed on an active domain.
+ *
+ * Be aware that hotplug changes might not persist across a domain going
+ * into S4 state (also known as hibernation) unless you also modify the
+ * persistent domain definition.
  *
  * Returns 0 in case of success, -1 in case of failure.
  */
@@ -10480,6 +10504,10 @@ virDomainDetachDevice(virDomainPtr domain, const char *xml)
  * asynchronous device removal that finishes shortly after the request into
  * a synchronous removal. In other words, this API may wait a bit for the
  * removal to complete in case it was not synchronous.
+ *
+ * Be aware that hotplug changes might not persist across a domain going
+ * into S4 state (also known as hibernation) unless you also modify the
+ * persistent domain definition.
  *
  * Returns 0 in case of success, -1 in case of failure.
  */
@@ -19426,7 +19454,7 @@ virDomainOpenChannel(virDomainPtr dom,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -19500,7 +19528,7 @@ virDomainBlockJobAbort(virDomainPtr dom, const char *disk,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -19554,7 +19582,7 @@ virDomainGetBlockJobInfo(virDomainPtr dom, const char *disk,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -19611,7 +19639,7 @@ virDomainBlockJobSetSpeed(virDomainPtr dom, const char *disk,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or (since 0.9.5) the device target shorthand
- * (the <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * (the <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
  *
@@ -19663,7 +19691,8 @@ virDomainBlockPull(virDomainPtr dom, const char *disk,
  * virDomainBlockRebase:
  * @dom: pointer to domain object
  * @disk: path to the block device, or device shorthand
- * @base: path to backing file to keep, or NULL for no backing file
+ * @base: path to backing file to keep, or device shorthand,
+ *        or NULL for no backing file
  * @bandwidth: (optional) specify copy bandwidth limit in MiB/s
  * @flags: bitwise-OR of virDomainBlockRebaseFlags
  *
@@ -19721,9 +19750,17 @@ virDomainBlockPull(virDomainPtr dom, const char *disk,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or the device target shorthand (the
- * <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
+ *
+ * The @base parameter can be either a path to a file within the backing
+ * chain, or the device target shorthand (the <target dev='...'/>
+ * sub-element, such as "vda") followed by an index to the backing chain
+ * enclosed in square brackets. Backing chain indexes can be found by
+ * inspecting //disk//backingStore/@index in the domain XML. Thus, for
+ * example, "vda[3]" refers to the backing store with index equal to "3"
+ * in the chain of disk "vda".
  *
  * The maximum bandwidth (in MiB/s) that will be used to do the copy can be
  * specified with the bandwidth parameter.  If set to 0, libvirt will choose a
@@ -19787,9 +19824,10 @@ virDomainBlockRebase(virDomainPtr dom, const char *disk,
  * virDomainBlockCommit:
  * @dom: pointer to domain object
  * @disk: path to the block device, or device shorthand
- * @base: path to backing file to merge into, or NULL for default
+ * @base: path to backing file to merge into, or device shorthand,
+ *        or NULL for default
  * @top: path to file within backing chain that contains data to be merged,
- *       or NULL to merge all possible data
+ *       or device shorthand, or NULL to merge all possible data
  * @bandwidth: (optional) specify commit bandwidth limit in MiB/s
  * @flags: bitwise-OR of virDomainBlockCommitFlags
  *
@@ -19835,9 +19873,17 @@ virDomainBlockRebase(virDomainPtr dom, const char *disk,
  * The @disk parameter is either an unambiguous source name of the
  * block device (the <source file='...'/> sub-element, such as
  * "/path/to/image"), or the device target shorthand (the
- * <target dev='...'/> sub-element, such as "xvda").  Valid names
+ * <target dev='...'/> sub-element, such as "vda").  Valid names
  * can be found by calling virDomainGetXMLDesc() and inspecting
  * elements within //domain/devices/disk.
+ *
+ * The @base and @top parameters can be either paths to files within the
+ * backing chain, or the device target shorthand (the <target dev='...'/>
+ * sub-element, such as "vda") followed by an index to the backing chain
+ * enclosed in square brackets. Backing chain indexes can be found by
+ * inspecting //disk//backingStore/@index in the domain XML. Thus, for
+ * example, "vda[3]" refers to the backing store with index equal to "3"
+ * in the chain of disk "vda".
  *
  * The maximum bandwidth (in MiB/s) that will be used to do the commit can be
  * specified with the bandwidth parameter.  If set to 0, libvirt will choose a
@@ -20647,6 +20693,193 @@ virDomainFSTrim(virDomainPtr dom,
     if (dom->conn->driver->domainFSTrim) {
         int ret = dom->conn->driver->domainFSTrim(dom, mountPoint,
                                                   minimum, flags);
+        if (ret < 0)
+            goto error;
+        return ret;
+    }
+
+    virReportUnsupportedError();
+
+ error:
+    virDispatchError(dom->conn);
+    return -1;
+}
+
+/**
+ * virDomainFSFreeze:
+ * @dom: a domain object
+ * @mountpoints: list of mount points to be frozen
+ * @nmountpoints: the number of mount points specified in @mountpoints
+ * @flags: extra flags; not used yet, so callers should always pass 0
+ *
+ * Freeze specified filesystems within the guest (hence guest agent
+ * may be required depending on hypervisor used). If @mountpoints is NULL and
+ * @nmountpoints is 0, every mounted filesystem on the guest is frozen.
+ * In some environments (e.g. QEMU guest with guest agent which doesn't
+ * support mountpoints argument), @mountpoints may need to be NULL.
+ *
+ * Returns the number of frozen filesystems on success, -1 otherwise.
+ */
+int
+virDomainFSFreeze(virDomainPtr dom,
+                  const char **mountpoints,
+                  unsigned int nmountpoints,
+                  unsigned int flags)
+{
+    VIR_DOMAIN_DEBUG(dom, "mountpoints=%p, nmountpoints=%d, flags=%x",
+                     mountpoints, nmountpoints, flags);
+
+    virResetLastError();
+
+    virCheckDomainReturn(dom, -1);
+    virCheckReadOnlyGoto(dom->conn->flags, error);
+    if (nmountpoints)
+        virCheckNonNullArgGoto(mountpoints, error);
+    else
+        virCheckNullArgGoto(mountpoints, error);
+
+    if (dom->conn->driver->domainFSFreeze) {
+        int ret = dom->conn->driver->domainFSFreeze(
+            dom, mountpoints, nmountpoints, flags);
+        if (ret < 0)
+            goto error;
+        return ret;
+    }
+
+    virReportUnsupportedError();
+
+ error:
+    virDispatchError(dom->conn);
+    return -1;
+}
+
+/**
+ * virDomainFSThaw:
+ * @dom: a domain object
+ * @mountpoints: list of mount points to be thawed
+ * @nmountpoints: the number of mount points specified in @mountpoints
+ * @flags: extra flags; not used yet, so callers should always pass 0
+ *
+ * Thaw specified filesystems within the guest. If @mountpoints is NULL and
+ * @nmountpoints is 0, every mounted filesystem on the guest is thawed.
+ * In some drivers (e.g. QEMU driver), @mountpoints may need to be NULL.
+ *
+ * Returns the number of thawed filesystems on success, -1 otherwise.
+ */
+int
+virDomainFSThaw(virDomainPtr dom,
+                const char **mountpoints,
+                unsigned int nmountpoints,
+                unsigned int flags)
+{
+    VIR_DOMAIN_DEBUG(dom, "flags=%x", flags);
+
+    virResetLastError();
+
+    virCheckDomainReturn(dom, -1);
+    virCheckReadOnlyGoto(dom->conn->flags, error);
+    if (nmountpoints)
+        virCheckNonNullArgGoto(mountpoints, error);
+    else
+        virCheckNullArgGoto(mountpoints, error);
+
+    if (dom->conn->driver->domainFSThaw) {
+        int ret = dom->conn->driver->domainFSThaw(
+            dom, mountpoints, nmountpoints, flags);
+        if (ret < 0)
+            goto error;
+        return ret;
+    }
+
+    virReportUnsupportedError();
+
+ error:
+    virDispatchError(dom->conn);
+    return -1;
+}
+
+/**
+ * virDomainGetTime:
+ * @dom: a domain object
+ * @seconds: domain's time in seconds
+ * @nseconds: the nanoscond part of @seconds
+ * @flags: extra flags; not used yet, so callers should always pass 0
+ *
+ * Extract information about guest time and store it into
+ * @seconds and @nseconds. The @seconds represents the number of
+ * seconds since the UNIX Epoch of 1970-01-01 00:00:00 in UTC.
+ *
+ * Please note that some hypervisors may require guest agent to
+ * be configured and running in order to run this API.
+ *
+ * Returns 0 on success, -1 otherwise.
+ */
+int
+virDomainGetTime(virDomainPtr dom,
+                 long long *seconds,
+                 unsigned int *nseconds,
+                 unsigned int flags)
+{
+    VIR_DOMAIN_DEBUG(dom, "seconds=%p, nseconds=%p, flags=%x",
+                     seconds, nseconds, flags);
+
+    virResetLastError();
+
+    virCheckDomainReturn(dom, -1);
+
+    if (dom->conn->driver->domainGetTime) {
+        int ret = dom->conn->driver->domainGetTime(dom, seconds,
+                                                   nseconds, flags);
+        if (ret < 0)
+            goto error;
+        return ret;
+    }
+
+    virReportUnsupportedError();
+
+ error:
+    virDispatchError(dom->conn);
+    return -1;
+}
+
+/**
+ * virDomainSetTime:
+ * @dom: a domain object
+ * @seconds: time to set
+ * @nseconds: the nanosecond part of @seconds
+ * @flags: bitwise-OR of virDomainSetTimeFlags
+ *
+ * When a domain is suspended or restored from a file the
+ * domain's OS has no idea that there was a big gap in the time.
+ * Depending on how long the gap was, NTP might not be able to
+ * resynchronize the guest.
+ *
+ * This API tries to set guest time to the given value. The time
+ * to set (@seconds and @nseconds) should be in seconds relative
+ * to the Epoch of 1970-01-01 00:00:00 in UTC.
+ *
+ * Please note that some hypervisors may require guest agent to
+ * be configured and running in order to be able to run this API.
+ *
+ * Returns 0 on success, -1 otherwise.
+ */
+int
+virDomainSetTime(virDomainPtr dom,
+                 long long seconds,
+                 unsigned int nseconds,
+                 unsigned int flags)
+{
+    VIR_DOMAIN_DEBUG(dom, "seconds=%lld, nseconds=%u, flags=%x",
+                     seconds, nseconds, flags);
+
+    virResetLastError();
+
+    virCheckDomainReturn(dom, -1);
+    virCheckReadOnlyGoto(dom->conn->flags, error);
+
+    if (dom->conn->driver->domainSetTime) {
+        int ret = dom->conn->driver->domainSetTime(dom, seconds,
+                                                   nseconds, flags);
         if (ret < 0)
             goto error;
         return ret;

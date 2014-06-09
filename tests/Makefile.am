@@ -43,6 +43,9 @@ AM_CFLAGS = \
 	$(COVERAGE_CFLAGS) \
 	$(WARN_CFLAGS)
 
+AM_LDFLAGS = \
+	-export-dynamic
+
 if WITH_DRIVER_MODULES
 INCLUDES += \
 	-DTEST_DRIVER_DIR=\"$(top_builddir)/src/.libs\"
@@ -65,6 +68,7 @@ LDADDS = \
 
 EXTRA_DIST =		\
 	bhyvexml2argvdata \
+	bhyvexml2xmloutdata \
 	capabilityschemadata \
 	capabilityschematest \
 	commanddata \
@@ -87,10 +91,12 @@ EXTRA_DIST =		\
 	networkxml2confdata \
 	networkxml2xmlupdatein \
 	networkxml2xmlupdateout \
+	networkxml2firewalldata \
 	nodedevschemadata \
 	nodedevschematest \
 	nodeinfodata     \
 	nwfilterschematest \
+	nwfilterxml2firewalldata \
 	nwfilterxml2xmlin \
 	nwfilterxml2xmlout \
 	oomtrace.pl \
@@ -118,6 +124,7 @@ EXTRA_DIST =		\
 	storagevolxml2xmlout \
 	sysinfodata \
 	test-lib.sh	\
+	vircaps2xmldata \
 	virsh-uriprecedence \
 	virfiledata \
 	virpcitestdata \
@@ -129,7 +136,8 @@ EXTRA_DIST =		\
 	xml2sexprdata \
 	xml2vmxdata \
 	vmwareverdata \
-	.valgrind.supp
+	.valgrind.supp \
+	virmock.h
 
 test_helpers = commandhelper ssh test_conf
 test_programs = virshtest sockettest \
@@ -139,6 +147,7 @@ test_programs = virshtest sockettest \
 	viratomictest \
 	utiltest shunloadtest \
 	virtimetest viruritest virkeyfiletest \
+	viralloctest \
 	virauthconfigtest \
 	virbitmaptest \
 	vircgrouptest \
@@ -146,7 +155,7 @@ test_programs = virshtest sockettest \
 	virpcitest \
 	virendiantest \
 	virfiletest \
-	viridentitytest \
+	virfirewalltest \
 	viriscsitest \
 	virkeycodetest \
 	virlockspacetest \
@@ -154,12 +163,12 @@ test_programs = virshtest sockettest \
 	virstringtest \
 	virportallocatortest \
 	sysinfotest \
-	virstoragetest \
 	virnetdevbandwidthtest \
 	virkmodtest \
 	vircapstest \
 	domainconftest \
 	virhostdevtest \
+	vircaps2xmltest \
 	$(NULL)
 
 if WITH_REMOTE
@@ -188,7 +197,8 @@ endif WITH_DBUS
 
 if WITH_SECDRIVER_SELINUX
 if WITH_ATTR
-test_programs += securityselinuxtest
+test_programs += securityselinuxtest \
+                 viridentitytest
 if WITH_QEMU
 test_programs += securityselinuxlabeltest
 endif WITH_QEMU
@@ -235,7 +245,7 @@ test_programs += vmwarevertest
 endif WITH_VMWARE
 
 if WITH_BHYVE
-test_programs += bhyvexml2argvtest
+test_programs += bhyvexml2argvtest bhyvexml2xmltest
 endif WITH_BHYVE
 
 if WITH_CIL
@@ -246,10 +256,16 @@ if WITH_YAJL
 test_programs += jsontest
 endif WITH_YAJL
 
-test_programs += networkxml2xmltest networkxml2xmlupdatetest
+test_programs += \
+		networkxml2xmltest \
+		networkxml2xmlupdatetest \
+		$(NULL)
 
 if WITH_NETWORK
-test_programs += networkxml2conftest
+test_programs += \
+		networkxml2conftest \
+		networkxml2firewalltest \
+		$(NULL)
 endif WITH_NETWORK
 
 if WITH_STORAGE_SHEEPDOG
@@ -258,8 +274,14 @@ endif WITH_STORAGE_SHEEPDOG
 
 test_programs += nwfilterxml2xmltest
 
+if WITH_NWFILTER
+test_programs += nwfilterebiptablestest
+test_programs += nwfilterxml2firewalltest
+endif WITH_NWFILTER
+
 if WITH_STORAGE
-test_programs += storagevolxml2argvtest
+test_programs += storagevolxml2argvtest \
+	virstoragetest
 endif WITH_STORAGE
 
 if WITH_LINUX
@@ -364,7 +386,8 @@ test_libraries += bhyvexml2argvmock.la
 endif WITH_BHYVE
 
 if WITH_DBUS
-test_libraries += virsystemdmock.la
+test_libraries += \
+		virmockdbus.la
 endif WITH_DBUS
 
 if WITH_LINUX
@@ -632,8 +655,13 @@ bhyvexml2argvtest_SOURCES = \
 	bhyvexml2argvtest.c \
 	testutils.c testutils.h
 bhyvexml2argvtest_LDADD = $(bhyve_LDADDS)
+
+bhyvexml2xmltest_SOURCES = \
+	bhyvexml2xmltest.c \
+	testutils.c testutils.h
+bhyvexml2xmltest_LDADD = $(bhyve_LDADDS)
 else ! WITH_BHYVE
-EXTRA_DIST += bhyvexml2argvtest.c bhyvexml2argvmock.c
+EXTRA_DIST += bhyvexml2argvtest.c bhyvexml2xmltest.c bhyvexml2argvmock.c
 endif ! WITH_BHYVE
 
 networkxml2xmltest_SOURCES = \
@@ -651,6 +679,12 @@ networkxml2conftest_SOURCES = \
 	networkxml2conftest.c \
 	testutils.c testutils.h
 networkxml2conftest_LDADD = ../src/libvirt_driver_network_impl.la $(LDADDS)
+
+networkxml2firewalltest_SOURCES = \
+	networkxml2firewalltest.c \
+	testutils.c testutils.h
+networkxml2firewalltest_LDADD = ../src/libvirt_driver_network_impl.la $(LDADDS)
+
 else ! WITH_NETWORK
 EXTRA_DIST += networkxml2conftest.c
 endif !	WITH_NETWORK
@@ -670,6 +704,19 @@ nwfilterxml2xmltest_SOURCES = \
 	testutils.c testutils.h
 nwfilterxml2xmltest_LDADD = $(LDADDS)
 
+if WITH_NWFILTER
+nwfilterebiptablestest_SOURCES = \
+	nwfilterebiptablestest.c \
+	testutils.c testutils.h
+nwfilterebiptablestest_LDADD = ../src/libvirt_driver_nwfilter_impl.la $(LDADDS)
+
+nwfilterxml2firewalltest_SOURCES = \
+	nwfilterxml2firewalltest.c \
+	testutils.c testutils.h
+nwfilterxml2firewalltest_LDADD = \
+	../src/libvirt_driver_nwfilter_impl.la $(LDADDS)
+endif WITH_NWFILTER
+
 secretxml2xmltest_SOURCES = \
 	secretxml2xmltest.c \
 	testutils.c testutils.h
@@ -681,6 +728,7 @@ storagevolxml2argvtest_SOURCES = \
     storagevolxml2argvtest.c \
     testutils.c testutils.h
 storagevolxml2argvtest_LDADD = \
+	$(LIBXML_LIBS) \
 	../src/libvirt_driver_storage_impl.la $(LDADDS)
 
 else ! WITH_STORAGE
@@ -736,7 +784,13 @@ commandtest_LDADD = $(LDADDS)
 
 commandhelper_SOURCES = \
 	commandhelper.c
-commandhelper_LDADD = $(LDADDS)
+commandhelper_LDADD = \
+	$(WARN_CFLAGS) \
+	$(NO_INDIRECT_LDFLAGS) \
+	$(PROBES_O) \
+	../src/libvirt_util.la \
+	$(GNULIB_LIBS)
+
 commandhelper_LDFLAGS = -static
 
 virnetdevbandwidthtest_SOURCES = \
@@ -750,6 +804,10 @@ virkmodtest_LDADD = $(LDADDS)
 vircapstest_SOURCES = \
 	vircapstest.c testutils.h testutils.c
 vircapstest_LDADD = $(LDADDS)
+
+vircaps2xmltest_SOURCES = \
+	vircaps2xmltest.c testutils.h testutils.c
+vircaps2xmltest_LDADD = $(LDADDS)
 
 if WITH_LIBVIRTD
 libvirtdconftest_SOURCES = \
@@ -817,7 +875,13 @@ virstringtest_LDADD = $(LDADDS)
 
 virstoragetest_SOURCES = \
 	virstoragetest.c testutils.h testutils.c
-virstoragetest_LDADD = $(LDADDS)
+virstoragetest_LDADD = $(LDADDS) \
+	../src/libvirt.la \
+	../src/libvirt_conf.la \
+	../src/libvirt_util.la \
+	../src/libvirt_driver_storage_impl.la \
+	../gnulib/lib/libgnu.la \
+	$(NULL)
 
 viridentitytest_SOURCES = \
 	viridentitytest.c testutils.h testutils.c
@@ -902,19 +966,19 @@ virdbustest_SOURCES = \
 virdbustest_CFLAGS = $(AM_CFLAGS) $(DBUS_CFLAGS)
 virdbustest_LDADD = $(LDADDS) $(DBUS_LIBS)
 
-virsystemdtest_SOURCES = \
-	virsystemdtest.c testutils.h testutils.c
-virsystemdtest_CFLAGS = $(AM_CFLAGS)
-virsystemdtest_LDADD = $(LDADDS)
-
-virsystemdmock_la_SOURCES = \
-	virsystemdmock.c
-virsystemdmock_la_CFLAGS = $(AM_CFLAGS) $(DBUS_CFLAGS)
-virsystemdmock_la_LDFLAGS = -module -avoid-version \
+virmockdbus_la_SOURCES = \
+	virmockdbus.c
+virmockdbus_la_CFLAGS = $(AM_CFLAGS) $(DBUS_CFLAGS)
+virmockdbus_la_LDFLAGS = -module -avoid-version \
         -rpath /evil/libtool/hack/to/force/shared/lib/creation
 
+virsystemdtest_SOURCES = \
+	virsystemdtest.c testutils.h testutils.c
+virsystemdtest_CFLAGS = $(AM_CFLAGS) $(DBUS_CFLAGS)
+virsystemdtest_LDADD = $(LDADDS) $(DBUS_LIBS)
+
 else ! WITH_DBUS
-EXTRA_DIST += virdbustest.c virsystemdtest.c virsystemdmock.c
+EXTRA_DIST += virdbustest.c virmockdbus.c virsystemdtest.c
 endif ! WITH_DBUS
 
 viruritest_SOURCES = \
@@ -924,6 +988,10 @@ viruritest_LDADD = $(LDADDS)
 virkeyfiletest_SOURCES = \
 	virkeyfiletest.c testutils.h testutils.c
 virkeyfiletest_LDADD = $(LDADDS)
+
+viralloctest_SOURCES = \
+	viralloctest.c testutils.h testutils.c
+viralloctest_LDADD = $(LDADDS)
 
 virauthconfigtest_SOURCES = \
 	virauthconfigtest.c testutils.h testutils.c
@@ -988,6 +1056,11 @@ virendiantest_LDADD = $(LDADDS)
 virfiletest_SOURCES = \
 	virfiletest.c testutils.h testutils.c
 virfiletest_LDADD = $(LDADDS)
+
+virfirewalltest_SOURCES = \
+	virfirewalltest.c testutils.h testutils.c
+virfirewalltest_LDADD = $(LDADDS) $(DBUS_LIBS)
+virfirewalltest_CFLAGS = $(AM_CFLAGS) $(DBUS_CFLAGS)
 
 jsontest_SOURCES = \
 	jsontest.c testutils.h testutils.c

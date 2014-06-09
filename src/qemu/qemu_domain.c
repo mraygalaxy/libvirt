@@ -34,10 +34,13 @@
 #include "cpu/cpu.h"
 #include "viruuid.h"
 #include "virfile.h"
+#include "domain_addr.h"
 #include "domain_event.h"
 #include "virtime.h"
 #include "virstoragefile.h"
 #include "virstring.h"
+
+#include "storage/storage_driver.h"
 
 #include <sys/time.h>
 #include <fcntl.h>
@@ -245,7 +248,7 @@ qemuDomainObjPrivateFree(void *data)
     virObjectUnref(priv->qemuCaps);
 
     virCgroupFree(&priv->cgroup);
-    qemuDomainPCIAddressSetFree(priv->pciaddrs);
+    virDomainPCIAddressSetFree(priv->pciaddrs);
     qemuDomainCCWAddressSetFree(priv->ccwaddrs);
     virDomainChrSourceDefFree(priv->monConfig);
     qemuDomainObjFreeJob(priv);
@@ -356,6 +359,9 @@ qemuDomainObjPrivateXMLFormat(virBufferPtr buf, void *data)
         virBufferAdjustIndent(buf, -2);
         virBufferAddLit(buf, "</devices>\n");
     }
+
+    if (priv->quiesced)
+        virBufferAddLit(buf, "<quiesced/>\n");
 
     return 0;
 }
@@ -517,6 +523,8 @@ qemuDomainObjPrivateXMLParse(xmlXPathContextPtr ctxt, void *data)
         }
     }
     VIR_FREE(nodes);
+
+    priv->quiesced = virXPathBoolean("boolean(./quiesced)", ctxt) == 1;
 
     return 0;
 
@@ -873,14 +881,14 @@ qemuDomainDeviceDefPostParse(virDomainDeviceDefPtr dev,
             if (cfg->allowDiskFormatProbing) {
                 /* default disk format for drives */
                 if (virDomainDiskGetFormat(disk) == VIR_STORAGE_FILE_NONE &&
-                    (virDomainDiskGetType(disk) == VIR_DOMAIN_DISK_TYPE_FILE ||
-                     virDomainDiskGetType(disk) == VIR_DOMAIN_DISK_TYPE_BLOCK))
+                    (virDomainDiskGetType(disk) == VIR_STORAGE_TYPE_FILE ||
+                     virDomainDiskGetType(disk) == VIR_STORAGE_TYPE_BLOCK))
                     virDomainDiskSetFormat(disk, VIR_STORAGE_FILE_AUTO);
 
                  /* default disk format for mirrored drive */
                 if (disk->mirror &&
-                    disk->mirrorFormat == VIR_STORAGE_FILE_NONE)
-                    disk->mirrorFormat = VIR_STORAGE_FILE_AUTO;
+                    disk->mirror->format == VIR_STORAGE_FILE_NONE)
+                    disk->mirror->format = VIR_STORAGE_FILE_AUTO;
             } else {
                 /* default driver if probing is forbidden */
                 if (!virDomainDiskGetDriver(disk) &&
@@ -889,14 +897,14 @@ qemuDomainDeviceDefPostParse(virDomainDeviceDefPtr dev,
 
                 /* default disk format for drives */
                 if (virDomainDiskGetFormat(disk) == VIR_STORAGE_FILE_NONE &&
-                    (virDomainDiskGetType(disk) == VIR_DOMAIN_DISK_TYPE_FILE ||
-                     virDomainDiskGetType(disk) == VIR_DOMAIN_DISK_TYPE_BLOCK))
+                    (virDomainDiskGetType(disk) == VIR_STORAGE_TYPE_FILE ||
+                     virDomainDiskGetType(disk) == VIR_STORAGE_TYPE_BLOCK))
                     virDomainDiskSetFormat(disk, VIR_STORAGE_FILE_RAW);
 
                  /* default disk format for mirrored drive */
                 if (disk->mirror &&
-                    disk->mirrorFormat == VIR_STORAGE_FILE_NONE)
-                    disk->mirrorFormat = VIR_STORAGE_FILE_RAW;
+                    disk->mirror->format == VIR_STORAGE_FILE_NONE)
+                    disk->mirror->format = VIR_STORAGE_FILE_RAW;
             }
         }
     }
@@ -1053,6 +1061,7 @@ qemuDomainObjBeginJobInternal(virQEMUDriverPtr driver,
     unsigned long long then;
     bool nested = job == QEMU_JOB_ASYNC_NESTED;
     virQEMUDriverConfigPtr cfg = virQEMUDriverGetConfig(driver);
+    int ret;
 
     VIR_DEBUG("Starting %s: %s (async=%s vm=%p name=%s)",
               job == QEMU_JOB_ASYNC ? "async job" : "job",
@@ -1129,21 +1138,25 @@ qemuDomainObjBeginJobInternal(virQEMUDriverPtr driver,
              qemuDomainAsyncJobTypeToString(priv->job.asyncJob),
              priv->job.owner, priv->job.asyncOwner);
 
-    if (errno == ETIMEDOUT)
+    ret = -1;
+    if (errno == ETIMEDOUT) {
         virReportError(VIR_ERR_OPERATION_TIMEOUT,
                        "%s", _("cannot acquire state change lock"));
-    else if (cfg->maxQueuedJobs &&
-             priv->jobs_queued > cfg->maxQueuedJobs)
+        ret = -2;
+    } else if (cfg->maxQueuedJobs &&
+               priv->jobs_queued > cfg->maxQueuedJobs) {
         virReportError(VIR_ERR_OPERATION_FAILED,
                        "%s", _("cannot acquire state change lock "
                                "due to max_queued limit"));
-    else
+        ret = -2;
+    } else {
         virReportSystemError(errno,
                              "%s", _("cannot acquire job mutex"));
+    }
     priv->jobs_queued--;
     virObjectUnref(obj);
     virObjectUnref(cfg);
-    return -1;
+    return ret;
 }
 
 /*
@@ -1159,19 +1172,25 @@ int qemuDomainObjBeginJob(virQEMUDriverPtr driver,
                           virDomainObjPtr obj,
                           enum qemuDomainJob job)
 {
-    return qemuDomainObjBeginJobInternal(driver, obj, job,
-                                         QEMU_ASYNC_JOB_NONE);
+    if (qemuDomainObjBeginJobInternal(driver, obj, job,
+                                      QEMU_ASYNC_JOB_NONE) < 0)
+        return -1;
+    else
+        return 0;
 }
 
 int qemuDomainObjBeginAsyncJob(virQEMUDriverPtr driver,
                                virDomainObjPtr obj,
                                enum qemuDomainAsyncJob asyncJob)
 {
-    return qemuDomainObjBeginJobInternal(driver, obj, QEMU_JOB_ASYNC,
-                                         asyncJob);
+    if (qemuDomainObjBeginJobInternal(driver, obj, QEMU_JOB_ASYNC,
+                                      asyncJob) < 0)
+        return -1;
+    else
+        return 0;
 }
 
-int
+static int ATTRIBUTE_RETURN_CHECK
 qemuDomainObjBeginNestedJob(virQEMUDriverPtr driver,
                             virDomainObjPtr obj,
                             enum qemuDomainAsyncJob asyncJob)
@@ -1271,8 +1290,9 @@ qemuDomainObjEnterMonitorInternal(virQEMUDriverPtr driver,
     qemuDomainObjPrivatePtr priv = obj->privateData;
 
     if (asyncJob != QEMU_ASYNC_JOB_NONE) {
-        if (qemuDomainObjBeginNestedJob(driver, obj, asyncJob) < 0)
-            return -1;
+        int ret;
+        if ((ret = qemuDomainObjBeginNestedJob(driver, obj, asyncJob)) < 0)
+            return ret;
         if (!virDomainObjIsActive(obj)) {
             virReportError(VIR_ERR_OPERATION_FAILED, "%s",
                            _("domain is no longer running"));
@@ -1351,8 +1371,9 @@ void qemuDomainObjExitMonitor(virQEMUDriverPtr driver,
  * with the same asyncJob.
  *
  * Returns 0 if job was started, in which case this must be followed with
- * qemuDomainObjExitMonitor(); or -1 if the job could not be
- * started (probably because the vm exited in the meantime).
+ * qemuDomainObjExitMonitor(); -2 if waiting for the nested job times out;
+ * or -1 if the job could not be started (probably because the vm exited
+ * in the meantime).
  */
 int
 qemuDomainObjEnterMonitorAsync(virQEMUDriverPtr driver,
@@ -1623,7 +1644,7 @@ qemuDomainDefFormatLive(virQEMUDriverPtr driver,
 
 void qemuDomainObjTaint(virQEMUDriverPtr driver,
                         virDomainObjPtr obj,
-                        enum virDomainTaintFlags taint,
+                        virDomainTaintFlags taint,
                         int logFD)
 {
     virErrorPtr orig_err = NULL;
@@ -2157,11 +2178,11 @@ qemuDomainSetFakeReboot(virQEMUDriverPtr driver,
 static int
 qemuDomainCheckRemoveOptionalDisk(virQEMUDriverPtr driver,
                                   virDomainObjPtr vm,
-                                  virDomainDiskDefPtr disk)
+                                  size_t diskIndex)
 {
     char uuid[VIR_UUID_STRING_BUFLEN];
     virObjectEventPtr event = NULL;
-    virDomainDiskDefPtr del_disk = NULL;
+    virDomainDiskDefPtr disk = vm->def->disks[diskIndex];
     const char *src = virDomainDiskGetSource(disk);
 
     virUUIDFormat(vm->def->uuid, uuid);
@@ -2181,13 +2202,8 @@ qemuDomainCheckRemoveOptionalDisk(virQEMUDriverPtr driver,
         event = virDomainEventDiskChangeNewFromObj(vm, src, NULL,
                                                    disk->info.alias,
                                                    VIR_DOMAIN_EVENT_DISK_DROP_MISSING_ON_START);
-
-        if (!(del_disk = virDomainDiskRemoveByName(vm->def, src))) {
-            virReportError(VIR_ERR_INVALID_ARG,
-                           _("no source device %s"), src);
-            return -1;
-        }
-        virDomainDiskDefFree(del_disk);
+        virDomainDiskRemove(vm->def, diskIndex);
+        virDomainDiskDefFree(disk);
     }
 
     if (event)
@@ -2199,15 +2215,15 @@ qemuDomainCheckRemoveOptionalDisk(virQEMUDriverPtr driver,
 static int
 qemuDomainCheckDiskStartupPolicy(virQEMUDriverPtr driver,
                                  virDomainObjPtr vm,
-                                 virDomainDiskDefPtr disk,
+                                 size_t diskIndex,
                                  bool cold_boot)
 {
     char uuid[VIR_UUID_STRING_BUFLEN];
-    int startupPolicy = disk->startupPolicy;
+    int startupPolicy = vm->def->disks[diskIndex]->startupPolicy;
 
     virUUIDFormat(vm->def->uuid, uuid);
 
-    switch ((enum virDomainStartupPolicy) startupPolicy) {
+    switch ((virDomainStartupPolicy) startupPolicy) {
         case VIR_DOMAIN_STARTUP_POLICY_OPTIONAL:
             break;
 
@@ -2225,13 +2241,35 @@ qemuDomainCheckDiskStartupPolicy(virQEMUDriverPtr driver,
             break;
     }
 
-    if (qemuDomainCheckRemoveOptionalDisk(driver, vm, disk) < 0)
+    if (qemuDomainCheckRemoveOptionalDisk(driver, vm, diskIndex) < 0)
         goto error;
 
     return 0;
 
  error:
     return -1;
+}
+
+static int
+qemuDiskChainCheckBroken(virDomainDiskDefPtr disk)
+{
+    char *brokenFile = NULL;
+
+    if (!virDomainDiskGetSource(disk))
+        return 0;
+
+    if (virStorageFileChainGetBroken(disk->src, &brokenFile) < 0)
+        return -1;
+
+    if (brokenFile) {
+        virReportError(VIR_ERR_INVALID_ARG,
+                       _("Backing file '%s' of image '%s' is missing."),
+                       brokenFile, virDomainDiskGetSource(disk));
+        VIR_FREE(brokenFile);
+        return -1;
+    }
+
+    return 0;
 }
 
 int
@@ -2241,13 +2279,25 @@ qemuDomainCheckDiskPresence(virQEMUDriverPtr driver,
 {
     int ret = -1;
     size_t i;
-    virDomainDiskDefPtr disk;
 
     VIR_DEBUG("Checking for disk presence");
     for (i = vm->def->ndisks; i > 0; i--) {
-        disk = vm->def->disks[i - 1];
+        size_t idx = i - 1;
+        virDomainDiskDefPtr disk = vm->def->disks[idx];
+        const char *path = virDomainDiskGetSource(disk);
+        virStorageFileFormat format = virDomainDiskGetFormat(disk);
+        virStorageType type = virStorageSourceGetActualType(disk->src);
 
-        if (!virDomainDiskGetSource(disk))
+        if (!path)
+            continue;
+
+        /* There is no need to check the backing chain for disks
+         * without backing support, the fact that the file exists is
+         * more than enough */
+        if (type != VIR_STORAGE_TYPE_NETWORK &&
+            format >= VIR_STORAGE_FILE_NONE &&
+            format < VIR_STORAGE_FILE_BACKING &&
+            virFileExists(path))
             continue;
 
         if (qemuDomainDetermineDiskChain(driver, vm, disk, false) >= 0 &&
@@ -2255,7 +2305,7 @@ qemuDomainCheckDiskPresence(virQEMUDriverPtr driver,
             continue;
 
         if (disk->startupPolicy &&
-            qemuDomainCheckDiskStartupPolicy(driver, vm, disk,
+            qemuDomainCheckDiskStartupPolicy(driver, vm, idx,
                                              cold_boot) >= 0) {
             virResetLastError();
             continue;
@@ -2337,28 +2387,6 @@ qemuDomainCleanupRun(virQEMUDriverPtr driver,
     priv->ncleanupCallbacks_max = 0;
 }
 
-int
-qemuDiskChainCheckBroken(virDomainDiskDefPtr disk)
-{
-    char *brokenFile = NULL;
-
-    if (!virDomainDiskGetSource(disk) || !disk->backingChain)
-        return 0;
-
-    if (virStorageFileChainGetBroken(disk->backingChain, &brokenFile) < 0)
-        return -1;
-
-    if (brokenFile) {
-        virReportError(VIR_ERR_INVALID_ARG,
-                       _("Backing file '%s' of image '%s' is missing."),
-                       brokenFile, virDomainDiskGetSource(disk));
-        VIR_FREE(brokenFile);
-        return -1;
-    }
-
-    return 0;
-}
-
 static void
 qemuDomainGetImageIds(virQEMUDriverConfigPtr cfg,
                       virDomainObjPtr vm,
@@ -2400,30 +2428,24 @@ qemuDomainDetermineDiskChain(virQEMUDriverPtr driver,
     int ret = 0;
     uid_t uid;
     gid_t gid;
-    const char *src = virDomainDiskGetSource(disk);
-    int type = virDomainDiskGetType(disk);
+    int type = virStorageSourceGetActualType(disk->src);
 
-    if (!src ||
-        type == VIR_DOMAIN_DISK_TYPE_NETWORK ||
-        type == VIR_DOMAIN_DISK_TYPE_VOLUME)
+    if (type != VIR_STORAGE_TYPE_NETWORK &&
+        !disk->src->path)
         goto cleanup;
 
-    if (disk->backingChain) {
-        if (force) {
-            virStorageFileFreeMetadata(disk->backingChain);
-            disk->backingChain = NULL;
-        } else {
+    if (disk->src->backingStore) {
+        if (force)
+            virStorageSourceClearBackingStore(disk->src);
+        else
             goto cleanup;
-        }
     }
 
     qemuDomainGetImageIds(cfg, vm, disk, &uid, &gid);
 
-    disk->backingChain = virStorageFileGetMetadata(src,
-                                                   virDomainDiskGetFormat(disk),
-                                                   uid, gid,
-                                                   cfg->allowDiskFormatProbing);
-    if (!disk->backingChain)
+    if (virStorageFileGetMetadata(disk->src,
+                                  uid, gid,
+                                  cfg->allowDiskFormatProbing) < 0)
         ret = -1;
 
  cleanup:

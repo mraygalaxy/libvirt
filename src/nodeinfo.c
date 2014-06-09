@@ -1,7 +1,7 @@
 /*
  * nodeinfo.c: Helper routines for OS specific node information
  *
- * Copyright (C) 2006-2008, 2010-2013 Red Hat, Inc.
+ * Copyright (C) 2006-2008, 2010-2014 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -440,6 +440,7 @@ virNodeParseNode(const char *node,
     int siblings;
     unsigned int cpu;
     int online;
+    int direrr;
 
     *threads = 0;
     *cores = 0;
@@ -452,8 +453,7 @@ virNodeParseNode(const char *node,
 
     /* enumerate sockets in the node */
     CPU_ZERO(&sock_map);
-    errno = 0;
-    while ((cpudirent = readdir(cpudir))) {
+    while ((direrr = virDirRead(cpudir, &cpudirent, node)) > 0) {
         if (sscanf(cpudirent->d_name, "cpu%u", &cpu) != 1)
             continue;
 
@@ -470,14 +470,10 @@ virNodeParseNode(const char *node,
 
         if (sock > sock_max)
             sock_max = sock;
-
-        errno = 0;
     }
 
-    if (errno) {
-        virReportSystemError(errno, _("problem reading %s"), node);
+    if (direrr < 0)
         goto cleanup;
-    }
 
     sock_max++;
 
@@ -490,8 +486,7 @@ virNodeParseNode(const char *node,
 
     /* iterate over all CPU's in the node */
     rewinddir(cpudir);
-    errno = 0;
-    while ((cpudirent = readdir(cpudir))) {
+    while ((direrr = virDirRead(cpudir, &cpudirent, node)) > 0) {
         if (sscanf(cpudirent->d_name, "cpu%u", &cpu) != 1)
             continue;
 
@@ -530,14 +525,10 @@ virNodeParseNode(const char *node,
 
         if (siblings > *threads)
             *threads = siblings;
-
-        errno = 0;
     }
 
-    if (errno) {
-        virReportSystemError(errno, _("problem reading %s"), node);
+    if (direrr < 0)
         goto cleanup;
-    }
 
     /* finalize the returned data */
     *sockets = CPU_COUNT(&sock_map);
@@ -576,6 +567,7 @@ int linuxNodeInfoCPUPopulate(FILE *cpuinfo,
     int ret = -1;
     char *sysfs_nodedir = NULL;
     char *sysfs_cpudir = NULL;
+    int direrr;
 
     /* Start with parsing CPU clock speed from /proc/cpuinfo */
     while (fgets(line, sizeof(line), cpuinfo) != NULL) {
@@ -672,8 +664,7 @@ int linuxNodeInfoCPUPopulate(FILE *cpuinfo,
         goto fallback;
     }
 
-    errno = 0;
-    while ((nodedirent = readdir(nodedir))) {
+    while ((direrr = virDirRead(nodedir, &nodedirent, sysfs_nodedir)) > 0) {
         if (sscanf(nodedirent->d_name, "node%u", &node) != 1)
             continue;
 
@@ -699,14 +690,10 @@ int linuxNodeInfoCPUPopulate(FILE *cpuinfo,
 
         if (threads > nodeinfo->threads)
             nodeinfo->threads = threads;
-
-        errno = 0;
     }
 
-    if (errno) {
-        virReportSystemError(errno, _("problem reading %s"), sysfs_nodedir);
+    if (direrr < 0)
         goto cleanup;
-    }
 
     if (nodeinfo->cpus && nodeinfo->nodes)
         goto done;
@@ -1657,9 +1644,9 @@ nodeCapsInitNUMAFake(virCapsPtr caps ATTRIBUTE_UNUSED)
     }
 
     if (virCapabilitiesAddHostNUMACell(caps, 0,
-                                       ncpus,
                                        nodeinfo.memory,
-                                       cpus) < 0)
+                                       ncpus, cpus,
+                                       0, NULL) < 0)
         goto error;
 
     return 0;
@@ -1761,6 +1748,53 @@ virNodeCapsFillCPUInfo(int cpu_id ATTRIBUTE_UNUSED,
 #endif
 }
 
+static int
+virNodeCapsGetSiblingInfo(int node,
+                          virCapsHostNUMACellSiblingInfoPtr *siblings,
+                          int *nsiblings)
+{
+    virCapsHostNUMACellSiblingInfoPtr tmp = NULL;
+    int tmp_size = 0;
+    int ret = -1;
+    int *distances = NULL;
+    int ndistances = 0;
+    size_t i;
+
+    if (virNumaGetDistances(node, &distances, &ndistances) < 0)
+        goto cleanup;
+
+    if (!distances) {
+        *siblings = NULL;
+        *nsiblings = 0;
+        return 0;
+    }
+
+    if (VIR_ALLOC_N(tmp, ndistances) < 0)
+        goto cleanup;
+
+    for (i = 0; i < ndistances; i++) {
+        if (!distances[i])
+            continue;
+
+        tmp[tmp_size].node = i;
+        tmp[tmp_size].distance = distances[i];
+        tmp_size++;
+    }
+
+    if (VIR_REALLOC_N(tmp, tmp_size) < 0)
+        goto cleanup;
+
+    *siblings = tmp;
+    *nsiblings = tmp_size;
+    tmp = NULL;
+    tmp_size = 0;
+    ret = 0;
+ cleanup:
+    VIR_FREE(distances);
+    VIR_FREE(tmp);
+    return ret;
+}
+
 int
 nodeCapsInitNUMA(virCapsPtr caps)
 {
@@ -1768,6 +1802,8 @@ nodeCapsInitNUMA(virCapsPtr caps)
     unsigned long long memory;
     virCapsHostNUMACellCPUPtr cpus = NULL;
     virBitmapPtr cpumap = NULL;
+    virCapsHostNUMACellSiblingInfoPtr siblings = NULL;
+    int nsiblings;
     int ret = -1;
     int ncpus = 0;
     int cpu;
@@ -1807,14 +1843,20 @@ nodeCapsInitNUMA(virCapsPtr caps)
             }
         }
 
+        if (virNodeCapsGetSiblingInfo(n, &siblings, &nsiblings) < 0)
+            goto cleanup;
+
         /* Detect the amount of memory in the numa cell in KiB */
         virNumaGetNodeMemory(n, &memory, NULL);
         memory >>= 10;
 
-        if (virCapabilitiesAddHostNUMACell(caps, n, ncpus, memory, cpus) < 0)
+        if (virCapabilitiesAddHostNUMACell(caps, n, memory,
+                                           ncpus, cpus,
+                                           nsiblings, siblings) < 0)
             goto cleanup;
 
         cpus = NULL;
+        siblings = NULL;
     }
 
     ret = 0;
@@ -1825,6 +1867,7 @@ nodeCapsInitNUMA(virCapsPtr caps)
 
     virBitmapFree(cpumap);
     VIR_FREE(cpus);
+    VIR_FREE(siblings);
 
     if (ret < 0)
         VIR_FREE(cpus);

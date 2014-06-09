@@ -26,6 +26,7 @@
 
 # include "virthread.h"
 # include "vircgroup.h"
+# include "domain_addr.h"
 # include "domain_conf.h"
 # include "snapshot_conf.h"
 # include "qemu_monitor.h"
@@ -116,9 +117,6 @@ struct qemuDomainJobObj {
     bool asyncAbort;                    /* abort of async job requested */
 };
 
-typedef struct _qemuDomainPCIAddressSet qemuDomainPCIAddressSet;
-typedef qemuDomainPCIAddressSet *qemuDomainPCIAddressSetPtr;
-
 typedef void (*qemuDomainCleanupCallback)(virQEMUDriverPtr driver,
                                           virDomainObjPtr vm);
 typedef struct _qemuDomainCCWAddressSet qemuDomainCCWAddressSet;
@@ -146,7 +144,7 @@ struct _qemuDomainObjPrivate {
     int nvcpupids;
     int *vcpupids;
 
-    qemuDomainPCIAddressSetPtr pciaddrs;
+    virDomainPCIAddressSetPtr pciaddrs;
     qemuDomainCCWAddressSetPtr ccwaddrs;
     int persistentAddrs;
 
@@ -176,11 +174,14 @@ struct _qemuDomainObjPrivate {
     char **qemuDevices; /* NULL-terminated list of devices aliases known to QEMU */
 
     bool hookRun;  /* true if there was a hook run over this domain */
+
+    bool quiesced; /* true if filesystems are quiesced */
 };
 
 typedef enum {
     QEMU_PROCESS_EVENT_WATCHDOG = 0,
     QEMU_PROCESS_EVENT_GUESTPANIC,
+    QEMU_PROCESS_EVENT_DEVICE_DELETED,
 
     QEMU_PROCESS_EVENT_LAST
 } qemuProcessEventType;
@@ -189,6 +190,7 @@ struct qemuProcessEvent {
     virDomainObjPtr vm;
     qemuProcessEventType eventType;
     int action;
+    void *data;
 };
 
 const char *qemuDomainAsyncJobPhaseToString(enum qemuDomainAsyncJob job,
@@ -208,10 +210,6 @@ int qemuDomainObjBeginJob(virQEMUDriverPtr driver,
 int qemuDomainObjBeginAsyncJob(virQEMUDriverPtr driver,
                                virDomainObjPtr obj,
                                enum qemuDomainAsyncJob asyncJob)
-    ATTRIBUTE_RETURN_CHECK;
-int qemuDomainObjBeginNestedJob(virQEMUDriverPtr driver,
-                                virDomainObjPtr obj,
-                                enum qemuDomainAsyncJob asyncJob)
     ATTRIBUTE_RETURN_CHECK;
 
 bool qemuDomainObjEndJob(virQEMUDriverPtr driver,
@@ -280,7 +278,7 @@ char *qemuDomainDefFormatLive(virQEMUDriverPtr driver,
 
 void qemuDomainObjTaint(virQEMUDriverPtr driver,
                         virDomainObjPtr obj,
-                        enum virDomainTaintFlags taint,
+                        virDomainTaintFlags taint,
                         int logFD);
 
 void qemuDomainObjCheckTaint(virQEMUDriverPtr driver,
@@ -351,8 +349,6 @@ bool qemuDomainJobAllowed(qemuDomainObjPrivatePtr priv,
 int qemuDomainCheckDiskPresence(virQEMUDriverPtr driver,
                                 virDomainObjPtr vm,
                                 bool start_with_state);
-
-int qemuDiskChainCheckBroken(virDomainDiskDefPtr disk);
 
 int qemuDomainDetermineDiskChain(virQEMUDriverPtr driver,
                                  virDomainObjPtr vm,

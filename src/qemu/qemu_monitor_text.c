@@ -450,7 +450,7 @@ int qemuMonitorTextSystemPowerdown(qemuMonitorPtr mon)
 int
 qemuMonitorTextSetLink(qemuMonitorPtr mon,
                        const char *name,
-                       enum virDomainNetInterfaceLinkState state)
+                       virDomainNetInterfaceLinkState state)
 {
     char *info = NULL;
     char *cmd = NULL;
@@ -1753,7 +1753,7 @@ int qemuMonitorTextAddUSBDeviceMatch(qemuMonitorPtr mon,
 
 
 static int
-qemuMonitorTextParsePciAddReply(qemuMonitorPtr mon ATTRIBUTE_UNUSED,
+qemuMonitorTextParsePCIAddReply(qemuMonitorPtr mon ATTRIBUTE_UNUSED,
                                 const char *reply,
                                 virDevicePCIAddress *addr)
 {
@@ -1826,10 +1826,20 @@ int qemuMonitorTextAddPCIHostDevice(qemuMonitorPtr mon,
 
     memset(guestAddr, 0, sizeof(*guestAddr));
 
-    /* XXX hostAddr->domain */
-    if (virAsprintf(&cmd, "pci_add pci_addr=auto host host=%.2x:%.2x.%.1x",
-                    hostAddr->bus, hostAddr->slot, hostAddr->function) < 0)
-        goto cleanup;
+    if (hostAddr->domain) {
+        /* if domain > 0, the caller has already verified that this qemu
+         * supports specifying domain in pci_add command
+         */
+        if (virAsprintf(&cmd,
+                        "pci_add pci_addr=auto host host=%.4x:%.2x:%.2x.%.1x",
+                        hostAddr->domain, hostAddr->bus,
+                        hostAddr->slot, hostAddr->function) < 0)
+            goto cleanup;
+    } else {
+        if (virAsprintf(&cmd, "pci_add pci_addr=auto host host=%.2x:%.2x.%.1x",
+                        hostAddr->bus, hostAddr->slot, hostAddr->function) < 0)
+            goto cleanup;
+    }
 
     if (qemuMonitorHMPCommand(mon, cmd, &reply) < 0)
         goto cleanup;
@@ -1840,7 +1850,7 @@ int qemuMonitorTextAddPCIHostDevice(qemuMonitorPtr mon,
         goto cleanup;
     }
 
-    if (qemuMonitorTextParsePciAddReply(mon, reply, guestAddr) < 0) {
+    if (qemuMonitorTextParsePCIAddReply(mon, reply, guestAddr) < 0) {
         virReportError(VIR_ERR_OPERATION_FAILED,
                        _("parsing pci_add reply failed: %s"), reply);
         goto cleanup;
@@ -1878,7 +1888,7 @@ int qemuMonitorTextAddPCIDisk(qemuMonitorPtr mon,
     if (qemuMonitorHMPCommand(mon, cmd, &reply) < 0)
         goto cleanup;
 
-    if (qemuMonitorTextParsePciAddReply(mon, reply, guestAddr) < 0) {
+    if (qemuMonitorTextParsePCIAddReply(mon, reply, guestAddr) < 0) {
         if (!tryOldSyntax && strstr(reply, "invalid char in expression")) {
             VIR_FREE(reply);
             VIR_FREE(cmd);
@@ -1915,7 +1925,7 @@ int qemuMonitorTextAddPCINetwork(qemuMonitorPtr mon,
     if (qemuMonitorHMPCommand(mon, cmd, &reply) < 0)
         goto cleanup;
 
-    if (qemuMonitorTextParsePciAddReply(mon, reply, guestAddr) < 0) {
+    if (qemuMonitorTextParsePCIAddReply(mon, reply, guestAddr) < 0) {
         virReportError(VIR_ERR_OPERATION_FAILED,
                        _("parsing pci_add reply failed: %s"), reply);
         goto cleanup;
@@ -2252,7 +2262,7 @@ int qemuMonitorTextAttachPCIDiskController(qemuMonitorPtr mon,
     if (qemuMonitorHMPCommand(mon, cmd, &reply) < 0)
         goto cleanup;
 
-    if (qemuMonitorTextParsePciAddReply(mon, reply, guestAddr) < 0) {
+    if (qemuMonitorTextParsePCIAddReply(mon, reply, guestAddr) < 0) {
         if (!tryOldSyntax && strstr(reply, "invalid char in expression")) {
             VIR_FREE(reply);
             VIR_FREE(cmd);

@@ -207,9 +207,10 @@ libxlCapsInitNuma(libxl_ctx *ctx, virCapsPtr caps)
         if (numa_info[i].size == LIBXL_NUMAINFO_INVALID_ENTRY)
             continue;
 
-        if (virCapabilitiesAddHostNUMACell(caps, i, nr_cpus_node[i],
+        if (virCapabilitiesAddHostNUMACell(caps, i,
                                            numa_info[i].size / 1024,
-                                           cpus[i]) < 0) {
+                                           nr_cpus_node[i], cpus[i],
+                                           0, NULL) < 0) {
             virCapabilitiesClearHostNUMACellCPUTopology(cpus[i],
                                                         nr_cpus_node[i]);
             goto cleanup;
@@ -567,10 +568,10 @@ libxlMakeChrdevStr(virDomainChrDefPtr def, char **buf)
 }
 
 static int
-libxlMakeDomBuildInfo(virDomainObjPtr vm, libxl_domain_config *d_config)
+libxlMakeDomBuildInfo(virDomainDefPtr def,
+                      libxl_ctx *ctx,
+                      libxl_domain_config *d_config)
 {
-    virDomainDefPtr def = vm->def;
-    libxlDomainObjPrivatePtr priv = vm->privateData;
     libxl_domain_build_info *b_info = &d_config->b_info;
     int hvm = STREQ(def->os.type, "hvm");
     size_t i;
@@ -583,7 +584,7 @@ libxlMakeDomBuildInfo(virDomainObjPtr vm, libxl_domain_config *d_config)
         libxl_domain_build_info_init_type(b_info, LIBXL_DOMAIN_TYPE_PV);
 
     b_info->max_vcpus = def->maxvcpus;
-    if (libxl_cpu_bitmap_alloc(priv->ctx, &b_info->avail_vcpus, def->maxvcpus))
+    if (libxl_cpu_bitmap_alloc(ctx, &b_info->avail_vcpus, def->maxvcpus))
         goto error;
     libxl_bitmap_set_none(&b_info->avail_vcpus);
     for (i = 0; i < def->vcpus; i++)
@@ -827,6 +828,9 @@ libxlMakeDisk(virDomainDiskDefPtr l_disk, libxl_device_disk *x_disk)
     x_disk->removable = 1;
     x_disk->readwrite = !l_disk->readonly;
     x_disk->is_cdrom = l_disk->device == VIR_DOMAIN_DISK_DEVICE_CDROM ? 1 : 0;
+    /* An empty CDROM must have the empty format, otherwise libxl fails. */
+    if (x_disk->is_cdrom && !x_disk->pdev_path)
+        x_disk->format = LIBXL_DISK_FORMAT_EMPTY;
     if (l_disk->transient) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("libxenlight does not support transient disks"));
@@ -918,25 +922,31 @@ static int
 libxlMakeNicList(virDomainDefPtr def,  libxl_domain_config *d_config)
 {
     virDomainNetDefPtr *l_nics = def->nets;
-    int nnics = def->nnets;
+    size_t nnics = def->nnets;
     libxl_device_nic *x_nics;
-    size_t i;
+    size_t i, nvnics = 0;
 
     if (VIR_ALLOC_N(x_nics, nnics) < 0)
         return -1;
 
     for (i = 0; i < nnics; i++) {
-        if (libxlMakeNic(def, l_nics[i], &x_nics[i]))
+        if (l_nics[i]->type == VIR_DOMAIN_NET_TYPE_HOSTDEV)
+            continue;
+
+        if (libxlMakeNic(def, l_nics[i], &x_nics[nvnics]))
             goto error;
         /*
          * The devid (at least right now) will not get initialized by
          * libxl in the setup case but is required for starting the
          * device-model.
          */
-        if (x_nics[i].devid < 0)
-            x_nics[i].devid = i;
+        if (x_nics[nvnics].devid < 0)
+            x_nics[nvnics].devid = nvnics;
+
+        nvnics++;
     }
 
+    VIR_SHRINK_N(x_nics, nnics, nnics - nvnics);
     d_config->nics = x_nics;
     d_config->num_nics = nnics;
 
@@ -950,7 +960,7 @@ libxlMakeNicList(virDomainDefPtr def,  libxl_domain_config *d_config)
 }
 
 int
-libxlMakeVfb(libxlDriverPrivatePtr driver,
+libxlMakeVfb(virPortAllocatorPtr graphicsports,
              virDomainGraphicsDefPtr l_vfb,
              libxl_device_vfb *x_vfb)
 {
@@ -973,7 +983,7 @@ libxlMakeVfb(libxlDriverPrivatePtr driver,
             libxl_defbool_set(&x_vfb->vnc.findunused, 0);
             if (l_vfb->data.vnc.autoport) {
 
-                if (virPortAllocatorAcquire(driver->reservedVNCPorts, &port) < 0)
+                if (virPortAllocatorAcquire(graphicsports, &port) < 0)
                     return -1;
                 l_vfb->data.vnc.port = port;
             }
@@ -995,7 +1005,7 @@ libxlMakeVfb(libxlDriverPrivatePtr driver,
 }
 
 static int
-libxlMakeVfbList(libxlDriverPrivatePtr driver,
+libxlMakeVfbList(virPortAllocatorPtr graphicsports,
                  virDomainDefPtr def,
                  libxl_domain_config *d_config)
 {
@@ -1018,7 +1028,7 @@ libxlMakeVfbList(libxlDriverPrivatePtr driver,
     for (i = 0; i < nvfbs; i++) {
         libxl_device_vkb_init(&x_vkbs[i]);
 
-        if (libxlMakeVfb(driver, l_vfbs[i], &x_vfbs[i]) < 0)
+        if (libxlMakeVfb(graphicsports, l_vfbs[i], &x_vfbs[i]) < 0)
             goto error;
     }
 
@@ -1176,7 +1186,7 @@ libxlDriverConfigGet(libxlDriverPrivatePtr driver)
 }
 
 int
-libxlMakePci(virDomainHostdevDefPtr hostdev, libxl_device_pci *pcidev)
+libxlMakePCI(virDomainHostdevDefPtr hostdev, libxl_device_pci *pcidev)
 {
     if (hostdev->mode != VIR_DOMAIN_HOSTDEV_MODE_SUBSYS)
         return -1;
@@ -1192,7 +1202,7 @@ libxlMakePci(virDomainHostdevDefPtr hostdev, libxl_device_pci *pcidev)
 }
 
 static int
-libxlMakePciList(virDomainDefPtr def, libxl_domain_config *d_config)
+libxlMakePCIList(virDomainDefPtr def, libxl_domain_config *d_config)
 {
     virDomainHostdevDefPtr *l_hostdevs = def->hostdevs;
     size_t nhostdevs = def->nhostdevs;
@@ -1214,7 +1224,7 @@ libxlMakePciList(virDomainDefPtr def, libxl_domain_config *d_config)
 
         libxl_device_pci_init(&x_pcidevs[j]);
 
-        if (libxlMakePci(l_hostdevs[i], &x_pcidevs[j]) < 0)
+        if (libxlMakePCI(l_hostdevs[i], &x_pcidevs[j]) < 0)
             goto error;
 
         npcidevs++;
@@ -1296,18 +1306,17 @@ libxlMakeCapabilities(libxl_ctx *ctx)
 }
 
 int
-libxlBuildDomainConfig(libxlDriverPrivatePtr driver,
-                       virDomainObjPtr vm, libxl_domain_config *d_config)
+libxlBuildDomainConfig(virPortAllocatorPtr graphicsports,
+                       virDomainDefPtr def,
+                       libxl_ctx *ctx,
+                       libxl_domain_config *d_config)
 {
-    virDomainDefPtr def = vm->def;
-    libxlDomainObjPrivatePtr priv = vm->privateData;
-
     libxl_domain_config_init(d_config);
 
-    if (libxlMakeDomCreateInfo(priv->ctx, def, &d_config->c_info) < 0)
+    if (libxlMakeDomCreateInfo(ctx, def, &d_config->c_info) < 0)
         return -1;
 
-    if (libxlMakeDomBuildInfo(vm, d_config) < 0)
+    if (libxlMakeDomBuildInfo(def, ctx, d_config) < 0)
         return -1;
 
     if (libxlMakeDiskList(def, d_config) < 0)
@@ -1316,10 +1325,10 @@ libxlBuildDomainConfig(libxlDriverPrivatePtr driver,
     if (libxlMakeNicList(def, d_config) < 0)
         return -1;
 
-    if (libxlMakeVfbList(driver, def, d_config) < 0)
+    if (libxlMakeVfbList(graphicsports, def, d_config) < 0)
         return -1;
 
-    if (libxlMakePciList(def, d_config) < 0)
+    if (libxlMakePCIList(def, d_config) < 0)
         return -1;
 
     d_config->on_reboot = def->onReboot;
@@ -1327,4 +1336,12 @@ libxlBuildDomainConfig(libxlDriverPrivatePtr driver,
     d_config->on_crash = def->onCrash;
 
     return 0;
+}
+
+virDomainXMLOptionPtr
+libxlCreateXMLConf(void)
+{
+    return virDomainXMLOptionNew(&libxlDomainDefParserConfig,
+                                 &libxlDomainXMLPrivateDataCallbacks,
+                                 NULL);
 }

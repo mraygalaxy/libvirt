@@ -421,6 +421,12 @@ sc_prohibit_gethostname:
 	halt='use virGetHostname, not gethostname'			\
 	  $(_sc_search_regexp)
 
+sc_prohibit_readdir:
+	@prohibit='\breaddir *\('					\
+	exclude='exempt from syntax-check'				\
+	halt='use virDirRead, not readdir'				\
+	  $(_sc_search_regexp)
+
 sc_prohibit_gettext_noop:
 	@prohibit='gettext_noop *\('					\
 	halt='use N_, not gettext_noop'					\
@@ -619,7 +625,7 @@ sc_libvirt_unmarked_diagnostics:
 	  $(_sc_search_regexp)
 	@{ grep     -nE '\<$(func_re) *\(.*;$$' $$($(VC_LIST_EXCEPT));   \
 	   grep -A1 -nE '\<$(func_re) *\(.*,$$' $$($(VC_LIST_EXCEPT)); } \
-	   | sed 's/_("\([^\"]\|\\.\)\+"//;s/[	 ]"%s"//'		\
+	   | $(SED) 's/_("\([^\"]\|\\.\)\+"//;s/[	 ]"%s"//'		\
 	   | grep '[	 ]"' &&						\
 	  { echo '$(ME): found unmarked diagnostic(s)' 1>&2;		\
 	    exit 1; } || :
@@ -644,7 +650,7 @@ sc_prohibit_newline_at_end_of_diagnostic:
 sc_prohibit_diagnostic_without_format:
 	@{ grep     -nE '\<$(func_re) *\(.*;$$' $$($(VC_LIST_EXCEPT));   \
 	   grep -A2 -nE '\<$(func_re) *\(.*,$$' $$($(VC_LIST_EXCEPT)); } \
-	   | sed -rn -e ':l; /[,"]$$/ {N;b l;}'				 \
+	   | $(SED) -rn -e ':l; /[,"]$$/ {N;b l;}'				 \
 		-e '/(xenapiSessionErrorHandler|vah_(error|warning))/d'	 \
 		-e '/\<$(func_re) *\([^"]*"([^%"]|"\n[^"]*")*"[,)]/p'	 \
            | grep -vE 'VIR_ERROR' &&					 \
@@ -666,7 +672,7 @@ sc_prohibit_useless_translation:
 # or \n on one side of the split.
 sc_require_whitespace_in_translation:
 	@grep -n -A1 '"$$' $$($(VC_LIST_EXCEPT))   			\
-	   | sed -ne ':l; /"$$/ {N;b l;}; s/"\n[^"]*"/""/g; s/\\n/ /g'	\
+	   | $(SED) -ne ':l; /"$$/ {N;b l;}; s/"\n[^"]*"/""/g; s/\\n/ /g'	\
 		-e '/_(.*[^\ ]""[^\ ]/p' | grep . &&			\
 	  { echo '$(ME): missing whitespace at line split' 1>&2;	\
 	    exit 1; } || :
@@ -686,11 +692,11 @@ sc_preprocessor_indentation:
 sc_spec_indentation:
 	@if cppi --version >/dev/null 2>&1; then			\
 	  for f in $$($(VC_LIST_EXCEPT) | grep '\.spec\.in$$'); do	\
-	    sed -e 's|#|// #|; s|%ifn*\(arch\)* |#if a // |'		\
+	    $(SED) -e 's|#|// #|; s|%ifn*\(arch\)* |#if a // |'		\
 		-e 's/%\(else\|endif\|define\)/#\1/'			\
 		-e 's/^\( *\)\1\1\1#/#\1/'				\
 		-e 's|^\( *[^#/ ]\)|// \1|; s|^\( */[^/]\)|// \1|' $$f	\
-	    | cppi -a -c 2>&1 | sed "s|standard input|$$f|";		\
+	    | cppi -a -c 2>&1 | $(SED) "s|standard input|$$f|";		\
 	  done | { if grep . >&2; then false; else :; fi; }		\
 	    || { echo '$(ME): incorrect preprocessor indentation' 1>&2;	\
 		exit 1; };						\
@@ -760,17 +766,17 @@ sc_prohibit_gettext_markup:
 # lower-level code must not include higher-level headers.
 cross_dirs=$(patsubst $(srcdir)/src/%.,%,$(wildcard $(srcdir)/src/*/.))
 cross_dirs_re=($(subst / ,/|,$(cross_dirs)))
+mid_dirs=access|conf|cpu|locking|network|node_device|rpc|security|storage
 sc_prohibit_cross_inclusion:
 	@for dir in $(cross_dirs); do					\
 	  case $$dir in							\
 	    util/) safe="util";;					\
-	    locking/)							\
-	      safe="($$dir|util|conf|rpc)";;				\
-	    cpu/ | locking/ | network/ | rpc/ | security/)		\
-	      safe="($$dir|util|conf)";;				\
+	    access/ | conf/) safe="($$dir|conf|util)";;			\
+	    locking/) safe="($$dir|util|conf|rpc)";;			\
+	    cpu/| network/| node_device/| rpc/| security/| storage/)	\
+	      safe="($$dir|util|conf|storage)";;			\
 	    xenapi/ | xenxs/ ) safe="($$dir|util|conf|xen)";;		\
-	    qemu/ ) safe="($$dir|util|conf|cpu|network|locking|rpc|security|storage)";; \
-	    *) safe="($$dir|util|conf|cpu|network|locking|rpc|security)";; \
+	    *) safe="($$dir|$(mid_dirs)|util)";;			\
 	  esac;								\
 	  in_vc_files="^src/$$dir"					\
 	  prohibit='^# *include .$(cross_dirs_re)'			\
@@ -783,7 +789,7 @@ sc_prohibit_cross_inclusion:
 # elements added to the enum by using a _LAST marker.
 sc_require_enum_last_marker:
 	@grep -A1 -nE '^[^#]*VIR_ENUM_IMPL *\(' $$($(VC_LIST_EXCEPT))	\
-	   | sed -ne '/VIR_ENUM_IMPL[^,]*,$$/N'				\
+	   | $(SED) -ne '/VIR_ENUM_IMPL[^,]*,$$/N'				\
 	     -e '/VIR_ENUM_IMPL[^,]*,[^,]*[^_,][^L,][^A,][^S,][^T,],/p'	\
 	     -e '/VIR_ENUM_IMPL[^,]*,[^,]\{0,4\},/p'			\
 	   | grep . &&							\
@@ -912,9 +918,35 @@ sc_curly_braces_style:
 			  'braces around function body, see'           \
 			  'HACKING' 1>&2; exit 1; } || :
 
+sc_prohibit_windows_special_chars_in_filename:
+	@files=$$($(VC_LIST_EXCEPT) | grep '[:*?"<>|]');               \
+	test -n "$$files" && { echo '$(ME): Windows special chars'     \
+	  'in filename not allowed:' 1>&2; echo $$files 1>&2; exit 1; } || :
+
+sc_prohibit_mixed_case_abbreviations:
+	@prohibit='Pci|Usb|Scsi'			\
+	in_vc_files='\.[ch]$$'				\
+	halt='Use PCI, USB, SCSI, not Pci, Usb, Scsi'	\
+	  $(_sc_search_regexp)
+
+# Require #include <locale.h> in all files that call setlocale()
+sc_require_locale_h:
+	@require='include.*locale\.h'					\
+	containing='setlocale *('					\
+	halt='setlocale() requires <locale.h>'				\
+	  $(_sc_search_regexp)
+
+sc_prohibit_empty_first_line:
+	@awk 'BEGIN { fail=0; }						\
+	FNR == 1 { if ($$0 == "") { print FILENAME ":1:"; fail=1; } }	\
+	END { if (fail == 1) {						\
+	  print "$(ME): Prohibited empty first line" > "/dev/stderr";	\
+	} exit fail; }' $$($(VC_LIST_EXCEPT));
+
 # We don't use this feature of maint.mk.
 prev_version_file = /dev/null
 
+ifneq ($(_gl-Makefile),)
 ifeq (0,$(MAKELEVEL))
   _curr_status = .git-module-status
   # The sed filter accommodates those who check out on a commit from which
@@ -927,7 +959,7 @@ ifeq (0,$(MAKELEVEL))
   # b653eda3ac4864de205419d9f41eec267cb89eeb
   #
   # Keep this logic in sync with autogen.sh.
-  _submodule_hash = sed 's/^[ +-]//;s/ .*//'
+  _submodule_hash = $(SED) 's/^[ +-]//;s/ .*//'
   _update_required := $(shell						\
       cd '$(srcdir)';							\
       test -d .git || { echo 0; exit; };				\
@@ -947,6 +979,7 @@ ifeq (0,$(MAKELEVEL))
 maint.mk Makefile: _autogen
   endif
 endif
+endif
 
 # It is necessary to call autogen any time gnulib changes.  Autogen
 # reruns configure, then we regenerate all Makefiles at once.
@@ -956,7 +989,9 @@ _autogen:
 	./config.status
 
 # regenerate HACKING as part of the syntax-check
+ifneq ($(_gl-Makefile),)
 syntax-check: $(top_srcdir)/HACKING bracket-spacing-check
+endif
 
 bracket-spacing-check:
 	$(AM_V_GEN)files=`$(VC_LIST) | grep '\.c$$'`; \
@@ -1084,3 +1119,9 @@ exclude_file_name_regexp--sc_prohibit_getenv = \
 
 exclude_file_name_regexp--sc_avoid_attribute_unused_in_header = \
   ^src/util/virlog\.h$$
+
+exclude_file_name_regexp--sc_prohibit_mixed_case_abbreviations = \
+  ^src/(vbox/vbox_CAPI.*.h|esx/esx_vi.(c|h)|esx/esx_storage_backend_iscsi.c)$$
+
+exclude_file_name_regexp--sc_prohibit_empty_first_line = \
+  ^(README|daemon/THREADS\.txt|src/esx/README|docs/library.xen|tests/vmwareverdata/fusion-5.0.3.txt)$$

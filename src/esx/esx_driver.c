@@ -389,7 +389,7 @@ esxAutodetectSCSIControllerModel(virDomainDiskDefPtr def, int *model,
 
     if (def->device != VIR_DOMAIN_DISK_DEVICE_DISK ||
         def->bus != VIR_DOMAIN_DISK_BUS_SCSI ||
-        virDomainDiskGetType(def) != VIR_DOMAIN_DISK_TYPE_FILE ||
+        virDomainDiskGetType(def) != VIR_STORAGE_TYPE_FILE ||
         !src || !STRPREFIX(src, "[")) {
         /*
          * This isn't a file-based SCSI disk device with a datastore related
@@ -889,11 +889,11 @@ esxConnectToVCenter(esxPrivate *priv,
  * it. If the ESX host is not managed by a vCenter an error is reported.
  *
  * If the no_verify parameter is set to 1, this disables libcurl client checks
- * of the server's certificate. The default value it 0.
+ * of the server's certificate. The default value is 0.
  *
  * If the auto_answer parameter is set to 1, the driver will respond to all
  * virtual machine questions with the default answer, otherwise virtual machine
- * questions will be reported as errors. The default value it 0.
+ * questions will be reported as errors. The default value is 0.
  *
  * The proxy parameter allows to specify a proxy for to be used by libcurl.
  * The default for the optional <type> part is http and socks is synonymous for
@@ -3109,7 +3109,7 @@ esxDomainDefineXML(virConnectPtr conn, const char *xml)
     /*
      * Build VMX datastore URL. Use the source of the first file-based harddisk
      * to deduce the datastore and path for the VMX file. Don't just use the
-     * first disk, because it may be CDROM disk and ISO images are normaly not
+     * first disk, because it may be CDROM disk and ISO images are normally not
      * located in the virtual machine's directory. This approach to deduce the
      * datastore isn't perfect but should work in the majority of cases.
      */
@@ -3122,7 +3122,7 @@ esxDomainDefineXML(virConnectPtr conn, const char *xml)
 
     for (i = 0; i < def->ndisks; ++i) {
         if (def->disks[i]->device == VIR_DOMAIN_DISK_DEVICE_DISK &&
-            virDomainDiskGetType(def->disks[i]) == VIR_DOMAIN_DISK_TYPE_FILE) {
+            virDomainDiskGetType(def->disks[i]) == VIR_STORAGE_TYPE_FILE) {
             disk = def->disks[i];
             break;
         }

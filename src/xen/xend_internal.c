@@ -597,7 +597,7 @@ sexpr_get(virConnectPtr xend, const char *fmt, ...)
  * @sexpr: an S-Expression
  * @name: the name for the value
  *
- * convenience function to lookup an UUID value from the S-Expression
+ * convenience function to lookup a UUID value from the S-Expression
  *
  * Returns a -1 on error, 0 on success
  */
@@ -1100,7 +1100,9 @@ sexpr_to_xend_topology(const struct sexpr *root, virCapsPtr caps)
         }
         virBitmapFree(cpuset);
 
-        if (virCapabilitiesAddHostNUMACell(caps, cell, nb_cpus, 0, cpuInfo) < 0)
+        if (virCapabilitiesAddHostNUMACell(caps, cell, 0,
+                                           nb_cpus, cpuInfo,
+                                           0, NULL) < 0)
             goto error;
         cpuInfo = NULL;
     }

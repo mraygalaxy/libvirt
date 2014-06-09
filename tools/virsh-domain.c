@@ -2979,8 +2979,14 @@ cmdUndefine(vshControl *ctl, const vshCmd *cmd)
     size_t i;
     size_t j;
 
-
     ignore_value(vshCommandOptString(cmd, "storage", &vol_string));
+
+    if (!(vol_string || remove_all_storage) && wipe_storage) {
+        vshError(ctl,
+                 _("'--wipe-storage' requires '--storage <string>' or "
+                   "'--remove-all-storage'"));
+        return false;
+    }
 
     if (managed_save) {
         flags |= VIR_DOMAIN_UNDEFINE_MANAGED_SAVE;
@@ -4837,7 +4843,7 @@ static const vshCmdOptDef opts_shutdown[] = {
     },
     {.name = "mode",
      .type = VSH_OT_STRING,
-     .help = N_("shutdown mode: acpi|agent|initctl|signal")
+     .help = N_("shutdown mode: acpi|agent|initctl|signal|paravirt")
     },
     {.name = NULL}
 };
@@ -4872,9 +4878,12 @@ cmdShutdown(vshControl *ctl, const vshCmd *cmd)
             flags |= VIR_DOMAIN_SHUTDOWN_INITCTL;
         } else if (STREQ(mode, "signal")) {
             flags |= VIR_DOMAIN_SHUTDOWN_SIGNAL;
+        } else if (STREQ(mode, "paravirt")) {
+            flags |= VIR_DOMAIN_SHUTDOWN_PARAVIRT;
         } else {
             vshError(ctl, _("Unknown mode %s value, expecting "
-                            "'acpi', 'agent', 'initctl' or 'signal'"), mode);
+                            "'acpi', 'agent', 'initctl', 'signal', "
+                            "or 'paravirt'"), mode);
             goto cleanup;
         }
         tmp++;
@@ -4923,7 +4932,7 @@ static const vshCmdOptDef opts_reboot[] = {
     },
     {.name = "mode",
      .type = VSH_OT_STRING,
-     .help = N_("shutdown mode: acpi|agent|initctl|signal")
+     .help = N_("shutdown mode: acpi|agent|initctl|signal|paravirt")
     },
     {.name = NULL}
 };
@@ -4957,9 +4966,12 @@ cmdReboot(vshControl *ctl, const vshCmd *cmd)
             flags |= VIR_DOMAIN_REBOOT_INITCTL;
         } else if (STREQ(mode, "signal")) {
             flags |= VIR_DOMAIN_REBOOT_SIGNAL;
+        } else if (STREQ(mode, "paravirt")) {
+            flags |= VIR_DOMAIN_REBOOT_PARAVIRT;
         } else {
             vshError(ctl, _("Unknown mode %s value, expecting "
-                            "'acpi', 'agent', 'initctl' or 'signal'"), mode);
+                            "'acpi', 'agent', 'initctl', 'signal' "
+                            "or 'paravirt'"), mode);
             goto cleanup;
         }
         tmp++;
@@ -5516,6 +5528,10 @@ static const vshCmdOptDef opts_vcpuinfo[] = {
      .flags = VSH_OFLAG_REQ,
      .help = N_("domain name, id or uuid")
     },
+    {.name = "pretty",
+     .type = VSH_OT_BOOL,
+     .help = N_("return human readable output")
+    },
     {.name = NULL}
 };
 
@@ -5524,25 +5540,22 @@ cmdVcpuinfo(vshControl *ctl, const vshCmd *cmd)
 {
     virDomainInfo info;
     virDomainPtr dom;
-    virVcpuInfoPtr cpuinfo;
-    unsigned char *cpumaps;
+    virVcpuInfoPtr cpuinfo = NULL;
+    unsigned char *cpumaps = NULL;
     int ncpus, maxcpu;
     size_t cpumaplen;
-    bool ret = true;
+    bool ret = false;
+    bool pretty = vshCommandOptBool(cmd, "pretty");
     int n, m;
 
     if (!(dom = vshCommandOptDomain(ctl, cmd, NULL)))
         return false;
 
-    if ((maxcpu = vshNodeGetCPUCount(ctl->conn)) < 0) {
-        virDomainFree(dom);
-        return false;
-    }
+    if ((maxcpu = vshNodeGetCPUCount(ctl->conn)) < 0)
+        goto cleanup;
 
-    if (virDomainGetInfo(dom, &info) != 0) {
-        virDomainFree(dom);
-        return false;
-    }
+    if (virDomainGetInfo(dom, &info) != 0)
+        goto cleanup;
 
     cpuinfo = vshMalloc(ctl, sizeof(virVcpuInfo)*info.nrVirtCpu);
     cpumaplen = VIR_CPU_MAPLEN(maxcpu);
@@ -5550,9 +5563,21 @@ cmdVcpuinfo(vshControl *ctl, const vshCmd *cmd)
 
     if ((ncpus = virDomainGetVcpus(dom,
                                    cpuinfo, info.nrVirtCpu,
-                                   cpumaps, cpumaplen)) >= 0) {
-        for (n = 0; n < ncpus; n++) {
-            vshPrint(ctl, "%-15s %d\n", _("VCPU:"), n);
+                                   cpumaps, cpumaplen)) < 0) {
+        if (info.state != VIR_DOMAIN_SHUTOFF)
+            goto cleanup;
+
+        /* fall back to virDomainGetVcpuPinInfo and free cpuinfo to mark this */
+        VIR_FREE(cpuinfo);
+        if ((ncpus = virDomainGetVcpuPinInfo(dom, info.nrVirtCpu,
+                                             cpumaps, cpumaplen,
+                                             VIR_DOMAIN_AFFECT_CONFIG)) < 0)
+            goto cleanup;
+    }
+
+    for (n = 0; n < ncpus; n++) {
+        vshPrint(ctl, "%-15s %d\n", _("VCPU:"), n);
+        if (cpuinfo) {
             vshPrint(ctl, "%-15s %d\n", _("CPU:"), cpuinfo[n].cpu);
             vshPrint(ctl, "%-15s %s\n", _("State:"),
                      vshDomainVcpuStateToString(cpuinfo[n].state));
@@ -5563,43 +5588,35 @@ cmdVcpuinfo(vshControl *ctl, const vshCmd *cmd)
 
                 vshPrint(ctl, "%-15s %.1lfs\n", _("CPU time:"), cpuUsed);
             }
-            vshPrint(ctl, "%-15s ", _("CPU Affinity:"));
-            for (m = 0; m < maxcpu; m++) {
-                vshPrint(ctl, "%c", VIR_CPU_USABLE(cpumaps, cpumaplen, n, m) ? 'y' : '-');
-            }
-            vshPrint(ctl, "\n");
-            if (n < (ncpus - 1)) {
-                vshPrint(ctl, "\n");
-            }
-        }
-    } else {
-        if (info.state == VIR_DOMAIN_SHUTOFF &&
-            (ncpus = virDomainGetVcpuPinInfo(dom, info.nrVirtCpu,
-                                             cpumaps, cpumaplen,
-                                             VIR_DOMAIN_AFFECT_CONFIG)) >= 0) {
-
-            /* fallback plan to use virDomainGetVcpuPinInfo */
-
-            for (n = 0; n < ncpus; n++) {
-                vshPrint(ctl, "%-15s %d\n", _("VCPU:"), n);
-                vshPrint(ctl, "%-15s %s\n", _("CPU:"), _("N/A"));
-                vshPrint(ctl, "%-15s %s\n", _("State:"), _("N/A"));
-                vshPrint(ctl, "%-15s %s\n", _("CPU time"), _("N/A"));
-                vshPrint(ctl, "%-15s ", _("CPU Affinity:"));
-                for (m = 0; m < maxcpu; m++) {
-                    vshPrint(ctl, "%c",
-                             VIR_CPU_USABLE(cpumaps, cpumaplen, n, m) ? 'y' : '-');
-                }
-                vshPrint(ctl, "\n");
-                if (n < (ncpus - 1)) {
-                    vshPrint(ctl, "\n");
-                }
-            }
         } else {
-            ret = false;
+            vshPrint(ctl, "%-15s %s\n", _("CPU:"), _("N/A"));
+            vshPrint(ctl, "%-15s %s\n", _("State:"), _("N/A"));
+            vshPrint(ctl, "%-15s %s\n", _("CPU time"), _("N/A"));
         }
+        vshPrint(ctl, "%-15s ", _("CPU Affinity:"));
+        if (pretty) {
+            char *str;
+
+            str = virBitmapDataToString(VIR_GET_CPUMAP(cpumaps, cpumaplen, n),
+                                        cpumaplen);
+            if (!str)
+                goto cleanup;
+            vshPrint(ctl, _("%s (out of %d)"), str, maxcpu);
+            VIR_FREE(str);
+        } else {
+            for (m = 0; m < maxcpu; m++) {
+                vshPrint(ctl, "%c",
+                         VIR_CPU_USABLE(cpumaps, cpumaplen, n, m) ? 'y' : '-');
+            }
+        }
+        vshPrint(ctl, "\n");
+        if (n < (ncpus - 1))
+            vshPrint(ctl, "\n");
     }
 
+    ret = true;
+
+ cleanup:
     VIR_FREE(cpumaps);
     VIR_FREE(cpuinfo);
     virDomainFree(dom);
@@ -9393,12 +9410,6 @@ cmdDomDisplay(vshControl *ctl, const vshCmd *cmd)
         passwd = virXPathString(xpath, ctxt);
         VIR_FREE(xpath);
 
-        if (STREQ(scheme[iter], "vnc")) {
-            /* VNC protocol handlers take their port number as
-             * 'port' - 5900 */
-            port -= 5900;
-        }
-
         /* Build up the full URI, starting with the scheme */
         virBufferAsprintf(&buf, "%s://", scheme[iter]);
 
@@ -9417,8 +9428,15 @@ cmdDomDisplay(vshControl *ctl, const vshCmd *cmd)
             virBufferAsprintf(&buf, "%s", listen_addr);
 
         /* Add the port */
-        if (port)
+        if (port) {
+            if (STREQ(scheme[iter], "vnc")) {
+                /* VNC protocol handlers take their port number as
+                 * 'port' - 5900 */
+                port -= 5900;
+            }
+
             virBufferAsprintf(&buf, ":%d", port);
+        }
 
         /* TLS Port */
         if (tls_port) {
@@ -11037,7 +11055,7 @@ static vshEventCallback vshEventCallbacks[] = {
 verify(VIR_DOMAIN_EVENT_ID_LAST == ARRAY_CARDINALITY(vshEventCallbacks));
 
 static const vshCmdInfo info_event[] = {
-    {.name = "event",
+    {.name = "help",
      .data = N_("Domain Events")
     },
     {.name = "desc",
@@ -11398,6 +11416,120 @@ cmdDomFSTrim(vshControl *ctl, const vshCmd *cmd)
     return ret;
 }
 
+static const vshCmdInfo info_domfsfreeze[] = {
+    {.name = "help",
+     .data = N_("Freeze domain's mounted filesystems.")
+    },
+    {.name = "desc",
+     .data = N_("Freeze domain's mounted filesystems.")
+    },
+    {.name = NULL}
+};
+
+static const vshCmdOptDef opts_domfsfreeze[] = {
+    {.name = "domain",
+     .type = VSH_OT_DATA,
+     .flags = VSH_OFLAG_REQ,
+     .help = N_("domain name, id or uuid")
+    },
+    {.name = "mountpoint",
+     .type = VSH_OT_ARGV,
+     .help = N_("mountpoint path to be frozen")
+    },
+    {.name = NULL}
+};
+static bool
+cmdDomFSFreeze(vshControl *ctl, const vshCmd *cmd)
+{
+    virDomainPtr dom = NULL;
+    int ret = -1;
+    const vshCmdOpt *opt = NULL;
+    const char **mountpoints = NULL;
+    size_t nmountpoints = 0;
+
+    if (!(dom = vshCommandOptDomain(ctl, cmd, NULL)))
+        return false;
+
+    while ((opt = vshCommandOptArgv(cmd, opt))) {
+        if (VIR_EXPAND_N(mountpoints, nmountpoints, 1) < 0) {
+            vshError(ctl, _("%s: %d: failed to allocate mountpoints"),
+                     __FILE__, __LINE__);
+            goto cleanup;
+        }
+        mountpoints[nmountpoints-1] = opt->data;
+    }
+
+    ret = virDomainFSFreeze(dom, mountpoints, nmountpoints, 0);
+    if (ret < 0) {
+        vshError(ctl, _("Unable to freeze filesystems"));
+        goto cleanup;
+    }
+
+    vshPrint(ctl, _("Froze %d filesystem(s)\n"), ret);
+
+ cleanup:
+    VIR_FREE(mountpoints);
+    virDomainFree(dom);
+    return ret >= 0;
+}
+
+static const vshCmdInfo info_domfsthaw[] = {
+    {.name = "help",
+     .data = N_("Thaw domain's mounted filesystems.")
+    },
+    {.name = "desc",
+     .data = N_("Thaw domain's mounted filesystems.")
+    },
+    {.name = NULL}
+};
+
+static const vshCmdOptDef opts_domfsthaw[] = {
+    {.name = "domain",
+     .type = VSH_OT_DATA,
+     .flags = VSH_OFLAG_REQ,
+     .help = N_("domain name, id or uuid")
+    },
+    {.name = "mountpoint",
+     .type = VSH_OT_ARGV,
+     .help = N_("mountpoint path to be thawed")
+    },
+    {.name = NULL}
+};
+static bool
+cmdDomFSThaw(vshControl *ctl, const vshCmd *cmd)
+{
+    virDomainPtr dom = NULL;
+    int ret = -1;
+    const vshCmdOpt *opt = NULL;
+    const char **mountpoints = NULL;
+    size_t nmountpoints = 0;
+
+    if (!(dom = vshCommandOptDomain(ctl, cmd, NULL)))
+        return false;
+
+    while ((opt = vshCommandOptArgv(cmd, opt))) {
+        if (VIR_EXPAND_N(mountpoints, nmountpoints, 1) < 0) {
+            vshError(ctl, _("%s: %d: failed to allocate mountpoints"),
+                     __FILE__, __LINE__);
+            goto cleanup;
+        }
+        mountpoints[nmountpoints-1] = opt->data;
+    }
+
+    ret = virDomainFSThaw(dom, mountpoints, nmountpoints, 0);
+    if (ret < 0) {
+        vshError(ctl, _("Unable to thaw filesystems"));
+        goto cleanup;
+    }
+
+    vshPrint(ctl, _("Thawed %d filesystem(s)\n"), ret);
+
+ cleanup:
+    VIR_FREE(mountpoints);
+    virDomainFree(dom);
+    return ret >= 0;
+}
+
 const vshCmdDef domManagementCmds[] = {
     {.name = "attach-device",
      .handler = cmdAttachDevice,
@@ -11543,6 +11675,18 @@ const vshCmdDef domManagementCmds[] = {
      .handler = cmdDomDisplay,
      .opts = opts_domdisplay,
      .info = info_domdisplay,
+     .flags = 0
+    },
+    {.name = "domfsfreeze",
+     .handler = cmdDomFSFreeze,
+     .opts = opts_domfsfreeze,
+     .info = info_domfsfreeze,
+     .flags = 0
+    },
+    {.name = "domfsthaw",
+     .handler = cmdDomFSThaw,
+     .opts = opts_domfsthaw,
+     .info = info_domfsthaw,
      .flags = 0
     },
     {.name = "domfstrim",

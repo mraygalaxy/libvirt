@@ -18,6 +18,7 @@
 
 # old automake does not provide abs_{src,build}dir variables
 abs_builddir = $(shell pwd)
+abs_topbuilddir = $(shell cd .. && pwd)
 abs_srcdir = $(shell cd $(srcdir) && pwd)
 
 # No libraries with the exception of LIBXML should be listed
@@ -30,6 +31,7 @@ INCLUDES =	-I../gnulib/lib					\
 		-I$(top_srcdir)/include				\
 		-I$(top_srcdir)/src/util			\
 		-DIN_LIBVIRT					\
+		-Dabs_topbuilddir="\"$(abs_topbuilddir)\""	\
 		$(GETTEXT_CPPFLAGS)
 
 AM_CFLAGS =	$(LIBXML_CFLAGS)				\
@@ -106,6 +108,8 @@ UTIL_SOURCES =							\
 		util/virevent.c util/virevent.h			\
 		util/vireventpoll.c util/vireventpoll.h		\
 		util/virfile.c util/virfile.h			\
+		util/virfirewall.c util/virfirewall.h		\
+		util/virfirewallpriv.h				\
 		util/virhash.c util/virhash.h			\
 		util/virhashcode.c util/virhashcode.h		\
 		util/virhook.c util/virhook.h			\
@@ -142,9 +146,11 @@ UTIL_SOURCES =							\
 		util/virprocess.c util/virprocess.h		\
 		util/virrandom.h util/virrandom.c		\
 		util/virscsi.c util/virscsi.h			\
+		util/virseclabel.c util/virseclabel.h		\
 		util/virsexpr.c util/virsexpr.h			\
 		util/virsocketaddr.h util/virsocketaddr.c	\
 		util/virstatslinux.c util/virstatslinux.h	\
+		util/virstorageencryption.c util/virstorageencryption.h \
 		util/virstoragefile.c util/virstoragefile.h	\
 		util/virstring.h util/virstring.c		\
 		util/virsysinfo.c util/virsysinfo.h		\
@@ -241,6 +247,7 @@ NETDEV_CONF_SOURCES =						\
 # Domain driver generic impl APIs
 DOMAIN_CONF_SOURCES =						\
 		conf/capabilities.c conf/capabilities.h		\
+		conf/domain_addr.c conf/domain_addr.h		\
 		conf/domain_conf.c conf/domain_conf.h		\
 		conf/domain_audit.c conf/domain_audit.h		\
 		conf/domain_nwfilter.c conf/domain_nwfilter.h	\
@@ -287,9 +294,6 @@ SECRET_CONF_SOURCES =                                          \
 NODE_DEVICE_CONF_SOURCES =                                     \
 		conf/node_device_conf.c conf/node_device_conf.h
 
-ENCRYPTION_CONF_SOURCES =					\
-		conf/storage_encryption_conf.c conf/storage_encryption_conf.h
-
 CPU_CONF_SOURCES =						\
 		conf/cpu_conf.c conf/cpu_conf.h
 
@@ -311,7 +315,6 @@ CONF_SOURCES =							\
 		$(NWFILTER_CONF_SOURCES)			\
 		$(NODE_DEVICE_CONF_SOURCES)			\
 		$(STORAGE_CONF_SOURCES)				\
-		$(ENCRYPTION_CONF_SOURCES)			\
 		$(INTERFACE_CONF_SOURCES)			\
 		$(SECRET_CONF_SOURCES)				\
 		$(CPU_CONF_SOURCES)				\
@@ -704,7 +707,8 @@ XENAPI_DRIVER_SOURCES =						\
 LIBXL_DRIVER_SOURCES =						\
 		libxl/libxl_conf.c libxl/libxl_conf.h		\
 		libxl/libxl_domain.c libxl/libxl_domain.h       \
-		libxl/libxl_driver.c libxl/libxl_driver.h
+		libxl/libxl_driver.c libxl/libxl_driver.h       \
+		libxl/libxl_migration.c libxl/libxl_migration.h
 
 UML_DRIVER_SOURCES =						\
 		uml/uml_conf.c uml/uml_conf.h			\
@@ -780,6 +784,8 @@ PARALLELS_DRIVER_SOURCES =					\
 		parallels/parallels_network.c
 
 BHYVE_DRIVER_SOURCES =						\
+		bhyve/bhyve_capabilities.c			\
+		bhyve/bhyve_capabilities.h			\
 		bhyve/bhyve_command.c				\
 		bhyve/bhyve_command.h				\
 		bhyve/bhyve_driver.h				\
@@ -855,9 +861,13 @@ STORAGE_HELPER_DISK_SOURCES =					\
 UTIL_IO_HELPER_SOURCES =					\
 		util/iohelper.c
 
+NETWORK_LEASES_HELPER_SOURCES =                                 \
+               network/leaseshelper.c
+
 # Network filters
 NWFILTER_DRIVER_SOURCES =						\
 		nwfilter/nwfilter_driver.h nwfilter/nwfilter_driver.c	\
+		nwfilter/nwfilter_tech_driver.h				\
 		nwfilter/nwfilter_gentech_driver.c			\
 		nwfilter/nwfilter_gentech_driver.h			\
 		nwfilter/nwfilter_dhcpsnoop.c				\
@@ -1533,27 +1543,34 @@ endif WITH_NODE_DEVICES
 
 
 if WITH_NWFILTER
+noinst_LTLIBRARIES += libvirt_driver_nwfilter_impl.la
+libvirt_driver_nwfilter_la_SOURCES =
+libvirt_driver_nwfilter_la_LIBADD = libvirt_driver_nwfilter_impl.la
 if WITH_DRIVER_MODULES
 mod_LTLIBRARIES += libvirt_driver_nwfilter.la
+libvirt_driver_nwfilter_la_LDFLAGS = -module -avoid-version $(AM_LDFLAGS)
 else ! WITH_DRIVER_MODULES
 noinst_LTLIBRARIES += libvirt_driver_nwfilter.la
 # Stateful, so linked to daemon instead
 #libvirt_la_BUILT_LIBADD += libvirt_driver_nwfilter.la
 endif ! WITH_DRIVER_MODULES
-libvirt_driver_nwfilter_la_CFLAGS = \
+libvirt_driver_nwfilter_impl_la_CFLAGS = \
 		$(LIBPCAP_CFLAGS) \
 		$(LIBNL_CFLAGS) \
 		$(DBUS_CFLAGS) \
 		-I$(top_srcdir)/src/access \
 		-I$(top_srcdir)/src/conf \
 		$(AM_CFLAGS)
-libvirt_driver_nwfilter_la_LDFLAGS = $(AM_LDFLAGS)
-libvirt_driver_nwfilter_la_LIBADD = $(LIBPCAP_LIBS) $(LIBNL_LIBS) $(DBUS_LIBS)
+libvirt_driver_nwfilter_impl_la_LDFLAGS = $(AM_LDFLAGS)
+libvirt_driver_nwfilter_impl_la_LIBADD = \
+		$(LIBPCAP_LIBS) \
+		$(LIBNL_LIBS) \
+		$(DBUS_LIBS)
 if WITH_DRIVER_MODULES
-libvirt_driver_nwfilter_la_LIBADD += ../gnulib/lib/libgnu.la
-libvirt_driver_nwfilter_la_LDFLAGS += -module -avoid-version
+libvirt_driver_nwfilter_impl_la_LIBADD += ../gnulib/lib/libgnu.la
+libvirt_driver_nwfilter_impl_la_LDFLAGS += -module -avoid-version
 endif WITH_DRIVER_MODULES
-libvirt_driver_nwfilter_la_SOURCES = $(NWFILTER_DRIVER_SOURCES)
+libvirt_driver_nwfilter_impl_la_SOURCES = $(NWFILTER_DRIVER_SOURCES)
 endif WITH_NWFILTER
 
 
@@ -2071,7 +2088,6 @@ libvirt_setuid_rpc_client_la_SOURCES = 		\
 		util/virprocess.c		\
 		util/virrandom.c		\
 		util/virsocketaddr.c		\
-		util/virstoragefile.c		\
 		util/virstring.c		\
 		util/virtime.c			\
 		util/virthread.c		\
@@ -2456,6 +2472,25 @@ libvirt_iohelper_CFLAGS = \
 		$(AM_CFLAGS) \
 		$(PIE_CFLAGS) \
 		$(NULL)
+
+if WITH_NETWORK
+libexec_PROGRAMS += libvirt_leaseshelper
+libvirt_leaseshelper_SOURCES = $(NETWORK_LEASES_HELPER_SOURCES)
+libvirt_leaseshelper_LDADD =           \
+               libvirt_util.la         \
+               ../gnulib/lib/libgnu.la
+if WITH_DTRACE_PROBES
+libvirt_leaseshelper_LDADD += libvirt_probes.lo
+endif WITH_DTRACE_PROBES
+
+libvirt_leaseshelper_CFLAGS = \
+	       $(AM_CFLAGS) \
+               $(PIE_CFLAGS) \
+               $(NULL)
+else ! WITH_NETWORK
+EXTRA_DIST += $(NETWORK_LEASES_HELPER_SOURCES)
+endif ! WITH_NETWORK
+
 endif WITH_LIBVIRTD
 
 if WITH_STORAGE_DISK
@@ -2553,8 +2588,10 @@ virt_aa_helper_LDFLAGS = \
 		$(PIE_LDFLAGS) \
 		$(NULL)
 virt_aa_helper_LDADD =						\
+		libvirt.la					\
 		libvirt_conf.la					\
 		libvirt_util.la					\
+		libvirt_driver_storage_impl.la			\
 		../gnulib/lib/libgnu.la
 if WITH_DTRACE_PROBES
 virt_aa_helper_LDADD += libvirt_probes.lo

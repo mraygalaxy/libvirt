@@ -1534,8 +1534,8 @@ qemuMigrationIsSafe(virDomainDefPtr def)
             disk->cachemode != VIR_DOMAIN_DISK_CACHE_DISABLE) {
             int rc;
 
-            if (virDomainDiskGetType(disk) == VIR_DOMAIN_DISK_TYPE_FILE) {
-                if ((rc = virStorageFileIsSharedFS(src)) < 0)
+            if (virDomainDiskGetType(disk) == VIR_STORAGE_TYPE_FILE) {
+                if ((rc = virFileIsSharedFS(src)) < 0)
                     return false;
                 else if (rc == 0)
                     continue;
@@ -1543,8 +1543,8 @@ qemuMigrationIsSafe(virDomainDefPtr def)
                     return false;
                 else if (rc == 1)
                     continue;
-            } else if (disk->src.type == VIR_DOMAIN_DISK_TYPE_NETWORK &&
-                       disk->src.protocol == VIR_DOMAIN_DISK_PROTOCOL_RBD) {
+            } else if (disk->src->type == VIR_STORAGE_TYPE_NETWORK &&
+                       disk->src->protocol == VIR_STORAGE_NET_PROTOCOL_RBD) {
                 continue;
             }
 
@@ -1755,8 +1755,9 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
 
     ret = qemuDomainObjEnterMonitorAsync(driver, vm, asyncJob);
     if (ret < 0) {
-        /* Guest already exited; nothing further to update.  */
-        return -1;
+        /* Guest already exited or waiting for the job timed out; nothing
+         * further to update. */
+        return ret;
     }
     ret = qemuMonitorGetMigrationStatus(priv->mon, &status);
 
@@ -1764,10 +1765,9 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
 
     priv->job.status = status;
 
-    if (ret < 0 || virTimeMillisNow(&priv->job.info.timeElapsed) < 0) {
-        priv->job.info.type = VIR_DOMAIN_JOB_FAILED;
+    if (ret < 0 || virTimeMillisNow(&priv->job.info.timeElapsed) < 0)
         return -1;
-    }
+
     priv->job.info.timeElapsed -= priv->job.start;
 
     ret = -1;
@@ -1824,6 +1824,9 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
 }
 
 
+/* Returns 0 on success, -2 when migration needs to be cancelled, or -1 when
+ * QEMU reports failed migration.
+ */
 static int
 qemuMigrationWaitForCompletion(virQEMUDriverPtr driver, virDomainObjPtr vm,
                                enum qemuDomainAsyncJob asyncJob,
@@ -1853,19 +1856,22 @@ qemuMigrationWaitForCompletion(virQEMUDriverPtr driver, virDomainObjPtr vm,
         /* Poll every 50ms for progress & to allow cancellation */
         struct timespec ts = { .tv_sec = 0, .tv_nsec = 50 * 1000 * 1000ull };
 
+        if (qemuMigrationUpdateJobStatus(driver, vm, job, asyncJob) == -1)
+            break;
+
         /* cancel migration if disk I/O error is emitted while migrating */
         if (abort_on_error &&
             virDomainObjGetState(vm, &pauseReason) == VIR_DOMAIN_PAUSED &&
-            pauseReason == VIR_DOMAIN_PAUSED_IOERROR)
-            goto cancel;
-
-        if (qemuMigrationUpdateJobStatus(driver, vm, job, asyncJob) < 0)
-            goto cleanup;
+            pauseReason == VIR_DOMAIN_PAUSED_IOERROR) {
+            virReportError(VIR_ERR_OPERATION_FAILED,
+                           _("%s: %s"), job, _("failed due to I/O error"));
+            break;
+        }
 
         if (dconn && virConnectIsAlive(dconn) <= 0) {
             virReportError(VIR_ERR_OPERATION_FAILED, "%s",
                            _("Lost connection to destination host"));
-            goto cleanup;
+            break;
         }
 
         virObjectUnlock(vm);
@@ -1875,25 +1881,17 @@ qemuMigrationWaitForCompletion(virQEMUDriverPtr driver, virDomainObjPtr vm,
         virObjectLock(vm);
     }
 
- cleanup:
-    if (priv->job.info.type == VIR_DOMAIN_JOB_COMPLETED)
+    if (priv->job.info.type == VIR_DOMAIN_JOB_COMPLETED) {
         return 0;
-    else
+    } else if (priv->job.info.type == VIR_DOMAIN_JOB_UNBOUNDED) {
+        /* The migration was aborted by us rather than QEMU itself so let's
+         * update the job type and notify the caller to send migrate_cancel.
+         */
+        priv->job.info.type = VIR_DOMAIN_JOB_FAILED;
+        return -2;
+    } else {
         return -1;
-
- cancel:
-    if (virDomainObjIsActive(vm)) {
-        if (qemuDomainObjEnterMonitorAsync(driver, vm,
-                                           priv->job.asyncJob) == 0) {
-            qemuMonitorMigrateCancel(priv->mon);
-            qemuDomainObjExitMonitor(driver, vm);
-        }
     }
-
-    priv->job.info.type = VIR_DOMAIN_JOB_FAILED;
-    virReportError(VIR_ERR_OPERATION_FAILED,
-                   _("%s: %s"), job, _("failed due to I/O error"));
-    return -1;
 }
 
 
@@ -2705,6 +2703,8 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
     int ret = -1;
     virURIPtr uri = NULL;
     bool well_formed_uri = true;
+    virQEMUDriverConfigPtr cfg = virQEMUDriverGetConfig(driver);
+    const char *migrateHost = cfg->migrateHost;
 
     VIR_DEBUG("driver=%p, dconn=%p, cookiein=%s, cookieinlen=%d, "
               "cookieout=%p, cookieoutlen=%p, uri_in=%s, uri_out=%p, "
@@ -2718,8 +2718,9 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
     /* The URI passed in may be NULL or a string "tcp://somehostname:port".
      *
      * If the URI passed in is NULL then we allocate a port number
-     * from our pool of port numbers and return a URI of
-     * "tcp://ourhostname:port".
+     * from our pool of port numbers, and if the migrateHost is configured,
+     * we return a URI of "tcp://migrateHost:port", otherwise return a URI
+     * of "tcp://ourhostname:port".
      *
      * If the URI passed in is not NULL then we try to parse out the
      * port number and use that (note that the hostname is assumed
@@ -2729,8 +2730,17 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
         if (virPortAllocatorAcquire(driver->migrationPorts, &port) < 0)
             goto cleanup;
 
-        if ((hostname = virGetHostname()) == NULL)
-            goto cleanup;
+        if (migrateHost != NULL) {
+            if (virSocketAddrIsNumeric(migrateHost) &&
+                virSocketAddrParse(NULL, migrateHost, AF_UNSPEC) < 0)
+                goto cleanup;
+
+           if (VIR_STRDUP(hostname, migrateHost) < 0)
+                goto cleanup;
+        } else {
+            if ((hostname = virGetHostname()) == NULL)
+                goto cleanup;
+        }
 
         if (STRPREFIX(hostname, "localhost")) {
             virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
@@ -2831,6 +2841,7 @@ qemuMigrationPrepareDirect(virQEMUDriverPtr driver,
     VIR_FREE(hostname);
     VIR_FREE(protocol);
     VIR_FREE(well_formed_protocol);
+    virObjectUnref(cfg);
     if (ret != 0) {
         VIR_FREE(*uri_out);
         if (autoPort)
@@ -3301,6 +3312,7 @@ qemuMigrationRun(virQEMUDriverPtr driver,
     virErrorPtr orig_err = NULL;
     unsigned int cookieFlags = 0;
     bool abort_on_error = !!(flags & VIR_MIGRATE_ABORT_ON_ERROR);
+    int rc;
 
     VIR_DEBUG("driver=%p, vm=%p, cookiein=%s, cookieinlen=%d, "
               "cookieout=%p, cookieoutlen=%p, flags=%lx, resource=%lu, "
@@ -3470,9 +3482,12 @@ qemuMigrationRun(virQEMUDriverPtr driver,
         !(iothread = qemuMigrationStartTunnel(spec->fwd.stream, fd)))
         goto cancel;
 
-    if (qemuMigrationWaitForCompletion(driver, vm,
-                                       QEMU_ASYNC_JOB_MIGRATION_OUT,
-                                       dconn, abort_on_error) < 0)
+    rc = qemuMigrationWaitForCompletion(driver, vm,
+                                        QEMU_ASYNC_JOB_MIGRATION_OUT,
+                                        dconn, abort_on_error);
+    if (rc == -2)
+        goto cancel;
+    else if (rc == -1)
         goto cleanup;
 
     /* When migration completed, QEMU will have paused the
@@ -4150,6 +4165,18 @@ doPeer2PeerMigrate3(virQEMUDriverPtr driver,
 }
 
 
+static int virConnectCredType[] = {
+    VIR_CRED_AUTHNAME,
+    VIR_CRED_PASSPHRASE,
+};
+
+
+static virConnectAuth virConnectAuthConfig = {
+    .credtype = virConnectCredType,
+    .ncredtype = ARRAY_CARDINALITY(virConnectCredType),
+};
+
+
 static int doPeer2PeerMigrate(virQEMUDriverPtr driver,
                               virConnectPtr sconn,
                               virDomainObjPtr vm,
@@ -4183,7 +4210,7 @@ static int doPeer2PeerMigrate(virQEMUDriverPtr driver,
      */
 
     qemuDomainObjEnterRemote(vm);
-    dconn = virConnectOpen(dconnuri);
+    dconn = virConnectOpenAuth(dconnuri, &virConnectAuthConfig, 0);
     qemuDomainObjExitRemote(vm);
     if (dconn == NULL) {
         virReportError(VIR_ERR_OPERATION_FAILED,
@@ -4807,6 +4834,7 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
     int pipeFD[2] = { -1, -1 };
     unsigned long saveMigBandwidth = priv->migMaxBandwidth;
     char *errbuf = NULL;
+    virErrorPtr orig_err = NULL;
 
     /* Increase migration bandwidth to unlimited since target is a file.
      * Failure to change migration speed is not fatal. */
@@ -4909,8 +4937,17 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
 
     rc = qemuMigrationWaitForCompletion(driver, vm, asyncJob, NULL, false);
 
-    if (rc < 0)
+    if (rc < 0) {
+        if (rc == -2) {
+            orig_err = virSaveLastError();
+            virCommandAbort(cmd);
+            if (qemuDomainObjEnterMonitorAsync(driver, vm, asyncJob) == 0) {
+                qemuMonitorMigrateCancel(priv->mon);
+                qemuDomainObjExitMonitor(driver, vm);
+            }
+        }
         goto cleanup;
+    }
 
     if (cmd && virCommandWait(cmd, NULL) < 0)
         goto cleanup;
@@ -4918,6 +4955,9 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
     ret = 0;
 
  cleanup:
+    if (ret < 0 && !orig_err)
+        orig_err = virSaveLastError();
+
     /* Restore max migration bandwidth */
     if (qemuDomainObjEnterMonitorAsync(driver, vm, asyncJob) == 0) {
         qemuMonitorSetMigrationSpeed(priv->mon, saveMigBandwidth);
@@ -4943,6 +4983,12 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
                                          VIR_CGROUP_DEVICE_RWM);
         virDomainAuditCgroupPath(vm, priv->cgroup, "deny", path, "rwm", rv == 0);
     }
+
+    if (orig_err) {
+        virSetError(orig_err);
+        virFreeError(orig_err);
+    }
+
     return ret;
 }
 

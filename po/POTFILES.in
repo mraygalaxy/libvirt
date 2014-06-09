@@ -14,6 +14,7 @@ src/bhyve/bhyve_process.c
 src/conf/capabilities.c
 src/conf/cpu_conf.c
 src/conf/device_conf.c
+src/conf/domain_addr.c
 src/conf/domain_conf.c
 src/conf/domain_event.c
 src/conf/interface_conf.c
@@ -28,7 +29,6 @@ src/conf/object_event.c
 src/conf/secret_conf.c
 src/conf/snapshot_conf.c
 src/conf/storage_conf.c
-src/conf/storage_encryption_conf.c
 src/conf/virchrdev.c
 src/cpu/cpu.c
 src/cpu/cpu_generic.c
@@ -74,8 +74,10 @@ src/lxc/lxc_process.c
 src/libxl/libxl_domain.c
 src/libxl/libxl_driver.c
 src/libxl/libxl_conf.c
+src/libxl/libxl_migration.c
 src/network/bridge_driver.c
 src/network/bridge_driver_linux.c
+src/network/leaseshelper.c
 src/node_device/node_device_driver.c
 src/node_device/node_device_hal.c
 src/node_device/node_device_linux_sysfs.c
@@ -162,6 +164,7 @@ src/util/virdbus.c
 src/util/virdnsmasq.c
 src/util/vireventpoll.c
 src/util/virfile.c
+src/util/virfirewall.c
 src/util/virhash.c
 src/util/virhook.c
 src/util/virhostdev.c
@@ -193,6 +196,7 @@ src/util/virsexpr.c
 src/util/virscsi.c
 src/util/virsocketaddr.c
 src/util/virstatslinux.c
+src/util/virstorageencryption.c
 src/util/virstoragefile.c
 src/util/virstring.c
 src/util/virsysinfo.c

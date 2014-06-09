@@ -102,39 +102,6 @@ getDeviceType(uint32_t host,
     return retval;
 }
 
-static int
-virStorageBackendSCSIUpdateVolTargetInfo(virStorageVolTargetPtr target,
-                                         unsigned long long *allocation,
-                                         unsigned long long *capacity)
-{
-    int fdret, fd = -1;
-    int ret = -1;
-    struct stat sb;
-
-    if ((fdret = virStorageBackendVolOpenCheckMode(target->path, &sb,
-                                                   VIR_STORAGE_VOL_OPEN_DEFAULT)) < 0)
-        goto cleanup;
-    fd = fdret;
-
-    if (virStorageBackendUpdateVolTargetInfoFD(target,
-                                               fd,
-                                               &sb,
-                                               allocation,
-                                               capacity) < 0)
-        goto cleanup;
-
-    if (virStorageBackendDetectBlockVolFormatFD(target, fd) < 0)
-        goto cleanup;
-
-    ret = 0;
-
- cleanup:
-    VIR_FORCE_CLOSE(fd);
-
-    return ret;
-}
-
-
 static char *
 virStorageBackendSCSISerial(const char *dev)
 {
@@ -232,13 +199,8 @@ virStorageBackendSCSINewLun(virStoragePoolObjPtr pool,
         goto free_vol;
     }
 
-    if (virStorageBackendSCSIUpdateVolTargetInfo(&vol->target,
-                                                 &vol->allocation,
-                                                 &vol->capacity) < 0) {
-
-        virReportError(VIR_ERR_INTERNAL_ERROR,
-                       _("Failed to update volume for '%s'"),
-                       devpath);
+    if (virStorageBackendUpdateVolInfo(vol, true, true,
+                                       VIR_STORAGE_VOL_OPEN_DEFAULT) < 0) {
         retval = -1;
         goto free_vol;
     }
@@ -248,8 +210,8 @@ virStorageBackendSCSINewLun(virStoragePoolObjPtr pool,
         goto free_vol;
     }
 
-    pool->def->capacity += vol->capacity;
-    pool->def->allocation += vol->allocation;
+    pool->def->capacity += vol->target.capacity;
+    pool->def->allocation += vol->target.allocation;
 
     if (VIR_APPEND_ELEMENT(pool->volumes.objs, pool->volumes.count, vol) < 0) {
         retval = -1;
@@ -275,6 +237,7 @@ getNewStyleBlockDevice(const char *lun_path,
     DIR *block_dir = NULL;
     struct dirent *block_dirent = NULL;
     int retval = 0;
+    int direrr;
 
     if (virAsprintf(&block_path, "%s/block", lun_path) < 0)
         goto out;
@@ -290,7 +253,7 @@ getNewStyleBlockDevice(const char *lun_path,
         goto out;
     }
 
-    while ((block_dirent = readdir(block_dir))) {
+    while ((direrr = virDirRead(block_dir, &block_dirent, block_path)) > 0) {
 
         if (STREQLEN(block_dirent->d_name, ".", 1)) {
             continue;
@@ -306,6 +269,8 @@ getNewStyleBlockDevice(const char *lun_path,
 
         break;
     }
+    if (direrr < 0)
+        retval = -1;
 
     closedir(block_dir);
 
@@ -357,6 +322,7 @@ getBlockDevice(uint32_t host,
     DIR *lun_dir = NULL;
     struct dirent *lun_dirent = NULL;
     int retval = 0;
+    int direrr;
 
     if (virAsprintf(&lun_path, "/sys/bus/scsi/devices/%u:%u:%u:%u",
                     host, bus, target, lun) < 0)
@@ -371,7 +337,7 @@ getBlockDevice(uint32_t host,
         goto out;
     }
 
-    while ((lun_dirent = readdir(lun_dir))) {
+    while ((direrr = virDirRead(lun_dir, &lun_dirent, lun_path)) > 0) {
         if (STREQLEN(lun_dirent->d_name, "block", 5)) {
             if (strlen(lun_dirent->d_name) == 5) {
                 retval = getNewStyleBlockDevice(lun_path,
@@ -480,7 +446,7 @@ virStorageBackendSCSIFindLUs(virStoragePoolObjPtr pool,
 
     snprintf(devicepattern, sizeof(devicepattern), "%u:%%u:%%u:%%u\n", scanhost);
 
-    while ((lun_dirent = readdir(devicedir))) {
+    while ((retval = virDirRead(devicedir, &lun_dirent, device_path)) > 0) {
         if (sscanf(lun_dirent->d_name, devicepattern,
                    &bus, &target, &lun) != 3) {
             continue;

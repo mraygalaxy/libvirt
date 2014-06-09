@@ -185,7 +185,7 @@ qemuSetupTPMCgroup(virDomainDefPtr def,
 
 
 static int
-qemuSetupHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
+qemuSetupHostUSBDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
                              const char *path,
                              void *opaque)
 {
@@ -202,7 +202,7 @@ qemuSetupHostUsbDeviceCgroup(virUSBDevicePtr dev ATTRIBUTE_UNUSED,
 }
 
 static int
-qemuSetupHostScsiDeviceCgroup(virSCSIDevicePtr dev ATTRIBUTE_UNUSED,
+qemuSetupHostSCSIDeviceCgroup(virSCSIDevicePtr dev ATTRIBUTE_UNUSED,
                               const char *path,
                               void *opaque)
 {
@@ -283,10 +283,10 @@ qemuSetupHostdevCGroup(virDomainObjPtr vm,
                 goto cleanup;
             }
 
-            /* oddly, qemuSetupHostUsbDeviceCgroup doesn't ever
+            /* oddly, qemuSetupHostUSBDeviceCgroup doesn't ever
              * reference the usb object we just created
              */
-            if (virUSBDeviceFileIterate(usb, qemuSetupHostUsbDeviceCgroup,
+            if (virUSBDeviceFileIterate(usb, qemuSetupHostUSBDeviceCgroup,
                                         vm) < 0) {
                 goto cleanup;
             }
@@ -303,7 +303,7 @@ qemuSetupHostdevCGroup(virDomainObjPtr vm,
                 goto cleanup;
 
             if (virSCSIDeviceFileIterate(scsi,
-                                         qemuSetupHostScsiDeviceCgroup,
+                                         qemuSetupHostSCSIDeviceCgroup,
                                          vm) < 0)
                 goto cleanup;
 
@@ -527,7 +527,7 @@ qemuSetupDevicesCgroup(virQEMUDriverPtr driver,
 
     for (i = 0; deviceACL[i] != NULL; i++) {
         if (!virFileExists(deviceACL[i])) {
-            VIR_DEBUG("Ignoring non-existant device %s", deviceACL[i]);
+            VIR_DEBUG("Ignoring non-existent device %s", deviceACL[i]);
             continue;
         }
 
@@ -599,11 +599,8 @@ qemuSetupCpusetCgroup(virDomainObjPtr vm,
         else
             mem_mask = virBitmapFormat(vm->def->numatune.memory.nodemask);
 
-        if (!mem_mask) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("failed to convert memory nodemask"));
+        if (!mem_mask)
             goto cleanup;
-        }
 
         if (virCgroupSetCpusetMems(priv->cgroup, mem_mask) < 0)
             goto cleanup;
@@ -622,11 +619,8 @@ qemuSetupCpusetCgroup(virDomainObjPtr vm,
             cpu_mask = virBitmapFormat(vm->def->cpumask);
         }
 
-        if (!cpu_mask) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                           _("failed to convert cpu mask"));
+        if (!cpu_mask)
             goto cleanup;
-        }
 
         if (virCgroupSetCpusetCpus(priv->cgroup, cpu_mask) < 0)
             goto cleanup;
@@ -870,12 +864,8 @@ qemuSetupCgroupEmulatorPin(virCgroupPtr cgroup,
     int ret = -1;
     char *new_cpus = NULL;
 
-    new_cpus = virBitmapFormat(cpumask);
-    if (!new_cpus) {
-        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                       _("failed to convert cpu mask"));
+    if (!(new_cpus = virBitmapFormat(cpumask)))
         goto cleanup;
-    }
 
     if (virCgroupSetCpusetCpus(cgroup, new_cpus) < 0)
         goto cleanup;
@@ -904,8 +894,7 @@ qemuSetupCgroupForVcpu(virDomainObjPtr vm)
     }
 
     /* We are trying to setup cgroups for CPU pinning, which can also be done
-     * with virProcessInfoSetAffinity, thus the lack of cgroups is not fatal
-     * here.
+     * with virProcessSetAffinity, thus the lack of cgroups is not fatal here.
      */
     if (priv->cgroup == NULL)
         return 0;

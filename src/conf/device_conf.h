@@ -32,13 +32,13 @@
 # include "virthread.h"
 # include "virbuffer.h"
 
-enum virDeviceAddressPciMulti {
+typedef enum {
     VIR_DEVICE_ADDRESS_PCI_MULTI_DEFAULT = 0,
     VIR_DEVICE_ADDRESS_PCI_MULTI_ON,
     VIR_DEVICE_ADDRESS_PCI_MULTI_OFF,
 
     VIR_DEVICE_ADDRESS_PCI_MULTI_LAST
-};
+} virDeviceAddressPCIMulti;
 
 typedef struct _virDevicePCIAddress virDevicePCIAddress;
 typedef virDevicePCIAddress *virDevicePCIAddressPtr;
@@ -47,7 +47,7 @@ struct _virDevicePCIAddress {
     unsigned int bus;
     unsigned int slot;
     unsigned int function;
-    int          multi;  /* enum virDomainDeviceAddressPciMulti */
+    int          multi;  /* enum virDomainDeviceAddressPCIMulti */
 };
 
 int virDevicePCIAddressIsValid(virDevicePCIAddressPtr addr);
@@ -63,6 +63,6 @@ bool virDevicePCIAddressEqual(virDevicePCIAddress *addr1,
                               virDevicePCIAddress *addr2);
 
 
-VIR_ENUM_DECL(virDeviceAddressPciMulti)
+VIR_ENUM_DECL(virDeviceAddressPCIMulti)
 
 #endif /* __DEVICE_CONF_H__ */

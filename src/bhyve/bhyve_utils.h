@@ -23,6 +23,7 @@
 # define __BHYVE_UTILS_H__
 
 # include "driver.h"
+# include "domain_event.h"
 # include "domain_conf.h"
 # include "configmake.h"
 # include "virthread.h"
@@ -39,12 +40,20 @@ struct _bhyveConn {
     virCapsPtr caps;
     virDomainXMLOptionPtr xmlopt;
     char *pidfile;
+    virSysinfoDefPtr hostsysinfo;
+
+    virObjectEventStatePtr domainEventState;
 
     virCloseCallbacksPtr closeCallbacks;
 };
 
 typedef struct _bhyveConn bhyveConn;
 typedef struct _bhyveConn *bhyveConnPtr;
+
+struct bhyveAutostartData {
+    bhyveConnPtr driver;
+    virConnectPtr conn;
+};
 
 void bhyveDriverLock(bhyveConnPtr driver);
 void bhyveDriverUnlock(bhyveConnPtr driver);

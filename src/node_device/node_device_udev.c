@@ -1,7 +1,7 @@
 /*
  * node_device_udev.c: node device enumeration - libudev implementation
  *
- * Copyright (C) 2009-2013 Red Hat, Inc.
+ * Copyright (C) 2009-2014 Red Hat, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -491,6 +491,18 @@ static int udevProcessPCI(struct udev_device *device,
 
     if (udevGenerateDeviceName(device, def, NULL) != 0) {
         goto out;
+    }
+
+    rc = udevGetIntSysfsAttr(device,
+                            "numa_node",
+                            &data->pci_dev.numa_node,
+                            10);
+    if (rc == PROPERTY_ERROR) {
+        goto out;
+    } else if (rc == PROPERTY_MISSING) {
+        /* The default value is -1, because it can't be 0
+         * as zero is valid node number. */
+        data->pci_dev.numa_node = -1;
     }
 
     if (!virPCIGetPhysicalFunction(syspath, &data->pci_dev.physical_function))
@@ -1093,20 +1105,27 @@ static int udevProcessStorage(struct udev_device *device,
 
     if (udevGetStringProperty(device,
                               "ID_TYPE",
-                              &data->storage.drive_type) != PROPERTY_FOUND) {
+                              &data->storage.drive_type) != PROPERTY_FOUND ||
+        STREQ(def->caps->data.storage.drive_type, "generic")) {
         int tmp_int = 0;
 
         /* All floppy drives have the ID_DRIVE_FLOPPY prop. This is
          * needed since legacy floppies don't have a drive_type */
-        if ((udevGetIntProperty(device, "ID_DRIVE_FLOPPY",
-                                &tmp_int, 0) == PROPERTY_FOUND) &&
-            (tmp_int == 1)) {
+        if (udevGetIntProperty(device, "ID_DRIVE_FLOPPY",
+                               &tmp_int, 0) == PROPERTY_FOUND &&
+            tmp_int == 1) {
 
             if (VIR_STRDUP(data->storage.drive_type, "floppy") < 0)
                 goto out;
-        } else if ((udevGetIntProperty(device, "ID_DRIVE_FLASH_SD",
-                                       &tmp_int, 0) == PROPERTY_FOUND) &&
-                   (tmp_int == 1)) {
+        } else if (udevGetIntProperty(device, "ID_CDROM",
+                                      &tmp_int, 0) == PROPERTY_FOUND &&
+                   tmp_int == 1) {
+
+            if (VIR_STRDUP(data->storage.drive_type, "cd") < 0)
+                goto out;
+        } else if (udevGetIntProperty(device, "ID_DRIVE_FLASH_SD",
+                                      &tmp_int, 0) == PROPERTY_FOUND &&
+                   tmp_int == 1) {
 
             if (VIR_STRDUP(data->storage.drive_type, "sd") < 0)
                 goto out;
@@ -1143,7 +1162,7 @@ static int udevProcessStorage(struct udev_device *device,
 }
 
 static int
-udevProcessScsiGeneric(struct udev_device *dev,
+udevProcessSCSIGeneric(struct udev_device *dev,
                        virNodeDeviceDefPtr def)
 {
     if (udevGetStringProperty(dev,
@@ -1169,7 +1188,7 @@ udevHasDeviceProperty(struct udev_device *dev,
 
 static int
 udevGetDeviceType(struct udev_device *device,
-                  enum virNodeDevCapType *type)
+                  virNodeDevCapType *type)
 {
     const char *devtype = NULL;
     char *subsystem = NULL;
@@ -1258,7 +1277,7 @@ static int udevGetDeviceDetails(struct udev_device *device,
         ret = udevProcessStorage(device, def);
         break;
     case VIR_NODE_DEV_CAP_SCSI_GENERIC:
-        ret = udevProcessScsiGeneric(device, def);
+        ret = udevProcessSCSIGeneric(device, def);
         break;
     default:
         VIR_ERROR(_("Unknown device type %d"), def->caps->type);
