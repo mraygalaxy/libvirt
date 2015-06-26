@@ -659,6 +659,10 @@ typedef enum {
     VIR_MIGRATE_ABORT_ON_ERROR    = (1 << 12), /* abort migration on I/O errors happened during migration */
     VIR_MIGRATE_AUTO_CONVERGE     = (1 << 13), /* force convergence */
     VIR_MIGRATE_RDMA_PIN_ALL      = (1 << 14), /* RDMA memory pinning */
+    VIR_MIGRATE_MC                = (1 << 15), /* Micro Checkpointing */
+    VIR_MIGRATE_MC_NET_DISABLE    = (1 << 16), /* Disable Micro Checkpointing Network Buffering */
+    VIR_MIGRATE_MC_RDMA_COPY      = (1 << 17), /* Use DMA instead of Memcpy during Micro Checkpointing */
+    VIR_MIGRATE_RDMA_KEEPALIVE    = (1 << 18), /* Keepalive support for RDMA (failure detection) */
 } virDomainMigrateFlags;
 
 
@@ -787,6 +791,10 @@ int virDomainMigrateToURI3(virDomainPtr domain,
                            virTypedParameterPtr params,
                            unsigned int nparams,
                            unsigned int flags);
+
+int virDomainMigrateSetMcDelay (virDomainPtr domain,
+                                    unsigned long long mcdelay,
+                                    unsigned int flags);
 
 int virDomainMigrateSetMaxDowntime (virDomainPtr domain,
                                     unsigned long long downtime,
@@ -2644,6 +2652,54 @@ int virDomainAbortJob(virDomainPtr dom);
  * This field corresponds to dataRemaining field in virDomainJobInfo.
  */
 # define VIR_DOMAIN_JOB_DATA_REMAINING           "data_remaining"
+
+/**
+ * VIR_DOMAIN_JOB_MC_COPY_MBPS:
+ *
+ * virDomainGetJobStats field: throughput to copy MC checkpoint 
+ * into local staging memory before transmission to remote side.
+ */
+#define VIR_DOMAIN_JOB_MC_COPY_MBPS "mc_copy_mbps"
+
+/**
+ * VIR_DOMAIN_JOB_MC_LOG_DIRTY_TIME:
+ *
+ * virDomainGetJobStats field: time in milliseconds to retrieve LOGDIRTY
+ * bitmap from KVM to QEMU.
+ */
+#define VIR_DOMAIN_JOB_MC_LOG_DIRTY_TIME "mc_log_dirty_time"
+
+/**
+ * VIR_DOMAIN_JOB_MC_RAM_COPY_TIME:
+ *
+ * virDomainGetJobStats field: time in milliseconds to copy MC checkpoint
+ * into local staging memory before transmission to remote side. 
+ */
+#define VIR_DOMAIN_JOB_MC_RAM_COPY_TIME "mc_ram_copy_time"
+
+/**
+ * VIR_DOMAIN_JOB_MC_MIGRATION_BITMAP_TIME:
+ *
+ * virDomainGetJobStats field: time in milliseconds to process the migration
+ * bitmap from LOGDIRTY before use by QEMU migration thread. 
+ */
+#define VIR_DOMAIN_JOB_MC_MIGRATION_BITMAP_TIME "mc_migration_bitmap_time"
+
+/**
+ * VIR_DOMAIN_JOB_MC_XMIT_TIME:
+ *
+ * virDomainGetJobStats field: time in milliseconds to transmit the MC
+ * checkpoint to the remote side.
+ */
+#define VIR_DOMAIN_JOB_MC_XMIT_TIME "mc_xmit_time"
+
+/**
+ * VIR_DOMAIN_JOB_MC_CHECKPOINTS:
+ *
+ * virDomainGetJobStats field: total number of MC checkpoints generated
+ * since the beginning.
+ */
+#define VIR_DOMAIN_JOB_MC_CHECKPOINTS "mc_checkpoints"
 
 /**
  * VIR_DOMAIN_JOB_MEMORY_TOTAL:

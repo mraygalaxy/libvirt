@@ -692,6 +692,11 @@ typedef int
                                      unsigned int flags);
 
 typedef int
+(*virDrvDomainMigrateSetMcDelay)(virDomainPtr domain,
+                                     unsigned long long mcdelay,
+                                     unsigned int flags);
+
+typedef int
 (*virDrvDomainMigrateGetCompressionCache)(virDomainPtr domain,
                                           unsigned long long *cacheSize,
                                           unsigned int flags);
@@ -1437,6 +1442,7 @@ struct _virHypervisorDriver {
     virDrvDomainGetFSInfo domainGetFSInfo;
     virDrvDomainInterfaceAddresses domainInterfaceAddresses;
     virDrvDomainSetUserPassword domainSetUserPassword;
+    virDrvDomainMigrateSetMcDelay domainMigrateSetMcDelay;
 };
 
 

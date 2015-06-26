@@ -353,6 +353,28 @@ qemuDomainJobInfoToParams(qemuDomainJobInfoPtr jobInfo,
                                 status->ram_bps) < 0)
         goto error;
 
+    if (status->mc_set) {
+        if (virTypedParamsAddDouble(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MC_COPY_MBPS,
+                                    status->mc_copy_mbps) < 0 ||
+            virTypedParamsAddULLong(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MC_LOG_DIRTY_TIME,
+                                    status->mc_log_dirty_time) < 0 ||
+            virTypedParamsAddULLong(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MC_RAM_COPY_TIME,
+                                    status->mc_ram_copy_time) < 0 ||
+            virTypedParamsAddULLong(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MC_MIGRATION_BITMAP_TIME,
+                                    status->mc_migration_bitmap_time) < 0 ||
+            virTypedParamsAddULLong(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MC_XMIT_TIME,
+                                    status->mc_xmit_time) < 0 ||
+            virTypedParamsAddULLong(&par, &npar, &maxpar,
+                                    VIR_DOMAIN_JOB_MC_CHECKPOINTS,
+                                    status->mc_checkpoints) < 0)
+            goto cleanup;
+    }
+
     if (status->ram_duplicate_set) {
         if (virTypedParamsAddULLong(&par, &npar, &maxpar,
                                     VIR_DOMAIN_JOB_MEMORY_CONSTANT,

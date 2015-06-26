@@ -231,6 +231,7 @@ typedef enum {
     QEMU_CAPS_CPU_AARCH64_OFF    = 189, /* -cpu ...,aarch64=off */
     QEMU_CAPS_VHOSTUSER_MULTIQUEUE = 190, /* vhost-user with -netdev queues= */
     QEMU_CAPS_ARM_VIRT_PCI       = 191, /* ARM 'virt' machine has PCI bus */
+    QEMU_CAPS_MIGRATE_MC         = 192, /* have micro-checkpointing */
 
     QEMU_CAPS_LAST,                   /* this must always be the last item */
 } virQEMUCapsFlags;

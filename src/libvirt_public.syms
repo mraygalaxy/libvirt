@@ -718,6 +718,7 @@ LIBVIRT_1.2.16 {
 LIBVIRT_1.3.0 {
     global:
         virTypedParamsAddStringList;
+        virDomainMigrateSetMcDelay;
 } LIBVIRT_1.2.16;
 
 # .... define new API here using predicted next version number ....

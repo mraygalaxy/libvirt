@@ -13190,11 +13190,18 @@ qemuDomainMigrateSetMaxDowntime(virDomainPtr dom,
     if (qemuDomainObjBeginJob(driver, vm, QEMU_JOB_MIGRATION_OP) < 0)
         goto cleanup;
 
+    /*
+     * Controlling the downtime after it has already started
+     * may be too late for a policy decision if we already
+     * know the expected behavior of the VM.
+     */
+    /*
     if (!virDomainObjIsActive(vm)) {
         virReportError(VIR_ERR_OPERATION_INVALID,
                        "%s", _("domain is not running"));
         goto endjob;
     }
+    */
 
     priv = vm->privateData;
 
@@ -13209,6 +13216,60 @@ qemuDomainMigrateSetMaxDowntime(virDomainPtr dom,
 
  cleanup:
     virDomainObjEndAPI(&vm);
+    return ret;
+}
+
+static int
+qemuDomainMigrateSetMcDelay(virDomainPtr dom,
+                                unsigned long long mcdelay,
+                                unsigned int flags)
+{
+    virQEMUDriverPtr driver = dom->conn->privateData;
+    virDomainObjPtr vm;
+    qemuDomainObjPrivatePtr priv;
+    int ret = -1;
+
+    virCheckFlags(0, -1);
+
+    if (!(vm = qemuDomObjFromDomain(dom)))
+        goto cleanup;
+
+    /*
+    if (virDomainMigrateSetMcDelayEnsureACL(dom->conn, vm->def) < 0)
+        goto cleanup;
+    */
+
+    if (qemuDomainObjBeginJob(driver, vm, QEMU_JOB_MIGRATION_OP) < 0)
+        goto cleanup;
+
+    if (!virDomainObjIsActive(vm)) {
+        virReportError(VIR_ERR_OPERATION_INVALID,
+                       "%s", _("domain is not running"));
+        goto endjob;
+    }
+
+    priv = vm->privateData;
+
+    /*
+    if (priv->job.asyncJob != QEMU_ASYNC_JOB_MIGRATION_OUT) {
+        virReportError(VIR_ERR_OPERATION_INVALID,
+                       "%s", _("domain is not being migrated"));
+        goto endjob;
+    }
+    */
+
+    VIR_DEBUG("Setting mcdelay to %llums", mcdelay);
+    qemuDomainObjEnterMonitor(driver, vm);
+    ret = qemuMonitorSetMcDelay(priv->mon, mcdelay);
+    qemuDomainObjExitMonitor(driver, vm);
+
+endjob:
+    if (!qemuDomainObjEndJob(driver, vm))
+        vm = NULL;
+
+cleanup:
+    if (vm)
+        virObjectUnlock(vm);
     return ret;
 }
 
@@ -20064,6 +20125,7 @@ static virHypervisorDriver qemuHypervisorDriver = {
     .domainGetFSInfo = qemuDomainGetFSInfo, /* 1.2.11 */
     .domainInterfaceAddresses = qemuDomainInterfaceAddresses, /* 1.2.14 */
     .domainSetUserPassword = qemuDomainSetUserPassword, /* 1.2.16 */
+    .domainMigrateSetMcDelay = qemuDomainMigrateSetMcDelay, /* 1.3.0 */
 };
 
 

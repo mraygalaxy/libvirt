@@ -159,11 +159,12 @@ VIR_ONCE_GLOBAL_INIT(qemuMonitor)
 VIR_ENUM_IMPL(qemuMonitorMigrationStatus,
               QEMU_MONITOR_MIGRATION_STATUS_LAST,
               "inactive", "active", "completed", "failed", "cancelling",
-              "cancelled", "setup")
+              "cancelled", "setup", "checkpointing")
 
 VIR_ENUM_IMPL(qemuMonitorMigrationCaps,
               QEMU_MONITOR_MIGRATION_CAPS_LAST,
-              "xbzrle", "auto-converge", "rdma-pin-all")
+              "xbzrle", "auto-converge", "rdma-pin-all", "mc", "mc-net-disable",
+              "mc-rdma-copy", "rdma-keepalive")
 
 VIR_ENUM_IMPL(qemuMonitorVMStatus,
               QEMU_MONITOR_VM_STATUS_LAST,
@@ -2069,6 +2070,24 @@ qemuMonitorSetMigrationDowntime(qemuMonitorPtr mon,
         return qemuMonitorTextSetMigrationDowntime(mon, downtime);
 }
 
+int
+qemuMonitorSetMcDelay(qemuMonitorPtr mon, unsigned long long mcdelay)
+{
+    int ret;
+    VIR_DEBUG("mon=%p mcdelay=%llu", mon, mcdelay);
+
+    if (!mon) {
+        virReportError(VIR_ERR_INVALID_ARG, "%s",
+                       _("monitor must not be NULL"));
+        return -1;
+    }
+
+    if (mon->json)
+        ret = qemuMonitorJSONSetMcDelay(mon, mcdelay);
+    else
+        ret = qemuMonitorTextSetMcDelay(mon, mcdelay);
+    return ret;
+}
 
 int
 qemuMonitorGetMigrationCacheSize(qemuMonitorPtr mon,

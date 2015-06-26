@@ -288,6 +288,7 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
 
               "vhost-user-multiqueue", /* 190 */
               "arm-virt-pci",
+              "mc",
     );
 
 

@@ -2568,6 +2568,32 @@ remoteNodeGetSecurityModel(virConnectPtr conn, virSecurityModelPtr secmodel)
 }
 
 static int
+remoteDomainMigrateSetMcDelay(virDomainPtr dom, unsigned long long mcdelay, unsigned int flags)
+{
+    int rv = -1;
+    remote_domain_migrate_set_mc_delay_args args;
+    struct private_data *priv = dom->conn->privateData;
+
+    remoteDriverLock(priv);
+
+    make_nonnull_domain(&args.dom, dom);
+    args.mcdelay = mcdelay;
+    args.flags = flags;
+
+    if (call(dom->conn, priv, 0, REMOTE_PROC_DOMAIN_MIGRATE_SET_MCDELAY,
+             (xdrproc_t)xdr_remote_domain_migrate_set_mc_delay_args, (char *)&args,
+             (xdrproc_t)xdr_void, (char *)NULL) == -1) {
+        goto done;
+    }
+
+    rv = 0;
+
+done:
+    remoteDriverUnlock(priv);
+    return rv;
+}
+
+static int
 remoteDomainMigratePrepare(virConnectPtr dconn,
                            char **cookie, int *cookielen,
                            const char *uri_in, char **uri_out,
@@ -8391,6 +8417,7 @@ static virHypervisorDriver hypervisor_driver = {
     .domainGetFSInfo = remoteDomainGetFSInfo, /* 1.2.11 */
     .domainInterfaceAddresses = remoteDomainInterfaceAddresses, /* 1.2.14 */
     .domainSetUserPassword = remoteDomainSetUserPassword, /* 1.2.16 */
+    .domainMigrateSetMcDelay = remoteDomainMigrateSetMcDelay, /* 1.3.0 */
 };
 
 static virNetworkDriver network_driver = {

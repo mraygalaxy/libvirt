@@ -440,6 +440,9 @@ int qemuMonitorSetMigrationSpeed(qemuMonitorPtr mon,
 int qemuMonitorSetMigrationDowntime(qemuMonitorPtr mon,
                                     unsigned long long downtime);
 
+int qemuMonitorSetMcDelay(qemuMonitorPtr mon,
+                                    unsigned long long mcdelay);
+
 int qemuMonitorGetMigrationCacheSize(qemuMonitorPtr mon,
                                      unsigned long long *cacheSize);
 int qemuMonitorSetMigrationCacheSize(qemuMonitorPtr mon,
@@ -453,6 +456,7 @@ enum {
     QEMU_MONITOR_MIGRATION_STATUS_CANCELLING,
     QEMU_MONITOR_MIGRATION_STATUS_CANCELLED,
     QEMU_MONITOR_MIGRATION_STATUS_SETUP,
+    QEMU_MONITOR_MIGRATION_STATUS_CHECKPOINTING,
 
     QEMU_MONITOR_MIGRATION_STATUS_LAST
 };
@@ -495,6 +499,17 @@ struct _qemuMonitorMigrationStatus {
     unsigned long long xbzrle_pages;
     unsigned long long xbzrle_cache_miss;
     unsigned long long xbzrle_overflow;
+
+    /*
+     * Micro-Checkpointing statistics.
+     */
+    bool mc_set;
+    double mc_copy_mbps;
+    unsigned long long mc_log_dirty_time;
+    unsigned long long mc_ram_copy_time;
+    unsigned long long mc_migration_bitmap_time;
+    unsigned long long mc_xmit_time;
+    unsigned long long mc_checkpoints;
 };
 
 int qemuMonitorGetMigrationStatus(qemuMonitorPtr mon,
@@ -504,6 +519,10 @@ typedef enum {
     QEMU_MONITOR_MIGRATION_CAPS_XBZRLE,
     QEMU_MONITOR_MIGRATION_CAPS_AUTO_CONVERGE,
     QEMU_MONITOR_MIGRATION_CAPS_RDMA_PIN_ALL,
+    QEMU_MONITOR_MIGRATION_CAPS_MC,
+    QEMU_MONITOR_MIGRATION_CAPS_MC_NET_DISABLE,
+    QEMU_MONITOR_MIGRATION_CAPS_MC_RDMA_COPY,
+    QEMU_MONITOR_MIGRATION_CAPS_RDMA_KEEPALIVE,
 
     QEMU_MONITOR_MIGRATION_CAPS_LAST
 } qemuMonitorMigrationCaps;

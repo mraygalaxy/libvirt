@@ -1337,6 +1337,27 @@ int qemuMonitorTextSetMigrationDowntime(qemuMonitorPtr mon,
     return ret;
 }
 
+int 
+qemuMonitorTextSetMcDelay(qemuMonitorPtr mon,
+                          unsigned long long mcdelay)
+{
+    char *cmd = NULL;
+    char *info = NULL;
+    int ret = -1;
+
+    if (virAsprintf(&cmd, "migrate-set-mc-delay %llums", mcdelay) < 0)
+        goto cleanup;
+
+    if (qemuMonitorHMPCommand(mon, cmd, &info) < 0)
+        goto cleanup;
+
+    ret = 0;
+
+cleanup:
+    VIR_FREE(info);
+    VIR_FREE(cmd);
+    return ret;
+}
 
 #define MIGRATION_PREFIX "Migration status: "
 #define MIGRATION_TRANSFER_PREFIX "transferred ram: "
