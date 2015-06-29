@@ -372,7 +372,7 @@ qemuDomainJobInfoToParams(qemuDomainJobInfoPtr jobInfo,
             virTypedParamsAddULLong(&par, &npar, &maxpar,
                                     VIR_DOMAIN_JOB_MC_CHECKPOINTS,
                                     status->mc_checkpoints) < 0)
-            goto cleanup;
+            goto error;
     }
 
     if (status->ram_duplicate_set) {

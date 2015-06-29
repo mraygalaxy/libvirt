@@ -2378,6 +2378,7 @@ remoteDispatchDomainGetIOThreadInfo(virNetServerPtr server ATTRIBUTE_UNUSED,
     return rv;
 }
 
+/*
 static int
 remoteDispatchDomainMigrateSetMcDelay(
     virNetServerPtr server ATTRIBUTE_UNUSED,
@@ -2411,6 +2412,7 @@ cleanup:
         virDomainFree(dom);
     return rv;
 }
+*/
 
 
 static int

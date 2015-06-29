@@ -13211,8 +13211,8 @@ qemuDomainMigrateSetMaxDowntime(virDomainPtr dom,
     if (qemuDomainObjExitMonitor(driver, vm) < 0)
         ret = -1;
 
- endjob:
-    qemuDomainObjEndJob(driver, vm);
+ //endjob:
+ //   qemuDomainObjEndJob(driver, vm);
 
  cleanup:
     virDomainObjEndAPI(&vm);
@@ -13261,15 +13261,14 @@ qemuDomainMigrateSetMcDelay(virDomainPtr dom,
     VIR_DEBUG("Setting mcdelay to %llums", mcdelay);
     qemuDomainObjEnterMonitor(driver, vm);
     ret = qemuMonitorSetMcDelay(priv->mon, mcdelay);
-    qemuDomainObjExitMonitor(driver, vm);
+    if (qemuDomainObjExitMonitor(driver, vm) < 0)
+        ret = -1;
 
 endjob:
-    if (!qemuDomainObjEndJob(driver, vm))
-        vm = NULL;
+    qemuDomainObjEndJob(driver, vm);
 
 cleanup:
-    if (vm)
-        virObjectUnlock(vm);
+    virDomainObjEndAPI(&vm);
     return ret;
 }
 

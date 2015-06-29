@@ -10182,8 +10182,9 @@ cmdMigrateSetMcDelay(vshControl *ctl, const vshCmd *cmd)
     if (!(dom = vshCommandOptDomain(ctl, cmd, NULL)))
         return false;
 
-    if (vshCommandOptLongLong(cmd, "mcdelay", &mcdelay) < 0 ||
-        mcdelay < 1) {
+    if (vshCommandOptLongLong(ctl, cmd, "mcdelay", &mcdelay) < 0)
+        goto done;
+    if (mcdelay < 1) {
         vshError(ctl, "%s", _("migrate: Invalid mcdelay"));
         goto done;
     }

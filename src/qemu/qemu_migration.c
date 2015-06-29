@@ -2433,7 +2433,8 @@ qemuMigrationSetPinAll(virQEMUDriverPtr driver,
 static int
 qemuMigrationSetMCNetDisable(virQEMUDriverPtr driver,
                             virDomainObjPtr vm,
-                            enum qemuDomainAsyncJob job)
+                            bool state,
+                            qemuDomainAsyncJob job)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     int ret;
@@ -2446,6 +2447,9 @@ qemuMigrationSetMCNetDisable(virQEMUDriverPtr driver,
                 QEMU_MONITOR_MIGRATION_CAPS_MC_NET_DISABLE);
 
     if (ret < 0) {
+        goto cleanup;
+    } else if (ret == 0 && !state) {
+        /* Unsupported but we want it off anyway */
         goto cleanup;
     } else if (ret == 0) {
         if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
@@ -2463,17 +2467,20 @@ qemuMigrationSetMCNetDisable(virQEMUDriverPtr driver,
 
     ret = qemuMonitorSetMigrationCapability(
                 priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_MC_NET_DISABLE);
+                QEMU_MONITOR_MIGRATION_CAPS_MC_NET_DISABLE,
+                state);
 
 cleanup:
-    qemuDomainObjExitMonitor(driver, vm);
+    if (qemuDomainObjExitMonitor(driver, vm) < 0)
+        ret = -1;
     return ret;
 }
 
 static int
 qemuMigrationSetMCRDMACopy(virQEMUDriverPtr driver,
                             virDomainObjPtr vm,
-                            enum qemuDomainAsyncJob job)
+                            bool state,
+                            qemuDomainAsyncJob job)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     int ret;
@@ -2486,6 +2493,9 @@ qemuMigrationSetMCRDMACopy(virQEMUDriverPtr driver,
                 QEMU_MONITOR_MIGRATION_CAPS_MC_RDMA_COPY);
 
     if (ret < 0) {
+        goto cleanup;
+    } else if (ret == 0 && !state) {
+        /* Unsupported but we want it off anyway */
         goto cleanup;
     } else if (ret == 0) {
         if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
@@ -2503,17 +2513,20 @@ qemuMigrationSetMCRDMACopy(virQEMUDriverPtr driver,
 
     ret = qemuMonitorSetMigrationCapability(
                 priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_MC_RDMA_COPY);
+                QEMU_MONITOR_MIGRATION_CAPS_MC_RDMA_COPY,
+                state);
 
 cleanup:
-    qemuDomainObjExitMonitor(driver, vm);
+    if (qemuDomainObjExitMonitor(driver, vm) < 0)
+        ret = -1;
     return ret;
 }
 
 static int
 qemuMigrationSetRDMAKeepalive(virQEMUDriverPtr driver,
                             virDomainObjPtr vm,
-                            enum qemuDomainAsyncJob job)
+                            bool state,
+                            qemuDomainAsyncJob job)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     int ret;
@@ -2526,6 +2539,9 @@ qemuMigrationSetRDMAKeepalive(virQEMUDriverPtr driver,
                 QEMU_MONITOR_MIGRATION_CAPS_RDMA_KEEPALIVE);
 
     if (ret < 0) {
+        goto cleanup;
+    } else if (ret == 0 && !state) {
+        /* Unsupported but we want it off anyway */
         goto cleanup;
     } else if (ret == 0) {
         if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
@@ -2543,17 +2559,20 @@ qemuMigrationSetRDMAKeepalive(virQEMUDriverPtr driver,
 
     ret = qemuMonitorSetMigrationCapability(
                 priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_RDMA_KEEPALIVE);
+                QEMU_MONITOR_MIGRATION_CAPS_RDMA_KEEPALIVE,
+                state);
 
 cleanup:
-    qemuDomainObjExitMonitor(driver, vm);
+    if (qemuDomainObjExitMonitor(driver, vm) < 0)
+        ret = -1;
     return ret;
 }
 
 static int
 qemuMigrationSetMC(virQEMUDriverPtr driver,
                             virDomainObjPtr vm,
-                            enum qemuDomainAsyncJob job)
+                            bool state,
+                            qemuDomainAsyncJob job)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     int ret;
@@ -2566,6 +2585,9 @@ qemuMigrationSetMC(virQEMUDriverPtr driver,
                 QEMU_MONITOR_MIGRATION_CAPS_MC);
 
     if (ret < 0) {
+        goto cleanup;
+    } else if (ret == 0 && !state) {
+        /* Unsupported but we want it off anyway */
         goto cleanup;
     } else if (ret == 0) {
         if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
@@ -2583,10 +2605,12 @@ qemuMigrationSetMC(virQEMUDriverPtr driver,
 
     ret = qemuMonitorSetMigrationCapability(
                 priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_MC);
+                QEMU_MONITOR_MIGRATION_CAPS_MC,
+                state);
 
 cleanup:
-    qemuDomainObjExitMonitor(driver, vm);
+    if (qemuDomainObjExitMonitor(driver, vm) < 0)
+        ret = -1;
     return ret;
 }
 
@@ -2700,8 +2724,8 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
 
     if (qemuMigrationFetchJobStatus(driver, vm, asyncJob, &newInfo) < 0) {
         if (checkpointing) {
-            priv->job.info.type = VIR_DOMAIN_JOB_COMPLETED;
-            priv->job.status.status = QEMU_MONITOR_MIGRATION_STATUS_COMPLETED;
+            jobInfo->status.status = QEMU_MONITOR_MIGRATION_STATUS_COMPLETED;
+            qemuMigrationUpdateJobType(jobInfo);
             return 0;
         }
         return -1;
@@ -2715,15 +2739,15 @@ qemuMigrationUpdateJobStatus(virQEMUDriverPtr driver,
 static int
 qemuMigrationCheckJobStatus(virQEMUDriverPtr driver,
                             virDomainObjPtr vm,
-                            qemuDomainAsyncJob asyncJob)
+                            qemuDomainAsyncJob asyncJob,
+                            bool checkpointing)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     qemuDomainJobInfoPtr jobInfo = priv->job.current;
 
     /* don't remember whether checkpointing is supposed to false or where it
      * comes from. seems to be only one caller of the function.... */
-    if (qemuMigrationUpdateJobStatus(driver, vm, asyncJob, checkpointing or
-        false?) < 0)
+    if (qemuMigrationUpdateJobStatus(driver, vm, asyncJob, checkpointing) < 0)
         return -1;
 
     switch (jobInfo->type) {
@@ -2764,13 +2788,14 @@ qemuMigrationCompleted(virQEMUDriverPtr driver,
                        qemuDomainAsyncJob asyncJob,
                        virConnectPtr dconn,
                        bool abort_on_error,
-                       bool storage)
+                       bool storage,
+                       bool checkpointing)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     qemuDomainJobInfoPtr jobInfo = priv->job.current;
     int pauseReason;
 
-    if (qemuMigrationCheckJobStatus(driver, vm, asyncJob) < 0)
+    if (qemuMigrationCheckJobStatus(driver, vm, asyncJob, checkpointing) < 0)
         goto error;
 
     if (storage && qemuMigrationDriveMirrorReady(driver, vm) < 0)
@@ -2827,7 +2852,7 @@ qemuMigrationWaitForCompletion(virQEMUDriverPtr driver,
 
     jobInfo->type = VIR_DOMAIN_JOB_UNBOUNDED;
     while ((rv = qemuMigrationCompleted(driver, vm, asyncJob, dconn,
-                                        abort_on_error, storage)) != 1) {
+                                        abort_on_error, storage, checkpointing)) != 1) {
         /* Poll every 50ms for progress & to allow cancellation */
         struct timespec ts = { .tv_sec = 0, .tv_nsec = 50 * 1000 * 1000ull };
 
@@ -3539,24 +3564,24 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
                                QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
-    if (flags & VIR_MIGRATE_MC &&
-        qemuMigrationSetMC(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
+    if (qemuMigrationSetMC(driver, vm,
+                           flags & VIR_MIGRATE_MC,
+                           QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
-    if (flags & VIR_MIGRATE_MC_NET_DISABLE &&
-        qemuMigrationSetMCNetDisable(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
+    if (qemuMigrationSetMCNetDisable(driver, vm,
+                                     flags & VIR_MIGRATE_MC_NET_DISABLE,
+                                     QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
-    if (flags & VIR_MIGRATE_MC_RDMA_COPY &&
-        qemuMigrationSetMCRDMACopy(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
+    if (qemuMigrationSetMCRDMACopy(driver, vm,
+                                   flags & VIR_MIGRATE_MC_RDMA_COPY,
+                                   QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
-    if (flags & VIR_MIGRATE_RDMA_KEEPALIVE &&
-        qemuMigrationSetRDMAKeepalive(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
+    if (qemuMigrationSetRDMAKeepalive(driver, vm,
+                                      flags & VIR_MIGRATE_RDMA_KEEPALIVE,
+                                      QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stop;
 
     if (mig->lockState) {
@@ -4412,24 +4437,24 @@ qemuMigrationRun(virQEMUDriverPtr driver,
                                QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
-    if (flags & VIR_MIGRATE_MC &&
-        qemuMigrationSetMC(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+    if (qemuMigrationSetMC(driver, vm,
+                           flags & VIR_MIGRATE_MC,
+                           QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
-    if (flags & VIR_MIGRATE_MC_NET_DISABLE &&
-        qemuMigrationSetMCNetDisable(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+    if (qemuMigrationSetMCNetDisable(driver, vm,
+                                     flags & VIR_MIGRATE_MC_NET_DISABLE,
+                                     QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
-    if (flags & VIR_MIGRATE_MC_RDMA_COPY &&
-        qemuMigrationSetMCRDMACopy(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+    if (qemuMigrationSetMCRDMACopy(driver, vm,
+                                   flags & VIR_MIGRATE_MC_RDMA_COPY,
+                                   QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
-    if (flags & VIR_MIGRATE_RDMA_KEEPALIVE &&
-        qemuMigrationSetRDMAKeepalive(driver, vm,
-                                    QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+    if (qemuMigrationSetRDMAKeepalive(driver, vm,
+                                      flags & VIR_MIGRATE_RDMA_KEEPALIVE,
+                                      QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
     if (qemuDomainObjEnterMonitorAsync(driver, vm,
@@ -4511,7 +4536,7 @@ qemuMigrationRun(virQEMUDriverPtr driver,
          * connection from qemu which may never be initiated.
          */
         if (qemuMigrationCheckJobStatus(driver, vm,
-                                        QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+                                        QEMU_ASYNC_JOB_MIGRATION_OUT, false) < 0)
             goto cancel;
 
         while ((fd = accept(spec->dest.unix_socket.sock, NULL, NULL)) < 0) {
