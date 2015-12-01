@@ -1,0 +1,3 @@
+<cpu mode='custom' match='exact'>
+  <model fallback='forbid'>POWER7</model>
+</cpu>

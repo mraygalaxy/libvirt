@@ -1,0 +1,20 @@
+<device>
+  <name>net_00_13_02_b9_f9_d3</name>
+  <parent>pci_8086_4227</parent>
+  <capability type='net'>
+    <interface>eth0</interface>
+    <address>00:13:02:b9:f9:d3</address>
+    <feature name='rx'/>
+    <feature name='tx'/>
+    <feature name='sg'/>
+    <feature name='tso'/>
+    <feature name='gso'/>
+    <feature name='gro'/>
+    <feature name='rxvlan'/>
+    <feature name='txvlan'/>
+    <feature name='rxhash'/>
+    <feature name='rdma'/>
+    <feature name='txudptnl'/>
+    <capability type='80211'/>
+  </capability>
+</device>
