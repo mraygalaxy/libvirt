@@ -1,0 +1,2 @@
+# ignore digitalocean build scripts
+extend-diff-ignore = "digitalocean/.*$"

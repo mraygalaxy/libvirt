@@ -1,0 +1,14 @@
+--- a/examples/apparmor/libvirt-qemu
++++ b/examples/apparmor/libvirt-qemu
+@@ -116,6 +116,11 @@
+   /usr/{lib,lib64}/qemu/block-curl.so mr,
+   /usr/{lib,lib64}/qemu/block-rbd.so mr,
+ 
++  /sys/devices/system/cpu/ r,
++  /sys/devices/system/node/ r,
++  /sys/devices/system/node/**/meminfo r,
++  /usr/lib/x86_64-linux-gnu/qemu/block-*.so mr,
++
+   # for save and resume
+   /bin/dash rmix,
+   /bin/dd rmix,

@@ -1,0 +1,15 @@
+--- a/src/qemu/qemu.conf
++++ b/src/qemu/qemu.conf
+@@ -529,4 +529,4 @@
+ #          against denial of service by performing log file
+ #          rollover when a size limit is hit.
+ #
+-#stdio_handler = "logd"
++stdio_handler = "file"
+--- a/src/qemu/test_libvirtd_qemu.aug.in
++++ b/src/qemu/test_libvirtd_qemu.aug.in
+@@ -78,4 +78,3 @@
+     { "1" = "/usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd" }
+     { "2" = "/usr/share/AAVMF/AAVMF_CODE.fd:/usr/share/AAVMF/AAVMF_VARS.fd" }
+ }
+-{ "stdio_handler" = "logd" }

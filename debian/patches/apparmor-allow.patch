@@ -1,0 +1,13 @@
+--- a/examples/apparmor/usr.sbin.libvirtd
++++ b/examples/apparmor/usr.sbin.libvirtd
+@@ -37,6 +37,10 @@
+   network packet dgram,
+   network packet raw,
+ 
++  dbus bus=system,
++  signal,
++  ptrace,
++
+   # Very lenient profile for libvirtd since we want to first focus on confining
+   # the guests. Guests will have a very restricted profile.
+   / r,

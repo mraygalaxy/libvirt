@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -e
+set -o errexit
+set -o pipefail
+
+function usage {
+    echo "usage: $0 <package name> <package version>"
+}
+
+if [ -z "$1" ]; then
+    usage
+    exit 1
+fi
+
+# package to install
+package=$1
+
+# if we're within buildkite and no package version was supplied
+# pull the version from the build agent's metadata
+if [ -n "$BUILDKITE" ] && [ -z "$2" ]; then
+    version="$(buildkite-agent meta-data get "release-version")"
+else
+    if [ -n "$2" ]; then
+        version="$2"
+    else
+        usage
+        exit 1
+    fi
+fi
+
+# Package builder docker container
+container=quay.io/digitalocean/test-packages
+
+echo "--- Pulling latest version of ${container}"
+docker pull ${container}
+
+echo "--- Installing ${package} within ${container} container"
+docker run --rm -i -t ${container} ${package}=${version}
+
+exit $?

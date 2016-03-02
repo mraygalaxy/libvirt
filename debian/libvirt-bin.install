@@ -1,0 +1,13 @@
+usr/bin/*
+usr/share/man/man1/*
+etc/libvirt/libvirt.conf
+usr/sbin/*
+usr/lib/libvirt/libvirt*
+usr/lib/libvirt/lock-driver/lockd.so
+usr/lib/libvirt/connection-driver
+usr/share/augeas/*
+usr/share/libvirt/*
+usr/share/man/man8/*
+etc/libvirt/libvirtd.conf
+etc/libvirt/virtlockd.conf
+etc/sasl2/*

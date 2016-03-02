@@ -1,0 +1,13 @@
+--- a/examples/apparmor/libvirt-qemu
++++ b/examples/apparmor/libvirt-qemu
+@@ -131,6 +131,10 @@
+   /sys/class/ r,
+ 
+   /usr/{lib,libexec}/qemu-bridge-helper Cx -> qemu_bridge_helper,
++
++  signal (receive) peer=/usr/sbin/libvirtd,
++  ptrace (tracedby) peer=/usr/sbin/libvirtd,
++
+   # child profile for bridge helper process
+   profile qemu_bridge_helper {
+    #include <abstractions/base>

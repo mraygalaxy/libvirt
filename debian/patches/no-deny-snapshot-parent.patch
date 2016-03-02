@@ -1,0 +1,13 @@
+--- a/src/security/virt-aa-helper.c
++++ b/src/security/virt-aa-helper.c
+@@ -832,10 +832,6 @@
+         tmp[strlen(tmp) - 1] = '\0';
+ 
+     virBufferAsprintf(buf, "  \"%s%s\" %s,\n", tmp, recursive ? "/**" : "", perms);
+-    if (readonly) {
+-        virBufferAddLit(buf, "  # don't audit writes to readonly files\n");
+-        virBufferAsprintf(buf, "  deny \"%s%s\" w,\n", tmp, recursive ? "/**" : "");
+-    }
+     if (recursive) {
+         /* allow reading (but not creating) the dir */
+         virBufferAsprintf(buf, "  \"%s/\" r,\n", tmp);
