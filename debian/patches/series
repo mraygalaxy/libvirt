@@ -17,6 +17,5 @@ apparmor-allow.patch
 apparmor-abstraction-qemu-allow.patch
 qemu-apparmor-allow.patch
 virt-aa-helper-apparmor-allow-usr-share-OVMF-too.patch
-drop-unused-rule-for-internals.patch
 stdio-handler-default-file.patch
 no-deny-snapshot-parent.patch
