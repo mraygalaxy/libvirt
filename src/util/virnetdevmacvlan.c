@@ -226,131 +226,133 @@ int virNetDevMacVLanDelete(const char *ifname)
 
 /**
  * virNetDevMacVLanTapOpen:
- * Open the macvtap's tap device.
  * @ifname: Name of the macvtap interface
+ * @tapfd: array of file descriptor return value for the new macvtap device
+ * @tapfdSize: number of file descriptors in @tapfd
  * @retries : Number of retries in case udev for example may need to be
  *            waited for to create the tap chardev
- * Returns negative value in case of error, the file descriptor otherwise.
+ *
+ * Open the macvtap's tap device, possibly multiple times if @tapfdSize > 1.
+ *
+ * Returns 0 on success, -1 otherwise.
  */
-static
-int virNetDevMacVLanTapOpen(const char *ifname,
-                            int retries)
+static int
+virNetDevMacVLanTapOpen(const char *ifname,
+                        int *tapfd,
+                        size_t tapfdSize,
+                        int retries)
 {
     int ret = -1;
-    FILE *file = NULL;
-    char *path;
     int ifindex;
-    char tapname[50];
-    int tapfd;
+    char *tapname = NULL;
+    size_t i = 0;
 
-    if (virNetDevSysfsFile(&path, ifname, "ifindex") < 0)
+    if (virNetDevGetIndex(ifname, &ifindex) < 0)
         return -1;
 
-    file = fopen(path, "r");
-
-    if (!file) {
-        virReportSystemError(errno,
-                             _("cannot open macvtap file %s to determine "
-                               "interface index"), path);
+    if (virAsprintf(&tapname, "/dev/tap%d", ifindex) < 0)
         goto cleanup;
-    }
 
-    if (fscanf(file, "%d", &ifindex) != 1) {
-        virReportSystemError(errno,
-                             "%s", _("cannot determine macvtap's tap device "
-                             "interface index"));
-        goto cleanup;
-    }
+    for (i = 0; i < tapfdSize; i++) {
+        int fd = -1;
 
-    VIR_FORCE_FCLOSE(file);
-
-    if (snprintf(tapname, sizeof(tapname),
-                 "/dev/tap%d", ifindex) >= sizeof(tapname)) {
-        virReportSystemError(errno,
-                             "%s",
-                             _("internal buffer for tap device is too small"));
-        goto cleanup;
-    }
-
-    while (1) {
-        /* may need to wait for udev to be done */
-        tapfd = open(tapname, O_RDWR);
-        if (tapfd < 0 && retries > 0) {
-            retries--;
-            usleep(20000);
-            continue;
+        while (fd < 0) {
+            if ((fd = open(tapname, O_RDWR)) >= 0) {
+                tapfd[i] = fd;
+            } else if (retries-- > 0) {
+                /* may need to wait for udev to be done */
+                usleep(20000);
+            } else {
+                /* However, if haven't succeeded, quit. */
+                virReportSystemError(errno,
+                                     _("cannot open macvtap tap device %s"),
+                                     tapname);
+                goto cleanup;
+            }
         }
-        break;
     }
 
-    if (tapfd < 0) {
-        virReportSystemError(errno,
-                             _("cannot open macvtap tap device %s"),
-                             tapname);
-        goto cleanup;
-    }
-    ret = tapfd;
+    ret = 0;
+
  cleanup:
-    VIR_FREE(path);
-    VIR_FORCE_FCLOSE(file);
+    if (ret < 0) {
+        while (i--)
+            VIR_FORCE_CLOSE(tapfd[i]);
+    }
+    VIR_FREE(tapname);
     return ret;
 }
 
 
 /**
  * virNetDevMacVLanTapSetup:
- * @tapfd: file descriptor of the macvtap tap
- * @vnet_hdr: 1 to enable IFF_VNET_HDR, 0 to disable it
+ * @tapfd: array of file descriptors of the macvtap tap
+ * @tapfdSize: number of file descriptors in @tapfd
+ * @vnet_hdr: whether to enable or disable IFF_VNET_HDR
  *
- * Returns 0 on success, -1 in case of fatal error, error code otherwise.
+ * Turn on the IFF_VNET_HDR flag if requested and available, but make sure
+ * it's off otherwise. Similarly, turn on IFF_MULTI_QUEUE if @tapfdSize is
+ * greater than one, but if it can't be set, consider it a fatal error
+ * (rather than ignoring as with @vnet_hdr).
  *
- * Turn the IFF_VNET_HDR flag, if requested and available, make sure
- * it's off in the other cases.
  * A fatal error is defined as the VNET_HDR flag being set but it cannot
  * be turned off for some reason. This is reported with -1. Other fatal
  * error is not being able to read the interface flags. In that case the
  * macvtap device should not be used.
+ *
+ * Returns 0 on success, -1 in case of fatal error.
  */
 static int
-virNetDevMacVLanTapSetup(int tapfd, int vnet_hdr)
+virNetDevMacVLanTapSetup(int *tapfd, size_t tapfdSize, bool vnet_hdr)
 {
     unsigned int features;
     struct ifreq ifreq;
     short new_flags = 0;
-    int rc_on_fail = 0;
-    const char *errmsg = NULL;
+    size_t i;
 
-    memset(&ifreq, 0, sizeof(ifreq));
+    for (i = 0; i < tapfdSize; i++) {
+        memset(&ifreq, 0, sizeof(ifreq));
 
-    if (ioctl(tapfd, TUNGETIFF, &ifreq) < 0) {
-        virReportSystemError(errno, "%s",
-                             _("cannot get interface flags on macvtap tap"));
-        return -1;
-    }
-
-    new_flags = ifreq.ifr_flags;
-
-    if ((ifreq.ifr_flags & IFF_VNET_HDR) && !vnet_hdr) {
-        new_flags = ifreq.ifr_flags & ~IFF_VNET_HDR;
-        rc_on_fail = -1;
-        errmsg = _("cannot clean IFF_VNET_HDR flag on macvtap tap");
-    } else if ((ifreq.ifr_flags & IFF_VNET_HDR) == 0 && vnet_hdr) {
-        if (ioctl(tapfd, TUNGETFEATURES, &features) < 0) {
+        if (ioctl(tapfd[i], TUNGETIFF, &ifreq) < 0) {
             virReportSystemError(errno, "%s",
-                   _("cannot get feature flags on macvtap tap"));
+                                 _("cannot get interface flags on macvtap tap"));
             return -1;
         }
-        if ((features & IFF_VNET_HDR)) {
-            new_flags = ifreq.ifr_flags | IFF_VNET_HDR;
-            errmsg = _("cannot set IFF_VNET_HDR flag on macvtap tap");
-        }
-    }
 
-    if (new_flags != ifreq.ifr_flags) {
-        ifreq.ifr_flags = new_flags;
-        if (ioctl(tapfd, TUNSETIFF, &ifreq) < 0) {
-            virReportSystemError(errno, "%s", errmsg);
-            return rc_on_fail;
+        new_flags = ifreq.ifr_flags;
+
+        if (vnet_hdr) {
+            if (ioctl(tapfd[i], TUNGETFEATURES, &features) < 0) {
+                virReportSystemError(errno, "%s",
+                                     _("cannot get feature flags on macvtap tap"));
+                return -1;
+            }
+            if (features & IFF_VNET_HDR)
+                new_flags |= IFF_VNET_HDR;
+        } else {
+            new_flags &= ~IFF_VNET_HDR;
+        }
+
+# ifdef IFF_MULTI_QUEUE
+        if (tapfdSize > 1)
+            new_flags |= IFF_MULTI_QUEUE;
+        else
+            new_flags &= ~IFF_MULTI_QUEUE;
+# else
+        if (tapfdSize > 1) {
+            virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
+                           _("Multiqueue devices are not supported on this system"));
+            return -1;
+        }
+# endif
+
+        if (new_flags != ifreq.ifr_flags) {
+            ifreq.ifr_flags = new_flags;
+            if (ioctl(tapfd[i], TUNSETIFF, &ifreq) < 0) {
+                virReportSystemError(errno, "%s",
+                                     _("unable to set vnet or multiqueue flags on macvtap"));
+                return -1;
+            }
         }
     }
 
@@ -473,16 +475,16 @@ virNetDevMacVLanVPortProfileCallback(struct nlmsghdr *hdr,
     case RTM_DELLINK:
     case RTM_SETLINK:
     case RTM_GETLINK:
-        VIR_DEBUG(" IFINFOMSG\n");
-        VIR_DEBUG("        ifi_family = 0x%02x\n",
+        VIR_DEBUG(" IFINFOMSG");
+        VIR_DEBUG("        ifi_family = 0x%02x",
             ((struct ifinfomsg *)data)->ifi_family);
-        VIR_DEBUG("        ifi_type   = 0x%x\n",
+        VIR_DEBUG("        ifi_type   = 0x%x",
             ((struct ifinfomsg *)data)->ifi_type);
-        VIR_DEBUG("        ifi_index  = %i\n",
+        VIR_DEBUG("        ifi_index  = %i",
             ((struct ifinfomsg *)data)->ifi_index);
-        VIR_DEBUG("        ifi_flags  = 0x%04x\n",
+        VIR_DEBUG("        ifi_flags  = 0x%04x",
             ((struct ifinfomsg *)data)->ifi_flags);
-        VIR_DEBUG("        ifi_change = 0x%04x\n",
+        VIR_DEBUG("        ifi_change = 0x%04x",
             ((struct ifinfomsg *)data)->ifi_change);
     }
     /* DEBUG end */
@@ -544,23 +546,23 @@ virNetDevMacVLanVPortProfileCallback(struct nlmsghdr *hdr,
 
     if (tb[IFLA_IFNAME]) {
         ifname = (char *)RTA_DATA(tb[IFLA_IFNAME]);
-        VIR_DEBUG("IFLA_IFNAME = %s\n", ifname);
+        VIR_DEBUG("IFLA_IFNAME = %s", ifname);
     }
 
     if (tb[IFLA_OPERSTATE]) {
         rem = *(unsigned short *)RTA_DATA(tb[IFLA_OPERSTATE]);
-        VIR_DEBUG("IFLA_OPERSTATE = %d\n", rem);
+        VIR_DEBUG("IFLA_OPERSTATE = %d", rem);
     }
 
     if (tb[IFLA_VF_PORTS]) {
         struct nlattr *tb_vf_ports;
 
-        VIR_DEBUG("found IFLA_VF_PORTS\n");
+        VIR_DEBUG("found IFLA_VF_PORTS");
         nla_for_each_nested(tb_vf_ports, tb[IFLA_VF_PORTS], rem) {
 
-            VIR_DEBUG("iterating\n");
+            VIR_DEBUG("iterating");
             if (nla_type(tb_vf_ports) != IFLA_VF_PORT) {
-                VIR_DEBUG("not a IFLA_VF_PORT. skipping\n");
+                VIR_DEBUG("not a IFLA_VF_PORT. skipping");
                 continue;
             }
             if (nla_parse_nested(tb3, IFLA_PORT_MAX, tb_vf_ports,
@@ -600,7 +602,7 @@ virNetDevMacVLanVPortProfileCallback(struct nlmsghdr *hdr,
                 uuid = (unsigned char *)
                     RTA_DATA(tb3[IFLA_PORT_INSTANCE_UUID]);
                 instance2str(uuid, instance, sizeof(instance));
-                VIR_DEBUG("IFLA_PORT_INSTANCE_UUID = %s\n",
+                VIR_DEBUG("IFLA_PORT_INSTANCE_UUID = %s",
                           instance);
             }
 
@@ -615,7 +617,7 @@ virNetDevMacVLanVPortProfileCallback(struct nlmsghdr *hdr,
             }
 
             if (tb3[IFLA_PORT_RESPONSE]) {
-                VIR_DEBUG("IFLA_PORT_RESPONSE = %d\n", *(uint16_t *)
+                VIR_DEBUG("IFLA_PORT_RESPONSE = %d", *(uint16_t *)
                     RTA_DATA(tb3[IFLA_PORT_RESPONSE]));
             }
         }
@@ -727,28 +729,32 @@ virNetDevMacVLanVPortProfileRegisterCallback(const char *ifname,
  * @macaddress: The MAC address for the macvtap device
  * @linkdev: The interface name of the NIC to connect to the external bridge
  * @mode: int describing the mode for 'bridge', 'vepa', 'private' or 'passthru'.
- * @vnet_hdr: 1 to enable IFF_VNET_HDR, 0 to disable it
  * @vmuuid: The UUID of the VM the macvtap belongs to
  * @virtPortProfile: pointer to object holding the virtual port profile data
  * @res_ifname: Pointer to a string pointer where the actual name of the
  *     interface will be stored into if everything succeeded. It is up
  *     to the caller to free the string.
+ * @tapfd: array of file descriptor return value for the new tap device
+ * @tapfdSize: number of file descriptors in @tapfd
  * @flags: OR of virNetDevMacVLanCreateFlags.
  *
- * Returns file descriptor of the tap device in case of success with
- * @flags & VIR_NETDEV_MACVLAN_CREATE_WITH_TAP, otherwise returns 0; returns
- * -1 on error.
+ * Creates a macvlan device. Optionally, if flags &
+ * VIR_NETDEV_MACVLAN_CREATE_WITH_TAP is set, @tapfd is populated with FDs of
+ * tap devices up to @tapfdSize.
+ *
+ * Return 0 on success, -1 on error.
  */
 int virNetDevMacVLanCreateWithVPortProfile(const char *tgifname,
                                            const virMacAddr *macaddress,
                                            const char *linkdev,
                                            virNetDevMacVLanMode mode,
-                                           int vnet_hdr,
                                            const unsigned char *vmuuid,
                                            virNetDevVPortProfilePtr virtPortProfile,
                                            char **res_ifname,
                                            virNetDevVPortProfileOp vmOp,
                                            char *stateDir,
+                                           int *tapfd,
+                                           size_t tapfdSize,
                                            unsigned int flags)
 {
     const char *type = (flags & VIR_NETDEV_MACVLAN_CREATE_WITH_TAP) ?
@@ -764,6 +770,7 @@ int virNetDevMacVLanCreateWithVPortProfile(const char *tgifname,
     const char *cr_ifname = NULL;
     int ret;
     int vf = -1;
+    bool vnet_hdr = flags & VIR_NETDEV_MACVLAN_VNET_HDR;
 
     macvtapMode = modeMap[mode];
 
@@ -859,10 +866,10 @@ int virNetDevMacVLanCreateWithVPortProfile(const char *tgifname,
     }
 
     if (flags & VIR_NETDEV_MACVLAN_CREATE_WITH_TAP) {
-        if ((rc = virNetDevMacVLanTapOpen(cr_ifname, 10)) < 0)
+        if (virNetDevMacVLanTapOpen(cr_ifname, tapfd, tapfdSize, 10) < 0)
             goto disassociate_exit;
 
-        if (virNetDevMacVLanTapSetup(rc, vnet_hdr) < 0) {
+        if (virNetDevMacVLanTapSetup(tapfd, tapfdSize, vnet_hdr) < 0) {
             VIR_FORCE_CLOSE(rc); /* sets rc to -1 */
             goto disassociate_exit;
         }
@@ -898,6 +905,8 @@ int virNetDevMacVLanCreateWithVPortProfile(const char *tgifname,
                                                    linkdev,
                                                    vf,
                                                    vmOp));
+    while (tapfdSize--)
+        VIR_FORCE_CLOSE(tapfd[tapfdSize]);
 
  link_del_exit:
     ignore_value(virNetDevMacVLanDelete(cr_ifname));
@@ -1017,12 +1026,13 @@ int virNetDevMacVLanCreateWithVPortProfile(const char *ifname ATTRIBUTE_UNUSED,
                                            const virMacAddr *macaddress ATTRIBUTE_UNUSED,
                                            const char *linkdev ATTRIBUTE_UNUSED,
                                            virNetDevMacVLanMode mode ATTRIBUTE_UNUSED,
-                                           int vnet_hdr ATTRIBUTE_UNUSED,
                                            const unsigned char *vmuuid ATTRIBUTE_UNUSED,
                                            virNetDevVPortProfilePtr virtPortProfile ATTRIBUTE_UNUSED,
                                            char **res_ifname ATTRIBUTE_UNUSED,
                                            virNetDevVPortProfileOp vmop ATTRIBUTE_UNUSED,
                                            char *stateDir ATTRIBUTE_UNUSED,
+                                           int *tapfd ATTRIBUTE_UNUSED,
+                                           size_t tapfdSize ATTRIBUTE_UNUSED,
                                            unsigned int unused_flags ATTRIBUTE_UNUSED)
 {
     virReportSystemError(ENOSYS, "%s",

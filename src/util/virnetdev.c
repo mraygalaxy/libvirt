@@ -256,9 +256,11 @@ int virNetDevSetMAC(const char *ifname,
     virMacAddrGetRaw(macaddr, (unsigned char *)ifr.ifr_hwaddr.sa_data);
 
     if (ioctl(fd, SIOCSIFHWADDR, &ifr) < 0) {
+        char macstr[VIR_MAC_STRING_BUFLEN];
+
         virReportSystemError(errno,
-                             _("Cannot set interface MAC on '%s'"),
-                             ifname);
+                             _("Cannot set interface MAC to %s on '%s'"),
+                             virMacAddrFormat(macaddr, macstr), ifname);
         goto cleanup;
     }
 
@@ -291,8 +293,8 @@ int virNetDevSetMAC(const char *ifname,
 
         if (ioctl(s, SIOCSIFLLADDR, &ifr) < 0) {
             virReportSystemError(errno,
-                                 _("Cannot set interface MAC on '%s'"),
-                                 ifname);
+                                 _("Cannot set interface MAC to %s on '%s'"),
+                                 mac + 1, ifname);
             goto cleanup;
         }
 
@@ -1316,7 +1318,10 @@ virNetDevParseDadStatus(struct nlmsghdr *nlh, int len,
     struct rtattr *rtattr_ptr;
     size_t i;
     struct in6_addr *addr;
+
+    VIR_WARNINGS_NO_CAST_ALIGN
     for (; NLMSG_OK(nlh, len); nlh = NLMSG_NEXT(nlh, len)) {
+    VIR_WARNINGS_RESET
         if (NLMSG_PAYLOAD(nlh, 0) < sizeof(struct ifaddrmsg)) {
             /* Message without payload is the last one. */
             break;
@@ -1329,9 +1334,11 @@ virNetDevParseDadStatus(struct nlmsghdr *nlh, int len,
         }
 
         ifaddrmsg_len = IFA_PAYLOAD(nlh);
+        VIR_WARNINGS_NO_CAST_ALIGN
         rtattr_ptr = (struct rtattr *) IFA_RTA(ifaddrmsg_ptr);
         for (; RTA_OK(rtattr_ptr, ifaddrmsg_len);
             rtattr_ptr = RTA_NEXT(rtattr_ptr, ifaddrmsg_len)) {
+            VIR_WARNINGS_RESET
             if (RTA_PAYLOAD(rtattr_ptr) != sizeof(struct in6_addr)) {
                 /* No address: ignore. */
                 continue;
@@ -1802,7 +1809,8 @@ int
 virNetDevGetVirtualFunctions(const char *pfname,
                              char ***vfname,
                              virPCIDeviceAddressPtr **virt_fns,
-                             size_t *n_vfname)
+                             size_t *n_vfname,
+                             unsigned int *max_vfs)
 {
     int ret = -1;
     size_t i;
@@ -1812,12 +1820,13 @@ virNetDevGetVirtualFunctions(const char *pfname,
 
     *virt_fns = NULL;
     *n_vfname = 0;
+    *max_vfs = 0;
 
     if (virNetDevSysfsFile(&pf_sysfs_device_link, pfname, "device") < 0)
         return ret;
 
     if (virPCIGetVirtualFunctions(pf_sysfs_device_link, virt_fns,
-                                  n_vfname) < 0)
+                                  n_vfname, max_vfs) < 0)
         goto cleanup;
 
     if (VIR_ALLOC_N(*vfname, *n_vfname) < 0)
@@ -1987,7 +1996,8 @@ int
 virNetDevGetVirtualFunctions(const char *pfname ATTRIBUTE_UNUSED,
                              char ***vfname ATTRIBUTE_UNUSED,
                              virPCIDeviceAddressPtr **virt_fns ATTRIBUTE_UNUSED,
-                             size_t *n_vfname ATTRIBUTE_UNUSED)
+                             size_t *n_vfname ATTRIBUTE_UNUSED,
+                             unsigned int *max_vfs ATTRIBUTE_UNUSED)
 {
     virReportSystemError(ENOSYS, "%s",
                          _("Unable to get virtual functions on this platform"));
@@ -2262,10 +2272,17 @@ virNetDevSetVfConfig(const char *ifname, int ifindex, int vf,
             goto malformed_resp;
 
         if (err->error) {
+            char macstr[VIR_MAC_STRING_BUFLEN];
+
             virReportSystemError(-err->error,
-                _("error during set %s of ifindex %d"),
-                (macaddr ? (vlanid >= 0 ? "mac/vlan" : "mac") : "vlanid"),
-                ifindex);
+                                 _("Cannot set interface MAC/vlanid to %s/%d "
+                                   "for ifname %s ifindex %d vf %d"),
+                                 (macaddr
+                                  ? virMacAddrFormat(macaddr, macstr)
+                                  : "(unchanged)"),
+                                 vlanid,
+                                 ifname ? ifname : "(unspecified)",
+                                 ifindex, vf);
             goto cleanup;
         }
         break;
@@ -3151,14 +3168,32 @@ static int
 virNetDevSendEthtoolIoctl(const char *ifname, void *cmd)
 {
     int ret = -1;
-    int fd;
+    int fd = -1;
     struct ifreq ifr;
 
+    /* Ultimately uses AF_PACKET for socket which requires privileged
+     * daemon support.
+     */
     if ((fd = virNetDevSetupControl(ifname, &ifr)) < 0)
         return ret;
+
     ifr.ifr_data = cmd;
     ret = ioctl(fd, SIOCETHTOOL, &ifr);
+    if (ret != 0) {
+        switch (errno) {
+            case EINVAL: /* kernel doesn't support SIOCETHTOOL */
+                VIR_DEBUG("ethtool ioctl: invalid request");
+                break;
+            case EOPNOTSUPP: /* kernel doesn't support specific feature */
+                VIR_DEBUG("ethtool ioctl: request not supported");
+                break;
+            default:
+                virReportSystemError(errno, "%s", _("ethtool ioctl error"));
+                goto cleanup;
+        }
+    }
 
+ cleanup:
     VIR_FORCE_CLOSE(fd);
     return ret;
 }
@@ -3176,12 +3211,12 @@ virNetDevSendEthtoolIoctl(const char *ifname, void *cmd)
 static int
 virNetDevFeatureAvailable(const char *ifname, struct ethtool_value *cmd)
 {
+    int ret = -1;
+
     cmd = (void*)cmd;
-    if (virNetDevSendEthtoolIoctl(ifname, cmd) < 0) {
-        virReportSystemError(errno, _("Cannot get device %s flags"), ifname);
-        return -1;
-    }
-    return cmd->data > 0 ? 1 : 0;
+    if (!virNetDevSendEthtoolIoctl(ifname, cmd))
+        ret = cmd->data > 0 ? 1 : 0;
+    return ret;
 }
 
 
@@ -3198,12 +3233,12 @@ virNetDevFeatureAvailable(const char *ifname, struct ethtool_value *cmd)
 static int
 virNetDevGFeatureAvailable(const char *ifname, struct ethtool_gfeatures *cmd)
 {
+    int ret = -1;
+
     cmd = (void*)cmd;
-    if (virNetDevSendEthtoolIoctl(ifname, cmd) < 0) {
-        virReportSystemError(errno, _("Cannot get device %s generic features"), ifname);
-        return -1;
-    }
-    return FEATURE_BIT_IS_SET(cmd->features, TX_UDP_TNL, active);
+    if (!virNetDevSendEthtoolIoctl(ifname, cmd))
+        ret = FEATURE_BIT_IS_SET(cmd->features, TX_UDP_TNL, active);
+    return ret;
 }
 # endif
 
@@ -3213,10 +3248,10 @@ virNetDevGFeatureAvailable(const char *ifname, struct ethtool_gfeatures *cmd)
  * This function gets the nic offloads features available for ifname
  *
  * @ifname: name of the interface
- * @features: network device feature structures
- * @nfeatures: number of features available
+ * @out: bitmap of the available virNetDevFeature feature bits
  *
- * Returns 0 on success, -1 on failure.
+ * Returns 0 on success or if called from session mode, -1 on failure.
+ * If called from session mode, an empty bitmap is returned.
  */
 int
 virNetDevGetFeatures(const char *ifname,
@@ -3248,9 +3283,15 @@ virNetDevGetFeatures(const char *ifname,
     if (!(*out = virBitmapNew(VIR_NET_DEV_FEAT_LAST)))
         return -1;
 
+    /* Only fetch features if we're privileged, but no need to fail */
+    if (geteuid() != 0) {
+        VIR_DEBUG("ETHTOOL feature bits not available in session mode");
+        return 0;
+    }
+
     for (i = 0; i < ARRAY_CARDINALITY(cmds); i++) {
         cmd.cmd = cmds[i].cmd;
-        if (virNetDevFeatureAvailable(ifname, &cmd))
+        if (virNetDevFeatureAvailable(ifname, &cmd) == 1)
             ignore_value(virBitmapSetBit(*out, cmds[i].feat));
     }
 
@@ -3274,7 +3315,7 @@ virNetDevGetFeatures(const char *ifname,
     };
 
     cmd.cmd = ETHTOOL_GFLAGS;
-    if (virNetDevFeatureAvailable(ifname, &cmd)) {
+    if (virNetDevFeatureAvailable(ifname, &cmd) == 1) {
         for (j = 0; j < ARRAY_CARDINALITY(flags); j++) {
             if (cmd.data & flags[j].cmd)
                 ignore_value(virBitmapSetBit(*out, flags[j].feat));
@@ -3288,7 +3329,7 @@ virNetDevGetFeatures(const char *ifname,
         return -1;
     g_cmd->cmd = ETHTOOL_GFEATURES;
     g_cmd->size = GFEATURES_SIZE;
-    if (virNetDevGFeatureAvailable(ifname, g_cmd))
+    if (virNetDevGFeatureAvailable(ifname, g_cmd) == 1)
         ignore_value(virBitmapSetBit(*out, VIR_NET_DEV_FEAT_TXUDPTNL));
     VIR_FREE(g_cmd);
 # endif

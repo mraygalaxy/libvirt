@@ -37,11 +37,11 @@
 #include "interface_conf.h"
 #include "domain_audit.h"
 #include "domain_event.h"
-#include "domain_conf.h"
 #include "snapshot_conf.h"
 #include "fdstream.h"
 #include "storage_conf.h"
 #include "node_device_conf.h"
+#include "virdomainobjlist.h"
 #include "virxml.h"
 #include "virthread.h"
 #include "virlog.h"
@@ -304,7 +304,7 @@ bhyveDomainGetInfo(virDomainPtr domain, virDomainInfoPtr info)
 
     info->state = virDomainObjGetState(vm, NULL);
     info->maxMem = virDomainDefGetMemoryActual(vm->def);
-    info->nrVirtCpu = vm->def->vcpus;
+    info->nrVirtCpu = virDomainDefGetVcpus(vm->def);
     ret = 0;
 
  cleanup:

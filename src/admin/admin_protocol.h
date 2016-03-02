@@ -13,6 +13,7 @@
 extern "C" {
 #endif
 
+#include "virxdrdefs.h"
 #define ADMIN_STRING_MAX 4194304
 
 typedef char *admin_nonnull_string;
@@ -23,12 +24,18 @@ struct admin_connect_open_args {
         u_int flags;
 };
 typedef struct admin_connect_open_args admin_connect_open_args;
+
+struct admin_connect_get_lib_version_ret {
+        uint64_t libVer;
+};
+typedef struct admin_connect_get_lib_version_ret admin_connect_get_lib_version_ret;
 #define ADMIN_PROGRAM 0x06900690
 #define ADMIN_PROTOCOL_VERSION 1
 
 enum admin_procedure {
         ADMIN_PROC_CONNECT_OPEN = 1,
         ADMIN_PROC_CONNECT_CLOSE = 2,
+        ADMIN_PROC_CONNECT_GET_LIB_VERSION = 3,
 };
 typedef enum admin_procedure admin_procedure;
 
@@ -38,12 +45,14 @@ typedef enum admin_procedure admin_procedure;
 extern  bool_t xdr_admin_nonnull_string (XDR *, admin_nonnull_string*);
 extern  bool_t xdr_admin_string (XDR *, admin_string*);
 extern  bool_t xdr_admin_connect_open_args (XDR *, admin_connect_open_args*);
+extern  bool_t xdr_admin_connect_get_lib_version_ret (XDR *, admin_connect_get_lib_version_ret*);
 extern  bool_t xdr_admin_procedure (XDR *, admin_procedure*);
 
 #else /* K&R C */
 extern bool_t xdr_admin_nonnull_string ();
 extern bool_t xdr_admin_string ();
 extern bool_t xdr_admin_connect_open_args ();
+extern bool_t xdr_admin_connect_get_lib_version_ret ();
 extern bool_t xdr_admin_procedure ();
 
 #endif /* K&R C */

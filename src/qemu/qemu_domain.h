@@ -90,6 +90,7 @@ typedef enum {
     QEMU_ASYNC_JOB_SAVE,
     QEMU_ASYNC_JOB_DUMP,
     QEMU_ASYNC_JOB_SNAPSHOT,
+    QEMU_ASYNC_JOB_START,
 
     QEMU_ASYNC_JOB_LAST
 } qemuDomainAsyncJob;
@@ -115,7 +116,7 @@ struct _qemuDomainJobInfo {
                             destination. */
     bool timeDeltaSet;
     /* Raw values from QEMU */
-    qemuMonitorMigrationStatus status;
+    qemuMonitorMigrationStats stats;
 };
 
 struct qemuDomainJobObj {
@@ -244,6 +245,9 @@ struct qemuProcessEvent {
     void *data;
 };
 
+typedef struct _qemuDomainLogContext qemuDomainLogContext;
+typedef qemuDomainLogContext *qemuDomainLogContextPtr;
+
 const char *qemuDomainAsyncJobPhaseToString(qemuDomainAsyncJob job,
                                             int phase);
 int qemuDomainAsyncJobPhaseFromString(qemuDomainAsyncJob job,
@@ -294,6 +298,7 @@ int qemuDomainObjEnterMonitorAsync(virQEMUDriverPtr driver,
     ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(2) ATTRIBUTE_RETURN_CHECK;
 
 
+qemuAgentPtr qemuDomainGetAgent(virDomainObjPtr vm);
 void qemuDomainObjEnterAgent(virDomainObjPtr obj)
     ATTRIBUTE_NONNULL(1);
 void qemuDomainObjExitAgent(virDomainObjPtr obj)
@@ -330,31 +335,41 @@ char *qemuDomainDefFormatLive(virQEMUDriverPtr driver,
 void qemuDomainObjTaint(virQEMUDriverPtr driver,
                         virDomainObjPtr obj,
                         virDomainTaintFlags taint,
-                        int logFD);
+                        qemuDomainLogContextPtr logCtxt);
 
 void qemuDomainObjCheckTaint(virQEMUDriverPtr driver,
                              virDomainObjPtr obj,
-                             int logFD);
+                             qemuDomainLogContextPtr logCtxt);
 void qemuDomainObjCheckDiskTaint(virQEMUDriverPtr driver,
                                  virDomainObjPtr obj,
                                  virDomainDiskDefPtr disk,
-                                 int logFD);
+                                 qemuDomainLogContextPtr logCtxt);
 void qemuDomainObjCheckHostdevTaint(virQEMUDriverPtr driver,
                                     virDomainObjPtr obj,
                                     virDomainHostdevDefPtr disk,
-                                    int logFD);
+                                    qemuDomainLogContextPtr logCtxt);
 void qemuDomainObjCheckNetTaint(virQEMUDriverPtr driver,
                                 virDomainObjPtr obj,
                                 virDomainNetDefPtr net,
-                                int logFD);
+                                qemuDomainLogContextPtr logCtxt);
 
+typedef enum {
+    QEMU_DOMAIN_LOG_CONTEXT_MODE_START,
+    QEMU_DOMAIN_LOG_CONTEXT_MODE_ATTACH,
+    QEMU_DOMAIN_LOG_CONTEXT_MODE_STOP,
+} qemuDomainLogContextMode;
 
-int qemuDomainCreateLog(virQEMUDriverPtr driver, virDomainObjPtr vm, bool append);
-int qemuDomainOpenLog(virQEMUDriverPtr driver, virDomainObjPtr vm, off_t pos);
-int qemuDomainAppendLog(virQEMUDriverPtr driver,
-                        virDomainObjPtr vm,
-                        int logFD,
-                        const char *fmt, ...) ATTRIBUTE_FMT_PRINTF(4, 5);
+qemuDomainLogContextPtr qemuDomainLogContextNew(virQEMUDriverPtr driver,
+                                                virDomainObjPtr vm,
+                                                qemuDomainLogContextMode mode);
+int qemuDomainLogContextWrite(qemuDomainLogContextPtr ctxt,
+                              const char *fmt, ...) ATTRIBUTE_FMT_PRINTF(2, 3);
+ssize_t qemuDomainLogContextRead(qemuDomainLogContextPtr ctxt,
+                                 char **msg);
+int qemuDomainLogContextGetWriteFD(qemuDomainLogContextPtr ctxt);
+void qemuDomainLogContextMarkPosition(qemuDomainLogContextPtr ctxt);
+void qemuDomainLogContextRef(qemuDomainLogContextPtr ctxt);
+void qemuDomainLogContextFree(qemuDomainLogContextPtr ctxt);
 
 const char *qemuFindQemuImgBinary(virQEMUDriverPtr driver);
 
@@ -472,14 +487,26 @@ int qemuDomainAlignMemorySizes(virDomainDefPtr def);
 void qemuDomainMemoryDeviceAlignSize(virDomainDefPtr def,
                                      virDomainMemoryDefPtr mem);
 
-virDomainChrSourceDefPtr qemuFindAgentConfig(virDomainDefPtr def);
+virDomainChrDefPtr qemuFindAgentConfig(virDomainDefPtr def);
 
 bool qemuDomainMachineIsQ35(const virDomainDef *def);
 bool qemuDomainMachineIsI440FX(const virDomainDef *def);
 bool qemuDomainMachineNeedsFDC(const virDomainDef *def);
 bool qemuDomainMachineIsS390CCW(const virDomainDef *def);
+bool qemuDomainMachineHasBuiltinIDE(const virDomainDef *def);
 
 int qemuDomainUpdateCurrentMemorySize(virQEMUDriverPtr driver,
                                       virDomainObjPtr vm);
+
+unsigned long long qemuDomainGetMemLockLimitBytes(virDomainDefPtr def);
+bool qemuDomainRequiresMemLock(virDomainDefPtr def);
+int qemuDomainAdjustMaxMemLock(virDomainObjPtr vm);
+
+int qemuDomainDefValidateMemoryHotplug(const virDomainDef *def,
+                                       virQEMUCapsPtr qemuCaps,
+                                       const virDomainMemoryDef *mem);
+
+bool qemuDomainHasVcpuPids(virDomainObjPtr vm);
+pid_t qemuDomainGetVcpuPid(virDomainObjPtr vm, unsigned int vcpu);
 
 #endif /* __QEMU_DOMAIN_H__ */

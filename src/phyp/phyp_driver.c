@@ -1096,6 +1096,7 @@ openSSHSession(virConnectPtr conn, virConnectAuthPtr auth,
 static int
 phypDomainDefPostParse(virDomainDefPtr def,
                        virCapsPtr caps ATTRIBUTE_UNUSED,
+                       unsigned int parseFlags ATTRIBUTE_UNUSED,
                        void *opaque ATTRIBUTE_UNUSED)
 {
     /* memory hotplug tunables are not supported by this driver */
@@ -1110,6 +1111,7 @@ static int
 phypDomainDeviceDefPostParse(virDomainDeviceDefPtr dev ATTRIBUTE_UNUSED,
                              const virDomainDef *def ATTRIBUTE_UNUSED,
                              virCapsPtr caps ATTRIBUTE_UNUSED,
+                             unsigned int parseFlags ATTRIBUTE_UNUSED,
                              void *opaque ATTRIBUTE_UNUSED)
 {
     return 0;
@@ -3255,6 +3257,7 @@ phypDomainGetXMLDesc(virDomainPtr dom, unsigned int flags)
     virDomainDef def;
     char *managed_system = phyp_driver->managed_system;
     unsigned long long memory;
+    unsigned int vcpus;
 
     /* Flags checked by virDomainDefFormat */
 
@@ -3289,11 +3292,16 @@ phypDomainGetXMLDesc(virDomainPtr dom, unsigned int flags)
         goto err;
     }
 
-    if ((def.maxvcpus = def.vcpus =
-         phypGetLparCPU(dom->conn, managed_system, dom->id)) == 0) {
+    if ((vcpus = phypGetLparCPU(dom->conn, managed_system, dom->id)) == 0) {
         VIR_ERROR(_("Unable to determine domain's CPU."));
         goto err;
     }
+
+    if (virDomainDefSetVcpusMax(&def, vcpus) < 0)
+        goto err;
+
+    if (virDomainDefSetVcpus(&def, vcpus) < 0)
+        goto err;
 
     return virDomainDefFormat(&def,
                               virDomainDefFormatConvertXMLFlags(flags));
@@ -3519,11 +3527,12 @@ phypBuildLpar(virConnectPtr conn, virDomainDefPtr def)
     if (system_type == HMC)
         virBufferAsprintf(&buf, " -m %s", managed_system);
     virBufferAsprintf(&buf, " -r lpar -p %s -i min_mem=%lld,desired_mem=%lld,"
-                      "max_mem=%lld,desired_procs=%d,virtual_scsi_adapters=%s",
+                      "max_mem=%lld,desired_procs=%u,virtual_scsi_adapters=%s",
                       def->name, def->mem.cur_balloon,
                       def->mem.cur_balloon,
                       virDomainDefGetMemoryInitial(def),
-                      (int) def->vcpus, virDomainDiskGetSource(def->disks[0]));
+                      virDomainDefGetVcpus(def),
+                      virDomainDiskGetSource(def->disks[0]));
     ret = phypExecBuffer(session, &buf, &exit_status, conn, false);
 
     if (exit_status < 0) {

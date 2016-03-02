@@ -22,13 +22,12 @@
 
 #include <config.h>
 
-#include <rpc/rpc.h>
-
 #include "internal.h"
 #include "datatypes.h"
 #include "configmake.h"
 
 #include "viralloc.h"
+#include "virconf.h"
 #include "virlog.h"
 #include "virnetclient.h"
 #include "virobject.h"
@@ -44,121 +43,10 @@
 
 VIR_LOG_INIT("libvirt-admin");
 
-
-typedef struct _remoteAdminPriv remoteAdminPriv;
-typedef remoteAdminPriv *remoteAdminPrivPtr;
-
-struct _remoteAdminPriv {
-    virObjectLockable parent;
-
-    int counter;
-    virNetClientPtr client;
-    virNetClientProgramPtr program;
-};
-
-static virClassPtr remoteAdminPrivClass;
-
-static void
-remoteAdminPrivDispose(void *opaque)
-{
-    remoteAdminPrivPtr priv = opaque;
-
-    virObjectUnref(priv->program);
-    virObjectUnref(priv->client);
-}
-
-
-static int
-callFull(virAdmConnectPtr conn ATTRIBUTE_UNUSED,
-         remoteAdminPrivPtr priv,
-         int *fdin,
-         size_t fdinlen,
-         int **fdout,
-         size_t *fdoutlen,
-         int proc_nr,
-         xdrproc_t args_filter, char *args,
-         xdrproc_t ret_filter, char *ret)
-{
-    int rv;
-    virNetClientProgramPtr prog = priv->program;
-    int counter = priv->counter++;
-    virNetClientPtr client = priv->client;
-
-    /* Unlock, so that if we get any async events/stream data
-     * while processing the RPC, we don't deadlock when our
-     * callbacks for those are invoked
-     */
-    virObjectRef(priv);
-    virObjectUnlock(priv);
-
-    rv = virNetClientProgramCall(prog,
-                                 client,
-                                 counter,
-                                 proc_nr,
-                                 fdinlen, fdin,
-                                 fdoutlen, fdout,
-                                 args_filter, args,
-                                 ret_filter, ret);
-
-    virObjectLock(priv);
-    virObjectUnref(priv);
-
-    return rv;
-}
-
-static int
-call(virAdmConnectPtr conn,
-     unsigned int flags,
-     int proc_nr,
-     xdrproc_t args_filter, char *args,
-     xdrproc_t ret_filter, char *ret)
-{
-    virCheckFlags(0, -1);
-
-    return callFull(conn, conn->privateData,
-                    NULL, 0, NULL, NULL, proc_nr,
-                    args_filter, args, ret_filter, ret);
-}
-
-#include "admin_protocol.h"
-#include "admin_client.h"
+#include "admin_remote.c"
 
 static bool virAdmGlobalError;
 static virOnceControl virAdmGlobalOnce = VIR_ONCE_CONTROL_INITIALIZER;
-
-static void
-remoteAdminPrivFree(void *opaque)
-{
-    virAdmConnectPtr conn = opaque;
-
-    remoteAdminConnectClose(conn);
-    virObjectUnref(conn->privateData);
-}
-
-static remoteAdminPrivPtr
-remoteAdminPrivNew(const char *sock_path)
-{
-    remoteAdminPrivPtr priv = NULL;
-
-    if (!(priv = virObjectLockableNew(remoteAdminPrivClass)))
-        goto error;
-
-    if (!(priv->client = virNetClientNewUNIX(sock_path, false, NULL)))
-        goto error;
-
-    if (!(priv->program = virNetClientProgramNew(ADMIN_PROGRAM,
-                                                 ADMIN_PROTOCOL_VERSION,
-                                                 NULL, 0, NULL)))
-        goto error;
-
-    if (virNetClientAddProgram(priv->client, priv->program) < 0)
-        goto error;
-
-    return priv;
- error:
-    virObjectUnref(priv);
-    return NULL;
-}
 
 static void
 virAdmGlobalInit(void)
@@ -208,65 +96,90 @@ virAdmInitialize(void)
 }
 
 static char *
-getSocketPath(const char *name)
+getSocketPath(virURIPtr uri)
 {
     char *rundir = virGetUserRuntimeDirectory();
     char *sock_path = NULL;
     size_t i = 0;
-    virURIPtr uri = NULL;
 
-    if (name) {
-        if (!(uri = virURIParse(name)))
-            goto error;
+    if (!uri)
+        goto cleanup;
 
-        if (STRNEQ(uri->scheme, "admin") ||
-            uri->server || uri->user || uri->fragment) {
-            virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
-                           _("Invalid connection name '%s'"), name);
-            goto error;
-        }
 
-        for (i = 0; i < uri->paramsCount; i++) {
-            virURIParamPtr param = &uri->params[i];
+    for (i = 0; i < uri->paramsCount; i++) {
+        virURIParamPtr param = &uri->params[i];
 
-            if (STREQ(param->name, "socket")) {
-                VIR_FREE(sock_path);
-                if (VIR_STRDUP(sock_path, param->value) < 0)
-                    goto error;
-            } else {
-                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
-                               _("Unknown URI parameter '%s'"), param->name);
+        if (STREQ(param->name, "socket")) {
+            VIR_FREE(sock_path);
+            if (VIR_STRDUP(sock_path, param->value) < 0)
                 goto error;
-            }
+        } else {
+            virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
+                           _("Unknown URI parameter '%s'"), param->name);
+            goto error;
         }
     }
 
     if (!sock_path) {
-        if (!uri || !uri->path || STREQ(uri->path, "/system")) {
+        if (STRNEQ(uri->scheme, "libvirtd")) {
+            virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
+                           _("Unsupported URI scheme '%s'"),
+                           uri->scheme);
+            goto error;
+        }
+        if (STREQ_NULLABLE(uri->path, "/system")) {
             if (VIR_STRDUP(sock_path, LIBVIRTD_ADMIN_UNIX_SOCKET) < 0)
                 goto error;
         } else if (STREQ_NULLABLE(uri->path, "/session")) {
-            if (!rundir)
-                goto error;
-
-            if (virAsprintf(&sock_path,
-                            "%s%s", rundir, LIBVIRTD_ADMIN_SOCK_NAME) < 0)
+            if (!rundir || virAsprintf(&sock_path, "%s%s", rundir,
+                                       LIBVIRTD_ADMIN_SOCK_NAME) < 0)
                 goto error;
         } else {
             virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
-                           _("Invalid URI path '%s'"), uri->path);
+                           _("Invalid URI path '%s', try '/system'"),
+                           uri->path ? uri->path : "");
             goto error;
         }
     }
 
  cleanup:
     VIR_FREE(rundir);
-    virURIFree(uri);
     return sock_path;
 
  error:
     VIR_FREE(sock_path);
     goto cleanup;
+}
+
+static const char *
+virAdmGetDefaultURI(virConfPtr conf)
+{
+    virConfValuePtr value = NULL;
+    const char *uristr = NULL;
+
+    uristr = virGetEnvAllowSUID("LIBVIRT_ADMIN_DEFAULT_URI");
+    if (uristr && *uristr) {
+        VIR_DEBUG("Using LIBVIRT_ADMIN_DEFAULT_URI '%s'", uristr);
+    } else if ((value = virConfGetValue(conf, "admin_uri_default"))) {
+        if (value->type != VIR_CONF_STRING) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                           _("Expected a string for 'admin_uri_default' config "
+                             "parameter"));
+            return NULL;
+        }
+
+        VIR_DEBUG("Using config file uri '%s'", value->str);
+        uristr = value->str;
+    } else {
+        /* Since we can't probe connecting via any hypervisor driver as libvirt
+         * does, if no explicit URI was given and neither the environment
+         * variable, nor the configuration parameter had previously been set,
+         * we set the default admin server URI to 'libvirtd://system'.
+         */
+        uristr = "libvirtd:///system";
+    }
+
+    return uristr;
 }
 
 /**
@@ -282,18 +195,34 @@ virAdmConnectPtr
 virAdmConnectOpen(const char *name, unsigned int flags)
 {
     char *sock_path = NULL;
+    char *alias = NULL;
     virAdmConnectPtr conn = NULL;
+    virConfPtr conf = NULL;
 
     if (virAdmInitialize() < 0)
         goto error;
 
     VIR_DEBUG("flags=%x", flags);
     virResetLastError();
+    virCheckFlags(VIR_CONNECT_NO_ALIASES, NULL);
 
     if (!(conn = virAdmConnectNew()))
         goto error;
 
-    if (!(sock_path = getSocketPath(name)))
+    if (virConfLoadConfig(&conf, "libvirt-admin.conf") < 0)
+        goto error;
+
+    if (!name && !(name = virAdmGetDefaultURI(conf)))
+        goto error;
+
+    if ((!(flags & VIR_CONNECT_NO_ALIASES) &&
+         virURIResolveAlias(conf, name, &alias) < 0))
+        goto error;
+
+    if (!(conn->uri = virURIParse(alias ? alias : name)))
+        goto error;
+
+    if (!(sock_path = getSocketPath(conn->uri)))
         goto error;
 
     if (!(conn->privateData = remoteAdminPrivNew(sock_path)))
@@ -306,6 +235,8 @@ virAdmConnectOpen(const char *name, unsigned int flags)
 
  cleanup:
     VIR_FREE(sock_path);
+    VIR_FREE(alias);
+    virConfFree(conf);
     return conn;
 
  error:
@@ -385,4 +316,241 @@ virAdmConnectRef(virAdmConnectPtr conn)
     virObjectRef(conn);
 
     return 0;
+}
+
+/**
+ * virAdmGetVersion:
+ * @libVer: where to store the library version
+ *
+ * Provides version information. @libVer is the version of the library and will
+ * allways be set unless an error occurs in which case an error code and a
+ * generic message will be returned. @libVer format is as follows:
+ * major * 1,000,000 + minor * 1,000 + release.
+ *
+ * NOTE: To get the remote side library version use virAdmConnectGetLibVersion
+ * instead.
+ *
+ * Returns 0 on success, -1 in case of an error.
+ */
+int
+virAdmGetVersion(unsigned long long *libVer)
+{
+    if (virAdmInitialize() < 0)
+        goto error;
+
+    VIR_DEBUG("libVer=%p", libVer);
+
+    virResetLastError();
+    if (!libVer)
+        goto error;
+    *libVer = LIBVIR_VERSION_NUMBER;
+
+    return 0;
+
+ error:
+    virDispatchError(NULL);
+    return -1;
+}
+
+/**
+ * virAdmConnectIsAlive:
+ * @conn: connection to admin server
+ *
+ * Decide whether the connection to the admin server is alive or not.
+ * Connection is considered alive if the channel it is running over is not
+ * closed.
+ *
+ * Returns 1, if the connection is alive, 0 if there isn't an existing
+ * connection at all or the channel has already been closed, or -1 on error.
+ */
+int
+virAdmConnectIsAlive(virAdmConnectPtr conn)
+{
+    bool ret;
+    remoteAdminPrivPtr priv = NULL;
+
+    VIR_DEBUG("conn=%p", conn);
+
+    if (!conn)
+        return 0;
+
+    virCheckAdmConnectReturn(conn, -1);
+    virResetLastError();
+
+    priv = conn->privateData;
+    virObjectLock(priv);
+    ret = virNetClientIsOpen(priv->client);
+    virObjectUnlock(priv);
+
+    return ret;
+}
+
+/**
+ * virAdmConnectGetURI:
+ * @conn: pointer to an admin connection
+ *
+ * String returned by this method is normally the same as the string passed
+ * to the virAdmConnectOpen. Even if NULL was passed to virAdmConnectOpen,
+ * this method returns a non-null URI string.
+ *
+ * Returns an URI string related to the connection or NULL in case of an error.
+ * Caller is responsible for freeing the string.
+ */
+char *
+virAdmConnectGetURI(virAdmConnectPtr conn)
+{
+    char *uri = NULL;
+    VIR_DEBUG("conn=%p", conn);
+
+    virResetLastError();
+
+    virCheckAdmConnectReturn(conn, NULL);
+
+    if (!(uri = virURIFormat(conn->uri)))
+        virDispatchError(NULL);
+
+    return uri;
+}
+
+/**
+ * virAdmConnectRegisterCloseCallback:
+ * @conn: connection to admin server
+ * @cb: callback to be invoked upon connection close
+ * @opaque: user data to pass to @cb
+ * @freecb: callback to free @opaque
+ *
+ * Registers a callback to be invoked when the connection
+ * is closed. This callback is invoked when there is any
+ * condition that causes the socket connection to the
+ * hypervisor to be closed.
+ *
+ * The @freecb must not invoke any other libvirt public
+ * APIs, since it is not called from a re-entrant safe
+ * context.
+ *
+ * Returns 0 on success, -1 on error
+ */
+int virAdmConnectRegisterCloseCallback(virAdmConnectPtr conn,
+                                       virAdmConnectCloseFunc cb,
+                                       void *opaque,
+                                       virFreeCallback freecb)
+{
+    VIR_DEBUG("conn=%p", conn);
+
+    virResetLastError();
+
+    virCheckAdmConnectReturn(conn, -1);
+
+    virObjectRef(conn);
+
+    virObjectLock(conn);
+    virObjectLock(conn->closeCallback);
+
+    virCheckNonNullArgGoto(cb, error);
+
+    if (conn->closeCallback->callback) {
+        virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                       _("A close callback is already registered"));
+        goto error;
+    }
+
+    conn->closeCallback->conn = conn;
+    conn->closeCallback->callback = cb;
+    conn->closeCallback->opaque = opaque;
+    conn->closeCallback->freeCallback = freecb;
+
+    virObjectUnlock(conn->closeCallback);
+    virObjectUnlock(conn);
+
+    return 0;
+
+ error:
+    virObjectUnlock(conn->closeCallback);
+    virObjectUnlock(conn);
+    virDispatchError(NULL);
+    virObjectUnref(conn);
+    return -1;
+
+}
+
+/**
+ * virAdmConnectUnregisterCloseCallback:
+ * @conn: pointer to connection object
+ * @cb: pointer to the current registered callback
+ *
+ * Unregisters the callback previously set with the
+ * virAdmConnectRegisterCloseCallback method. The callback
+ * will no longer receive notifications when the connection
+ * closes. If a virFreeCallback was provided at time of
+ * registration, it will be invoked.
+ *
+ * Returns 0 on success, -1 on error
+ */
+int virAdmConnectUnregisterCloseCallback(virAdmConnectPtr conn,
+                                         virAdmConnectCloseFunc cb)
+{
+    VIR_DEBUG("conn=%p", conn);
+
+    virResetLastError();
+
+    virCheckAdmConnectReturn(conn, -1);
+
+    virObjectLock(conn);
+    virObjectLock(conn->closeCallback);
+
+    virCheckNonNullArgGoto(cb, error);
+
+    if (conn->closeCallback->callback != cb) {
+        virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                       _("A different callback was requested"));
+        goto error;
+    }
+
+    conn->closeCallback->callback = NULL;
+    if (conn->closeCallback->freeCallback)
+        conn->closeCallback->freeCallback(conn->closeCallback->opaque);
+    conn->closeCallback->freeCallback = NULL;
+
+    virObjectUnlock(conn->closeCallback);
+    virObjectUnlock(conn);
+    virObjectUnref(conn);
+
+    return 0;
+
+ error:
+    virObjectUnlock(conn->closeCallback);
+    virObjectUnlock(conn);
+    virDispatchError(NULL);
+    return -1;
+}
+
+/**
+ * virAdmConnectGetLibVersion:
+ * @conn: pointer to an active admin connection
+ * @libVer: stores the current remote libvirt version number
+ *
+ * Retrieves the remote side libvirt version used by the daemon. Format
+ * returned in @libVer is of a following pattern:
+ * major * 1,000,000 + minor * 1,000 + release.
+ *
+ * Returns 0 on success, -1 on failure and @libVer follows this format:
+ */
+int virAdmConnectGetLibVersion(virAdmConnectPtr conn,
+                               unsigned long long *libVer)
+{
+    VIR_DEBUG("conn=%p, libVir=%p", conn, libVer);
+
+    virResetLastError();
+
+    virCheckAdmConnectReturn(conn, -1);
+    virCheckNonNullArgReturn(libVer, -1);
+
+    if (remoteAdminConnectGetLibVersion(conn, libVer) < 0)
+        goto error;
+
+    return 0;
+
+ error:
+    virDispatchError(NULL);
+    return -1;
 }

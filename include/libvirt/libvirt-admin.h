@@ -30,6 +30,9 @@
 extern "C" {
 # endif
 
+# define __VIR_ADMIN_H_INCLUDES__
+# include <libvirt/libvirt-common.h>
+# undef __VIR_ADMIN_H_INCLUDES__
 
 /**
  * virAdmConnect:
@@ -52,6 +55,33 @@ virAdmConnectPtr virAdmConnectOpen(const char *name, unsigned int flags);
 int virAdmConnectClose(virAdmConnectPtr conn);
 
 int virAdmConnectRef(virAdmConnectPtr conn);
+int virAdmConnectIsAlive(virAdmConnectPtr conn);
+
+int virAdmGetVersion(unsigned long long *libVer);
+
+char *virAdmConnectGetURI(virAdmConnectPtr conn);
+
+int virAdmConnectGetLibVersion(virAdmConnectPtr conn,
+                               unsigned long long *libVer);
+
+/**
+ * virAdmConnectCloseFunc:
+ * @conn: virAdmConnect connection
+ * @reason: reason why the connection was closed (see virConnectCloseReason)
+ * @opaque: opaque client data
+ *
+ * A callback to be registered, in case a connection was closed.
+ */
+typedef void (*virAdmConnectCloseFunc)(virAdmConnectPtr conn,
+                                       int reason,
+                                       void *opaque);
+
+int virAdmConnectRegisterCloseCallback(virAdmConnectPtr conn,
+                                       virAdmConnectCloseFunc cb,
+                                       void *opaque,
+                                       virFreeCallback freecb);
+int virAdmConnectUnregisterCloseCallback(virAdmConnectPtr conn,
+                                         virAdmConnectCloseFunc cb);
 
 # ifdef __cplusplus
 }

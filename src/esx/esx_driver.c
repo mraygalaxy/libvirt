@@ -24,7 +24,7 @@
 #include <config.h>
 
 #include "internal.h"
-#include "domain_conf.h"
+#include "virdomainobjlist.h"
 #include "snapshot_conf.h"
 #include "virauth.h"
 #include "viralloc.h"
@@ -2743,7 +2743,7 @@ esxDomainGetXMLDesc(virDomainPtr domain, unsigned int flags)
     ctx.autodetectSCSIControllerModel = NULL;
     ctx.datacenterPath = priv->primary->datacenterPath;
 
-    def = virVMXParseConfig(&ctx, priv->xmlopt, vmx);
+    def = virVMXParseConfig(&ctx, priv->xmlopt, priv->caps, vmx);
 
     if (def) {
         if (powerState != esxVI_VirtualMachinePowerState_PoweredOff)
@@ -2802,7 +2802,7 @@ esxConnectDomainXMLFromNative(virConnectPtr conn, const char *nativeFormat,
     ctx.autodetectSCSIControllerModel = NULL;
     ctx.datacenterPath = NULL;
 
-    def = virVMXParseConfig(&ctx, priv->xmlopt, nativeConfig);
+    def = virVMXParseConfig(&ctx, priv->xmlopt, priv->caps, nativeConfig);
 
     if (def)
         xml = virDomainDefFormat(def, VIR_DOMAIN_DEF_FORMAT_INACTIVE);

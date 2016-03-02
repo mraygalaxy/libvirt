@@ -25,7 +25,7 @@
 
 #include "internal.h"
 #include "datatypes.h"
-#include "domain_conf.h"
+#include "virdomainobjlist.h"
 #include "domain_event.h"
 #include "virlog.h"
 #include "viralloc.h"
@@ -252,6 +252,7 @@ static char *vboxGenerateMediumName(PRUint32  storageBus,
 static int
 vboxDomainDefPostParse(virDomainDefPtr def,
                        virCapsPtr caps ATTRIBUTE_UNUSED,
+                       unsigned int parseFlags ATTRIBUTE_UNUSED,
                        void *opaque ATTRIBUTE_UNUSED)
 {
     /* memory hotplug tunables are not supported by this driver */
@@ -265,6 +266,7 @@ static int
 vboxDomainDeviceDefPostParse(virDomainDeviceDefPtr dev ATTRIBUTE_UNUSED,
                              const virDomainDef *def ATTRIBUTE_UNUSED,
                              virCapsPtr caps ATTRIBUTE_UNUSED,
+                             unsigned int parseFlags ATTRIBUTE_UNUSED,
                              void *opaque ATTRIBUTE_UNUSED)
 {
     return 0;
@@ -1553,11 +1555,15 @@ vboxAttachVideo(virDomainDefPtr def, IMachine *machine)
                                        VIR_DIV_UP(def->videos[0]->vram, 1024));
         gVBoxAPI.UIMachine.SetMonitorCount(machine, def->videos[0]->heads);
         if (def->videos[0]->accel) {
-            gVBoxAPI.UIMachine.SetAccelerate3DEnabled(machine,
-                                                      def->videos[0]->accel->support3d);
-            if (gVBoxAPI.accelerate2DVideo)
+            if (def->videos[0]->accel->accel3d) {
+                gVBoxAPI.UIMachine.SetAccelerate3DEnabled(machine,
+                    def->videos[0]->accel->accel3d == VIR_TRISTATE_BOOL_YES);
+            }
+            if (def->videos[0]->accel->accel2d &&
+                gVBoxAPI.accelerate2DVideo) {
                 gVBoxAPI.UIMachine.SetAccelerate2DVideoEnabled(machine,
-                                                               def->videos[0]->accel->support2d);
+                    def->videos[0]->accel->accel2d == VIR_TRISTATE_BOOL_YES);
+            }
         } else {
             gVBoxAPI.UIMachine.SetAccelerate3DEnabled(machine, 0);
             if (gVBoxAPI.accelerate2DVideo)
@@ -1891,15 +1897,15 @@ vboxDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags
                        def->mem.cur_balloon, (unsigned)rc);
     }
 
-    if (def->vcpus != def->maxvcpus) {
+    if (virDomainDefHasVcpusOffline(def)) {
         virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
                        _("current vcpu count must equal maximum"));
     }
-    rc = gVBoxAPI.UIMachine.SetCPUCount(machine, def->maxvcpus);
+    rc = gVBoxAPI.UIMachine.SetCPUCount(machine, virDomainDefGetVcpusMax(def));
     if (NS_FAILED(rc)) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("could not set the number of virtual CPUs to: %u, rc=%08x"),
-                       def->maxvcpus, (unsigned)rc);
+                       virDomainDefGetVcpusMax(def), (unsigned)rc);
     }
 
     rc = gVBoxAPI.UIMachine.SetCPUProperty(machine, CPUPropertyType_PAE,
@@ -3277,8 +3283,10 @@ vboxDumpVideo(virDomainDefPtr def, vboxGlobalData *data ATTRIBUTE_UNUSED,
             def->videos[0]->vram            = VRAMSize * 1024;
             def->videos[0]->heads           = monitorCount;
             if (VIR_ALLOC(def->videos[0]->accel) >= 0) {
-                def->videos[0]->accel->support3d = accelerate3DEnabled;
-                def->videos[0]->accel->support2d = accelerate2DEnabled;
+                def->videos[0]->accel->accel3d = accelerate3DEnabled ?
+                    VIR_TRISTATE_BOOL_YES : VIR_TRISTATE_BOOL_NO;
+                def->videos[0]->accel->accel2d = accelerate2DEnabled ?
+                    VIR_TRISTATE_BOOL_YES : VIR_TRISTATE_BOOL_NO;
             }
         }
     }
@@ -3901,7 +3909,11 @@ static char *vboxDomainGetXMLDesc(virDomainPtr dom, unsigned int flags)
     virDomainDefSetMemoryTotal(def, memorySize * 1024);
 
     gVBoxAPI.UIMachine.GetCPUCount(machine, &CPUCount);
-    def->maxvcpus = def->vcpus = CPUCount;
+    if (virDomainDefSetVcpusMax(def, CPUCount) < 0)
+        goto cleanup;
+
+    if (virDomainDefSetVcpus(def, CPUCount) < 0)
+        goto cleanup;
 
     /* Skip cpumasklen, cpumask, onReboot, onPoweroff, onCrash */
 
@@ -6055,7 +6067,12 @@ static char *vboxDomainSnapshotGetXMLDesc(virDomainSnapshotPtr snapshot,
         def->dom->os.type = VIR_DOMAIN_OSTYPE_HVM;
         def->dom->os.arch = virArchFromHost();
         gVBoxAPI.UIMachine.GetCPUCount(machine, &CPUCount);
-        def->dom->maxvcpus = def->dom->vcpus = CPUCount;
+        if (virDomainDefSetVcpusMax(def->dom, CPUCount) < 0)
+            goto cleanup;
+
+        if (virDomainDefSetVcpus(def->dom, CPUCount) < 0)
+            goto cleanup;
+
         if (vboxSnapshotGetReadWriteDisks(def, snapshot) < 0)
             VIR_DEBUG("Could not get read write disks for snapshot");
 

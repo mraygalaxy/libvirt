@@ -123,8 +123,8 @@ int qemuMonitorJSONGetMigrationCacheSize(qemuMonitorPtr mon,
 int qemuMonitorJSONSetMigrationCacheSize(qemuMonitorPtr mon,
                                          unsigned long long cacheSize);
 
-int qemuMonitorJSONGetMigrationStatus(qemuMonitorPtr mon,
-                                      qemuMonitorMigrationStatusPtr status);
+int qemuMonitorJSONGetMigrationStats(qemuMonitorPtr mon,
+                                     qemuMonitorMigrationStatsPtr stats);
 
 int qemuMonitorJSONGetMigrationCapabilities(qemuMonitorPtr mon,
                                             char ***capabilities);
@@ -480,4 +480,9 @@ int qemuMonitorJSONFindLinkPath(qemuMonitorPtr mon,
                                 const char *name,
                                 char **path)
     ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(2) ATTRIBUTE_NONNULL(3);
+
+int qemuMonitorJSONMigrateIncoming(qemuMonitorPtr mon,
+                                   const char *uri)
+    ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(2);
+
 #endif /* QEMU_MONITOR_JSON_H */

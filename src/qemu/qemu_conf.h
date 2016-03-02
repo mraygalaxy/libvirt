@@ -24,6 +24,8 @@
 #ifndef __QEMUD_CONF_H
 # define __QEMUD_CONF_H
 
+# include <unistd.h>
+
 # include "virebtables.h"
 # include "internal.h"
 # include "capabilities.h"
@@ -173,6 +175,7 @@ struct _virQEMUDriverConfig {
     int migrationPortMax;
 
     bool logTimestamp;
+    bool stdioLogD;
 
     /* Pairs of loader:nvram paths. The list is @nloader items long */
     char **loader;

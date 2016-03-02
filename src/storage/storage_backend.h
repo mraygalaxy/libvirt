@@ -48,6 +48,16 @@ typedef int (*virStorageBackendStopPool)(virConnectPtr conn,
 typedef int (*virStorageBackendDeletePool)(virConnectPtr conn,
                                            virStoragePoolObjPtr pool,
                                            unsigned int flags);
+
+/* A 'buildVol' backend must remove any volume created on error since
+ * the storage driver does not distinguish whether the failure is due
+ * to failure to create the volume, to reserve any space necessary for
+ * the volume, to get data about the volume, to change it's accessibility,
+ * etc. This avoids issues arising from a creation failure due to some
+ * external action which created a volume of the same name that libvirt
+ * was not aware of between checking the pool and the create attempt. It
+ * also avoids extra round trips to just delete a file.
+ */
 typedef int (*virStorageBackendBuildVol)(virConnectPtr conn,
                                          virStoragePoolObjPtr pool,
                                          virStorageVolDefPtr vol,
@@ -169,6 +179,15 @@ enum {
     VIR_STORAGE_VOL_OPEN_DIR     = 1 << 4, /* directories okay */
 };
 
+/* VolReadErrorMode flags
+ * If flag is present, then operation won't cause fatal error for
+ * specified operation, rather a VIR_WARN will be issued and a -2 returned
+ * for function call
+ */
+enum {
+    VIR_STORAGE_VOL_READ_NOERROR    = 1 << 0, /* ignore *read errors */
+};
+
 # define VIR_STORAGE_VOL_OPEN_DEFAULT (VIR_STORAGE_VOL_OPEN_REG      |\
                                        VIR_STORAGE_VOL_OPEN_BLOCK)
 
@@ -182,10 +201,12 @@ int virStorageBackendVolOpen(const char *path, struct stat *sb,
 
 int virStorageBackendUpdateVolInfo(virStorageVolDefPtr vol,
                                    bool withBlockVolFormat,
-                                   unsigned int openflags);
+                                   unsigned int openflags,
+                                   unsigned int readflags);
 int virStorageBackendUpdateVolTargetInfo(virStorageSourcePtr target,
                                          bool withBlockVolFormat,
-                                         unsigned int openflags);
+                                         unsigned int openflags,
+                                         unsigned int readflags);
 int virStorageBackendUpdateVolTargetInfoFD(virStorageSourcePtr target,
                                            int fd,
                                            struct stat *sb);

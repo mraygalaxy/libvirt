@@ -128,6 +128,8 @@
      <exports symbol='VIR_DOMAIN_JOB_DOWNTIME_NET' type='macro'/>
      <exports symbol='VIR_DOMAIN_JOB_MEMORY_BPS' type='macro'/>
      <exports symbol='VIR_DOMAIN_JOB_MEMORY_CONSTANT' type='macro'/>
+     <exports symbol='VIR_DOMAIN_JOB_MEMORY_DIRTY_RATE' type='macro'/>
+     <exports symbol='VIR_DOMAIN_JOB_MEMORY_ITERATION' type='macro'/>
      <exports symbol='VIR_DOMAIN_JOB_MEMORY_NORMAL' type='macro'/>
      <exports symbol='VIR_DOMAIN_JOB_MEMORY_NORMAL_BYTES' type='macro'/>
      <exports symbol='VIR_DOMAIN_JOB_MEMORY_PROCESSED' type='macro'/>
@@ -1017,11 +1019,6 @@
      <exports symbol='VIR_UUID_STRING_BUFLEN' type='macro'/>
      <exports symbol='VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES' type='enum'/>
      <exports symbol='VIR_CONNECT_BASELINE_CPU_MIGRATABLE' type='enum'/>
-     <exports symbol='VIR_CONNECT_CLOSE_REASON_CLIENT' type='enum'/>
-     <exports symbol='VIR_CONNECT_CLOSE_REASON_EOF' type='enum'/>
-     <exports symbol='VIR_CONNECT_CLOSE_REASON_ERROR' type='enum'/>
-     <exports symbol='VIR_CONNECT_CLOSE_REASON_KEEPALIVE' type='enum'/>
-     <exports symbol='VIR_CONNECT_CLOSE_REASON_LAST' type='enum'/>
      <exports symbol='VIR_CONNECT_COMPARE_CPU_FAIL_INCOMPATIBLE' type='enum'/>
      <exports symbol='VIR_CONNECT_NO_ALIASES' type='enum'/>
      <exports symbol='VIR_CONNECT_RO' type='enum'/>
@@ -1062,7 +1059,6 @@
      <exports symbol='virConnectAuth' type='typedef'/>
      <exports symbol='virConnectAuthPtr' type='typedef'/>
      <exports symbol='virConnectBaselineCPUFlags' type='typedef'/>
-     <exports symbol='virConnectCloseReason' type='typedef'/>
      <exports symbol='virConnectCompareCPUFlags' type='typedef'/>
      <exports symbol='virConnectCredential' type='typedef'/>
      <exports symbol='virConnectCredentialPtr' type='typedef'/>
@@ -1122,7 +1118,6 @@
      <exports symbol='virConnectRegisterCloseCallback' type='function'/>
      <exports symbol='virConnectSetKeepAlive' type='function'/>
      <exports symbol='virConnectUnregisterCloseCallback' type='function'/>
-     <exports symbol='virFreeCallback' type='function'/>
      <exports symbol='virGetVersion' type='function'/>
      <exports symbol='virInitialize' type='function'/>
      <exports symbol='virNodeAllocPages' type='function'/>
@@ -1404,6 +1399,10 @@
      <exports symbol='VIR_STORAGE_POOL_BUILD_OVERWRITE' type='enum'/>
      <exports symbol='VIR_STORAGE_POOL_BUILD_REPAIR' type='enum'/>
      <exports symbol='VIR_STORAGE_POOL_BUILD_RESIZE' type='enum'/>
+     <exports symbol='VIR_STORAGE_POOL_CREATE_NORMAL' type='enum'/>
+     <exports symbol='VIR_STORAGE_POOL_CREATE_WITH_BUILD' type='enum'/>
+     <exports symbol='VIR_STORAGE_POOL_CREATE_WITH_BUILD_NO_OVERWRITE' type='enum'/>
+     <exports symbol='VIR_STORAGE_POOL_CREATE_WITH_BUILD_OVERWRITE' type='enum'/>
      <exports symbol='VIR_STORAGE_POOL_DEGRADED' type='enum'/>
      <exports symbol='VIR_STORAGE_POOL_DELETE_NORMAL' type='enum'/>
      <exports symbol='VIR_STORAGE_POOL_DELETE_ZEROED' type='enum'/>
@@ -1439,6 +1438,7 @@
      <exports symbol='virConnectListAllStoragePoolsFlags' type='typedef'/>
      <exports symbol='virStoragePool' type='typedef'/>
      <exports symbol='virStoragePoolBuildFlags' type='typedef'/>
+     <exports symbol='virStoragePoolCreateFlags' type='typedef'/>
      <exports symbol='virStoragePoolDeleteFlags' type='typedef'/>
      <exports symbol='virStoragePoolInfo' type='typedef'/>
      <exports symbol='virStoragePoolInfoPtr' type='typedef'/>
@@ -1658,6 +1658,7 @@
      <exports symbol='VIR_FROM_LIBXL' type='enum'/>
      <exports symbol='VIR_FROM_LOCKING' type='enum'/>
      <exports symbol='VIR_FROM_LOCKSPACE' type='enum'/>
+     <exports symbol='VIR_FROM_LOGGING' type='enum'/>
      <exports symbol='VIR_FROM_LXC' type='enum'/>
      <exports symbol='VIR_FROM_NET' type='enum'/>
      <exports symbol='VIR_FROM_NETWORK' type='enum'/>
@@ -1929,6 +1930,12 @@
     </macro>
     <macro name='VIR_DOMAIN_JOB_MEMORY_CONSTANT' file='libvirt-domain' string='memory_constant'>
       <info><![CDATA[virDomainGetJobStats field: number of pages filled with a constant byte (all bytes in a single page are identical) transferred since the beginning of the migration job, as VIR_TYPED_PARAM_ULLONG.  The most common example of such pages are zero pages, i.e., pages filled with zero bytes.]]></info>
+    </macro>
+    <macro name='VIR_DOMAIN_JOB_MEMORY_DIRTY_RATE' file='libvirt-domain' string='memory_dirty_rate'>
+      <info><![CDATA[virDomainGetJobStats field: number of memory pages dirtied by the guest per second, as VIR_TYPED_PARAM_ULLONG. This statistics makes sense only when live migration is running.]]></info>
+    </macro>
+    <macro name='VIR_DOMAIN_JOB_MEMORY_ITERATION' file='libvirt-domain' string='memory_iteration'>
+      <info><![CDATA[virDomainGetJobStats field: current iteration over domain's memory during live migration, as VIR_TYPED_PARAM_ULLONG. This is set to zero when memory starts to be transferred and the value is increased by one every time a new iteration is started to transfer memory pages dirtied since the last iteration.]]></info>
     </macro>
     <macro name='VIR_DOMAIN_JOB_MEMORY_NORMAL' file='libvirt-domain' string='memory_normal'>
       <info><![CDATA[virDomainGetJobStats field: number of pages that were transferred without any kind of compression (i.e., pages which were not filled with a constant byte and which could not be compressed) transferred since the beginning of the migration job, as VIR_TYPED_PARAM_ULLONG.]]></info>
@@ -2213,11 +2220,6 @@
     </macro>
     <enum name='VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES' file='libvirt-host' value='1' type='virConnectBaselineCPUFlags' info='show all features'/>
     <enum name='VIR_CONNECT_BASELINE_CPU_MIGRATABLE' file='libvirt-host' value='2' type='virConnectBaselineCPUFlags' info='filter out non-migratable features'/>
-    <enum name='VIR_CONNECT_CLOSE_REASON_CLIENT' file='libvirt-host' value='3' type='virConnectCloseReason' info='Client requested it'/>
-    <enum name='VIR_CONNECT_CLOSE_REASON_EOF' file='libvirt-host' value='1' type='virConnectCloseReason' info='End-of-file from server'/>
-    <enum name='VIR_CONNECT_CLOSE_REASON_ERROR' file='libvirt-host' value='0' type='virConnectCloseReason' info='Misc I/O error'/>
-    <enum name='VIR_CONNECT_CLOSE_REASON_KEEPALIVE' file='libvirt-host' value='2' type='virConnectCloseReason' info='Keepalive timer triggered'/>
-    <enum name='VIR_CONNECT_CLOSE_REASON_LAST' file='libvirt-host' value='4' type='virConnectCloseReason'/>
     <enum name='VIR_CONNECT_COMPARE_CPU_FAIL_INCOMPATIBLE' file='libvirt-host' value='1' type='virConnectCompareCPUFlags' info='treat incompatible
 CPUs as failure'/>
     <enum name='VIR_CONNECT_DOMAIN_EVENT_AGENT_LIFECYCLE_REASON_CHANNEL' file='libvirt-domain' value='2' type='virConnectDomainEventAgentLifecycleReason' info='channel state changed'/>
@@ -2833,7 +2835,7 @@ conf file'/>
     <enum name='VIR_ERR_CPU_INCOMPATIBLE' file='virterror' value='91' type='virErrorNumber' info='given CPU is incompatible with host
 CP'/>
     <enum name='VIR_ERR_DBUS_SERVICE' file='virterror' value='89' type='virErrorNumber' info='error from a dbus service'/>
-    <enum name='VIR_ERR_DOMAIN_LAST' file='virterror' value='63' type='virErrorDomain'/>
+    <enum name='VIR_ERR_DOMAIN_LAST' file='virterror' value='64' type='virErrorDomain'/>
     <enum name='VIR_ERR_DOM_EXIST' file='virterror' value='28' type='virErrorNumber' info='the domain already exist'/>
     <enum name='VIR_ERR_DRIVER_FULL' file='virterror' value='25' type='virErrorNumber' info='too many drivers registered'/>
     <enum name='VIR_ERR_ERROR' file='virterror' value='2' type='virErrorLevel' info='An error'/>
@@ -2953,6 +2955,7 @@ formed or broken'/>
     <enum name='VIR_FROM_LIBXL' file='virterror' value='41' type='virErrorDomain' info='Error from libxenlight driver'/>
     <enum name='VIR_FROM_LOCKING' file='virterror' value='42' type='virErrorDomain' info='Error from lock manager'/>
     <enum name='VIR_FROM_LOCKSPACE' file='virterror' value='51' type='virErrorDomain' info='Error from lockspace'/>
+    <enum name='VIR_FROM_LOGGING' file='virterror' value='63' type='virErrorDomain' info='Error from log manager'/>
     <enum name='VIR_FROM_LXC' file='virterror' value='17' type='virErrorDomain' info='Error from Linux Container driver'/>
     <enum name='VIR_FROM_NET' file='virterror' value='11' type='virErrorDomain' info='Error when operating on a network'/>
     <enum name='VIR_FROM_NETWORK' file='virterror' value='19' type='virErrorDomain' info='Error from network config'/>
@@ -3087,6 +3090,14 @@ used to free allocated pages.'/>
     <enum name='VIR_STORAGE_POOL_BUILD_OVERWRITE' file='libvirt-storage' value='8' type='virStoragePoolBuildFlags' info='Overwrite data'/>
     <enum name='VIR_STORAGE_POOL_BUILD_REPAIR' file='libvirt-storage' value='1' type='virStoragePoolBuildFlags' info='Repair / reinitialize'/>
     <enum name='VIR_STORAGE_POOL_BUILD_RESIZE' file='libvirt-storage' value='2' type='virStoragePoolBuildFlags' info='Extend existing pool'/>
+    <enum name='VIR_STORAGE_POOL_CREATE_NORMAL' file='libvirt-storage' value='0' type='virStoragePoolCreateFlags' info='Create the pool and perform pool build without any flags'/>
+    <enum name='VIR_STORAGE_POOL_CREATE_WITH_BUILD' file='libvirt-storage' value='1' type='virStoragePoolCreateFlags' info='Create the pool and perform pool build using the
+ VIR_STORAGE_POOL_BUILD_OVERWRITE flag. This is mutually
+ exclusive to VIR_STORAGE_POOL_CREATE_WITH_BUILD_NO_OVERWRITE'/>
+    <enum name='VIR_STORAGE_POOL_CREATE_WITH_BUILD_NO_OVERWRITE' file='libvirt-storage' value='4' type='virStoragePoolCreateFlags'/>
+    <enum name='VIR_STORAGE_POOL_CREATE_WITH_BUILD_OVERWRITE' file='libvirt-storage' value='2' type='virStoragePoolCreateFlags' info='Create the pool and perform pool build using the
+ VIR_STORAGE_POOL_BUILD_NO_OVERWRITE flag. This is mutually
+ exclusive to VIR_STORAGE_POOL_CREATE_WITH_BUILD_OVERWRITE'/>
     <enum name='VIR_STORAGE_POOL_DEGRADED' file='libvirt-storage' value='3' type='virStoragePoolState' info='Running degraded'/>
     <enum name='VIR_STORAGE_POOL_DELETE_NORMAL' file='libvirt-storage' value='0' type='virStoragePoolDeleteFlags' info='Delete metadata only    (fast)'/>
     <enum name='VIR_STORAGE_POOL_DELETE_ZEROED' file='libvirt-storage' value='1' type='virStoragePoolDeleteFlags' info='Clear all data to zeros (slow)'/>
@@ -3181,7 +3192,6 @@ Cryptography&quot; (1996)'/>
     </struct>
     <typedef name='virConnectAuthPtr' file='libvirt-host' type='virConnectAuth *'/>
     <typedef name='virConnectBaselineCPUFlags' file='libvirt-host' type='enum'/>
-    <typedef name='virConnectCloseReason' file='libvirt-host' type='enum'/>
     <typedef name='virConnectCompareCPUFlags' file='libvirt-host' type='enum'/>
     <struct name='virConnectCredential' file='libvirt-host' type='struct _virConnectCredential'>
       <field name='type' type='int' info='One of virConnectCredentialType constants'/>
@@ -3591,6 +3601,7 @@ unusual numa topology'/>
     </typedef>
     <struct name='virStoragePool' file='libvirt-storage' type='struct _virStoragePool'/>
     <typedef name='virStoragePoolBuildFlags' file='libvirt-storage' type='enum'/>
+    <typedef name='virStoragePoolCreateFlags' file='libvirt-storage' type='enum'/>
     <typedef name='virStoragePoolDeleteFlags' file='libvirt-storage' type='enum'/>
     <struct name='virStoragePoolInfo' file='libvirt-storage' type='struct _virStoragePoolInfo'>
       <field name='state' type='int' info='virStoragePoolState flags'/>
@@ -5764,19 +5775,10 @@ ignore the shutdown request).]]></info>
       <arg name='flags' type='unsigned int' info='bitwise-OR of virDomainDestroyFlagsValues'/>
     </function>
     <function name='virDomainDetachDevice' file='libvirt-domain' module='libvirt-domain'>
-      <info><![CDATA[Destroy a virtual device attachment to backend.  This function,
-having hot-unplug semantics, is only allowed on an active domain.
+      <info><![CDATA[This is an equivalent of virDomainDetachDeviceFlags() when called with
+@flags parameter set to VIR_DOMAIN_AFFECT_LIVE.
 
-Be aware that hotplug changes might not persist across a domain going
-into S4 state (also known as hibernation) unless you also modify the
-persistent domain definition.
-
-The supplied XML description of the device should be as specific
-as its definition in the domain XML. The set of attributes used
-to match the device are internal to the drivers. Using a partial definition,
-or attempting to detach a device that is not present in the domain XML,
-but shares some specific attributes with one that is present,
-may lead to unexpected results.]]></info>
+See virDomainDetachDeviceFlags() for more details.]]></info>
       <return type='int' info='0 in case of success, -1 in case of failure.'/>
       <arg name='domain' type='virDomainPtr' info='pointer to domain object'/>
       <arg name='xml' type='const char *' info='pointer to XML description of one device'/>
@@ -6071,15 +6073,17 @@ and guest perspective would serve as a measure of hypervisor overhead.
 Typical use sequence is below.
 
 getting total stats: set start_cpu as -1, ncpus 1
-virDomainGetCPUStats(dom, NULL, 0, -1, 1, 0) => nparams
-params = calloc(nparams, sizeof(virTypedParameter))
-virDomainGetCPUStats(dom, params, nparams, -1, 1, 0) => total stats.
+
+  virDomainGetCPUStats(dom, NULL, 0, -1, 1, 0); // nparams
+  params = calloc(nparams, sizeof(virTypedParameter))
+  virDomainGetCPUStats(dom, params, nparams, -1, 1, 0); // total stats.
 
 getting per-cpu stats:
-virDomainGetCPUStats(dom, NULL, 0, 0, 0, 0) => ncpus
-virDomainGetCPUStats(dom, NULL, 0, 0, 1, 0) => nparams
-params = calloc(ncpus * nparams, sizeof(virTypedParameter))
-virDomainGetCPUStats(dom, params, nparams, 0, ncpus, 0) => per-cpu stats]]></info>
+
+  virDomainGetCPUStats(dom, NULL, 0, 0, 0, 0); // ncpus
+  virDomainGetCPUStats(dom, NULL, 0, 0, 1, 0); // nparams
+  params = calloc(ncpus * nparams, sizeof(virTypedParameter));
+  virDomainGetCPUStats(dom, params, nparams, 0, ncpus, 0); // per-cpu stats]]></info>
       <return type='int' info='-1 on failure, or the number of statistics that were populated per cpu on success (this will be less than the total number of populated @params, unless @ncpus was 1; and may be less than @nparams).  The populated parameters start at each stride of @nparams, which means the results may be discontiguous; any unpopulated parameters will be zeroed on success (this includes skipped elements if @nparams is too large, and tail elements if @ncpus is too large).  The caller is responsible for freeing any returned string parameters.'/>
       <arg name='domain' type='virDomainPtr' info='domain to query'/>
       <arg name='params' type='virTypedParameterPtr' info='array to populate on output'/>
@@ -7798,8 +7802,9 @@ domain. If domain is NULL, then this change the amount of memory reserved
 to Domain0 i.e. the domain where the application runs.
 This function may require privileged access to the hypervisor.
 
-This command only changes the runtime configuration of the domain,
-so can only be called on an active domain.]]></info>
+This command is hypervisor-specific for whether active, persistent,
+or both configurations are changed; for more control, use
+virDomainSetMemoryFlags().]]></info>
       <return type='int' info='0 in case of success and -1 in case of failure.'/>
       <arg name='domain' type='virDomainPtr' info='a domain object or NULL'/>
       <arg name='memory' type='unsigned long' info='the memory size in kibibytes (blocks of 1024 bytes)'/>
@@ -8753,20 +8758,6 @@ event timeout.]]></info>
       <return type='void'/>
       <arg name='timer' type='int' info='the timer to modify'/>
       <arg name='timeout' type='int' info='the new timeout value'/>
-    </functype>
-    <functype name='virFreeCallback' file='libvirt-host' module='libvirt-host'>
-      <info><![CDATA[Type for a callback cleanup function to be paired with a callback.  This
-function will be called as a final chance to clean up the @opaque
-registered with the primary callback, at the time when the primary
-callback is deregistered.
-
-It is forbidden to call any other libvirt APIs from an
-implementation of this callback, since it can be invoked
-from a context which is not re-entrant safe. Failure to
-abide by this requirement may lead to application deadlocks
-or crashes.]]></info>
-      <return type='void'/>
-      <arg name='opaque' type='void *' info='opaque user data provided at registration'/>
     </functype>
     <function name='virFreeError' file='virterror' module='virerror'>
       <info><![CDATA[Resets and frees the given error.]]></info>
@@ -9905,7 +9896,7 @@ Build the underlying storage pool]]></info>
       <info><![CDATA[Starts an inactive storage pool]]></info>
       <return type='int' info='0 on success, or -1 if it could not be started'/>
       <arg name='pool' type='virStoragePoolPtr' info='pointer to storage pool'/>
-      <arg name='flags' type='unsigned int' info='extra flags; not used yet, so callers should always pass 0'/>
+      <arg name='flags' type='unsigned int' info='bitwise-OR of virStoragePoolCreateFlags'/>
     </function>
     <function name='virStoragePoolCreateXML' file='libvirt-storage' module='libvirt-storage'>
       <info><![CDATA[Create a new storage based on its XML description. The
@@ -9917,7 +9908,7 @@ storage pool object is no longer needed.]]></info>
       <return type='virStoragePoolPtr' info='a virStoragePoolPtr object, or NULL if creation failed'/>
       <arg name='conn' type='virConnectPtr' info='pointer to hypervisor connection'/>
       <arg name='xmlDesc' type='const char *' info='XML description for new pool'/>
-      <arg name='flags' type='unsigned int' info='extra flags; not used yet, so callers should always pass 0'/>
+      <arg name='flags' type='unsigned int' info='bitwise-OR of virStoragePoolCreateFlags'/>
     </function>
     <function name='virStoragePoolDefineXML' file='libvirt-storage' module='libvirt-storage'>
       <info><![CDATA[Define an inactive persistent storage pool or modify an existing persistent
@@ -10145,7 +10136,7 @@ storage volume object is no longer needed.]]></info>
       <info><![CDATA[Delete the storage volume from the pool]]></info>
       <return type='int' info='0 on success, or -1 on error'/>
       <arg name='vol' type='virStorageVolPtr' info='pointer to storage volume'/>
-      <arg name='flags' type='unsigned int' info='extra flags; not used yet, so callers should always pass 0'/>
+      <arg name='flags' type='unsigned int' info='bitwise-OR of virStorageVolDeleteFlags'/>
     </function>
     <function name='virStorageVolDownload' file='libvirt-storage' module='libvirt-storage'>
       <info><![CDATA[Download the content of the volume as a stream. If @length
@@ -10320,14 +10311,24 @@ capacity, and allocation.]]></info>
       <arg name='flags' type='unsigned int' info='extra flags; not used yet, so callers should always pass 0'/>
     </function>
     <function name='virStorageVolWipe' file='libvirt-storage' module='libvirt-storage'>
-      <info><![CDATA[Ensure data previously on a volume is not accessible to future reads]]></info>
+      <info><![CDATA[Ensure data previously on a volume is not accessible to future
+reads. Also note, that depending on the actual volume
+representation, this call may not really overwrite the
+physical location of the volume. For instance, files stored
+journaled, log structured, copy-on-write, versioned, and
+network file systems are known to be problematic.]]></info>
       <return type='int' info='0 on success, or -1 on error'/>
       <arg name='vol' type='virStorageVolPtr' info='pointer to storage volume'/>
       <arg name='flags' type='unsigned int' info='extra flags; not used yet, so callers should always pass 0'/>
     </function>
     <function name='virStorageVolWipePattern' file='libvirt-storage' module='libvirt-storage'>
-      <info><![CDATA[Similar to virStorageVolWipe, but one can choose
-between different wiping algorithms.]]></info>
+      <info><![CDATA[Similar to virStorageVolWipe, but one can choose between
+different wiping algorithms. Also note, that depending on the
+actual volume representation, this call may not really
+overwrite the physical location of the volume. For instance,
+files stored journaled, log structured, copy-on-write,
+versioned, and network file systems are known to be
+problematic.]]></info>
       <return type='int' info='0 on success, or -1 on error.'/>
       <arg name='vol' type='virStorageVolPtr' info='pointer to storage volume'/>
       <arg name='algorithm' type='unsigned int' info='one of virStorageVolWipeAlgorithm'/>

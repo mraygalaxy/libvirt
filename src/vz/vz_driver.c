@@ -175,6 +175,7 @@ vzConnectGetCapabilities(virConnectPtr conn)
 static int
 vzDomainDefPostParse(virDomainDefPtr def,
                      virCapsPtr caps ATTRIBUTE_UNUSED,
+                     unsigned int parseFlags ATTRIBUTE_UNUSED,
                      void *opaque ATTRIBUTE_UNUSED)
 {
     /* memory hotplug tunables are not supported by this driver */
@@ -188,6 +189,7 @@ static int
 vzDomainDeviceDefPostParse(virDomainDeviceDefPtr dev,
                            const virDomainDef *def,
                            virCapsPtr caps ATTRIBUTE_UNUSED,
+                           unsigned int parseFlags ATTRIBUTE_UNUSED,
                            void *opaque ATTRIBUTE_UNUSED)
 {
     int ret = -1;
@@ -266,6 +268,7 @@ vzOpenDefault(virConnectPtr conn)
     prlsdkDisconnect(privconn);
     prlsdkDeinit();
  err_free:
+    conn->privateData = NULL;
     VIR_FREE(privconn);
     return VIR_DRV_OPEN_ERROR;
 }
@@ -307,10 +310,8 @@ vzConnectOpen(virConnectPtr conn,
         return VIR_DRV_OPEN_ERROR;
     }
 
-    if ((ret = vzOpenDefault(conn)) != VIR_DRV_OPEN_SUCCESS) {
-        vzConnectClose(conn);
+    if ((ret = vzOpenDefault(conn)) != VIR_DRV_OPEN_SUCCESS)
         return ret;
-    }
 
     return VIR_DRV_OPEN_SUCCESS;
 }
@@ -554,19 +555,32 @@ vzDomainGetInfo(virDomainPtr domain, virDomainInfoPtr info)
     virDomainObjPtr privdom;
     int ret = -1;
 
-    if (!(privdom = vzDomObjFromDomain(domain)))
+    if (!(privdom = vzDomObjFromDomainRef(domain)))
         goto cleanup;
 
     info->state = virDomainObjGetState(privdom, NULL);
     info->memory = privdom->def->mem.cur_balloon;
     info->maxMem = virDomainDefGetMemoryActual(privdom->def);
-    info->nrVirtCpu = privdom->def->vcpus;
+    info->nrVirtCpu = virDomainDefGetVcpus(privdom->def);
     info->cpuTime = 0;
+
+    if (virDomainObjIsActive(privdom)) {
+        unsigned long long vtime;
+        size_t i;
+
+        for (i = 0; i < virDomainDefGetVcpus(privdom->def); ++i) {
+            if (prlsdkGetVcpuStats(privdom, i, &vtime) < 0) {
+                virReportError(VIR_ERR_OPERATION_FAILED, "%s",
+                               _("cannot read cputime for domain"));
+                goto cleanup;
+            }
+            info->cpuTime += vtime;
+        }
+    }
     ret = 0;
 
  cleanup:
-    if (privdom)
-        virObjectUnlock(privdom);
+    virDomainObjEndAPI(&privdom);
     return ret;
 }
 
@@ -910,6 +924,13 @@ static int vzDomainShutdown(virDomainPtr domain)
     return prlsdkDomainChangeState(domain, prlsdkStop);
 }
 
+static int vzDomainReboot(virDomainPtr domain,
+                          unsigned int flags)
+{
+    virCheckFlags(0, -1);
+    return prlsdkDomainChangeState(domain, prlsdkRestart);
+}
+
 static int vzDomainIsActive(virDomainPtr domain)
 {
     virDomainObjPtr dom = NULL;
@@ -941,12 +962,13 @@ vzDomainUndefineFlags(virDomainPtr domain,
     virDomainObjPtr dom = NULL;
     int ret;
 
-    virCheckFlags(0, -1);
+    virCheckFlags(VIR_DOMAIN_UNDEFINE_MANAGED_SAVE |
+                  VIR_DOMAIN_UNDEFINE_SNAPSHOTS_METADATA, -1);
 
     if (!(dom = vzDomObjFromDomain(domain)))
         return -1;
 
-    ret = prlsdkUnregisterDomain(privconn, dom);
+    ret = prlsdkUnregisterDomain(privconn, dom, flags);
     if (ret)
         virObjectUnlock(dom);
 
@@ -1352,9 +1374,9 @@ vzDomainGetVcpusFlags(virDomainPtr dom,
         goto cleanup;
 
     if (flags & VIR_DOMAIN_VCPU_MAXIMUM)
-        ret = privdom->def->maxvcpus;
+        ret = virDomainDefGetVcpusMax(privdom->def);
     else
-        ret = privdom->def->vcpus;
+        ret = virDomainDefGetVcpus(privdom->def);
 
  cleanup:
     if (privdom)
@@ -1473,6 +1495,7 @@ static virHypervisorDriver vzDriver = {
     .domainShutdown = vzDomainShutdown, /* 0.10.0 */
     .domainCreate = vzDomainCreate,    /* 0.10.0 */
     .domainCreateWithFlags = vzDomainCreateWithFlags, /* 1.2.10 */
+    .domainReboot = vzDomainReboot, /* 1.3.0 */
     .domainDefineXML = vzDomainDefineXML,      /* 0.10.0 */
     .domainDefineXMLFlags = vzDomainDefineXMLFlags, /* 1.2.12 */
     .domainUndefine = vzDomainUndefine, /* 1.2.10 */

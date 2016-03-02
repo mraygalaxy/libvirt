@@ -1,4 +1,5 @@
-## Copyright (C) 2005-2014 Red Hat, Inc.
+## Copyright (C) 2005-2016 Red Hat, Inc.
+## Copyright (C) 2013 Yuto KAWAMURA(kawamuray) <kawamuray.dadada@gmail.com>
 ##
 ## This library is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU Lesser General Public
@@ -56,14 +57,14 @@ EXTRA_DIST = \
 	virsh-volume.c
 
 
-
+CLEANFILES =
 DISTCLEANFILES =
 
 confdir = $(sysconfdir)/libvirt
 conf_DATA =
 
 bin_SCRIPTS = virt-xml-validate virt-pki-validate
-bin_PROGRAMS = virsh virt-host-validate
+bin_PROGRAMS = virsh virt-host-validate virt-admin
 libexec_SCRIPTS = libvirt-guests.sh
 
 if WITH_SANLOCK
@@ -71,24 +72,25 @@ sbin_SCRIPTS = virt-sanlock-cleanup
 DISTCLEANFILES += virt-sanlock-cleanup
 endif WITH_SANLOCK
 
-if WITH_LXC
+if WITH_LOGIN_SHELL
 conf_DATA += virt-login-shell.conf
 bin_PROGRAMS += virt-login-shell
-else ! WITH_LXC
+else ! WITH_LOGIN_SHELL
 EXTRA_DIST += virt-login-shell.conf
-endif ! WITH_LXC
+endif ! WITH_LOGIN_SHELL
 
 
 dist_man1_MANS = \
 		virt-host-validate.1 \
 		virt-pki-validate.1 \
 		virt-xml-validate.1 \
-		virsh.1
-if WITH_LXC
+		virsh.1 \
+		virt-admin.1
+if WITH_LOGIN_SHELL
 dist_man1_MANS += virt-login-shell.1
-else ! WITH_LXC
+else ! WITH_LOGIN_SHELL
 EXTRA_DIST += virt-login-shell.1
-endif ! WITH_LXC
+endif ! WITH_LOGIN_SHELL
 if WITH_SANLOCK
 dist_man8_MANS = virt-sanlock-cleanup.8
 endif WITH_SANLOCK
@@ -184,11 +186,11 @@ virt_login_shell_SOURCES =					\
 
 virt_login_shell_LDFLAGS = \
 		$(AM_LDFLAGS) 					\
+		$(PIE_LDFLAGS)					\
 		$(COVERAGE_LDFLAGS)				\
 		$(NULL)
 virt_login_shell_LDADD =					\
 		$(STATIC_BINARIES)				\
-		$(PIE_LDFLAGS)					\
 		../src/libvirt-setuid-rpc-client.la		\
 		../gnulib/lib/libgnu.la
 
@@ -217,11 +219,11 @@ virsh_SOURCES =							\
 
 virsh_LDFLAGS = \
 		$(AM_LDFLAGS) 					\
+		$(PIE_LDFLAGS)					\
 		$(COVERAGE_LDFLAGS)				\
 		$(NULL)
 virsh_LDADD =							\
 		$(STATIC_BINARIES)				\
-		$(PIE_LDFLAGS)					\
 		../src/libvirt-lxc.la				\
 		../src/libvirt-qemu.la				\
 		libvirt_shell.la
@@ -230,6 +232,28 @@ virsh_CFLAGS =							\
 		$(PIE_CFLAGS)					\
 		$(COVERAGE_CFLAGS)				\
 		$(LIBXML_CFLAGS)
+
+virt_admin_SOURCES =						\
+		virt-admin.c virt-admin.h			\
+		$(NULL)
+
+virt_admin_LDFLAGS =						\
+		$(AM_LDFLAGS)					\
+		$(COVERAGE_LDFLAGS)				\
+		$(STATIC_BINARIES)				\
+		$(PIE_LDFLAGS)					\
+		$(NULL)
+virt_admin_LDADD =						\
+		../src/libvirt-admin.la				\
+		libvirt_shell.la				\
+		$(LIBXML_LIBS)					\
+		$(NULL)
+virt_admin_CFLAGS =						\
+		$(WARN_CFLAGS)					\
+		$(PIE_CFLAGS)					\
+		$(COVERAGE_CFLAGS)				\
+		$(LIBXML_CFLAGS)				\
+		$(READLINE_CFLAGS)
 BUILT_SOURCES =
 
 if WITH_WIN_ICON
@@ -258,14 +282,9 @@ virsh_win_icon.$(OBJEXT): virsh_win_icon.rc
 	  --output-format coff --output $@
 endif WITH_WIN_ICON
 
-virt-login-shell.1: virt-login-shell.pod $(top_srcdir)/configure.ac
+%.1: %.pod $(top_srcdir)/configure.ac
 	$(AM_V_GEN)$(POD2MAN) $< $(srcdir)/$@ \
-	    && if grep 'POD ERROR' $(srcdir)/$@ ; then \
-		rm $(srcdir)/$@; exit 1; fi
-
-virsh.1: virsh.pod $(top_srcdir)/configure.ac
-	$(AM_V_GEN)$(POD2MAN) $< $(srcdir)/$@ \
-	    && if grep 'POD ERROR' $(srcdir)/$@ ; then \
+		&& if grep 'POD ERROR' $(srcdir)/$@ ; then \
 		rm $(srcdir)/$@; exit 1; fi
 
 install-data-local: install-init install-systemd
@@ -356,7 +375,53 @@ libvirt-guests.service: libvirt-guests.service.in $(top_builddir)/config.status
 	    mv $@-t $@
 
 
-CLEANFILES = $(bin_SCRIPTS)
+EXTRA_DIST += \
+	wireshark/util/genxdrstub.pl \
+	wireshark/util/make-dissector-reg
+
+if WITH_WIRESHARK_DISSECTOR
+
+ws_plugindir = $(plugindir)
+ws_plugin_LTLIBRARIES = wireshark/src/libvirt.la
+wireshark_src_libvirt_la_CPPFLAGS = \
+	-I wireshark/src $(WIRESHARK_DISSECTOR_CFLAGS)
+wireshark_src_libvirt_la_LDFLAGS = -avoid-version -module
+nodist_wireshark_src_libvirt_la_SOURCES = wireshark/src/plugin.c
+wireshark_src_libvirt_la_SOURCES = \
+	wireshark/src/packet-libvirt.h \
+	wireshark/src/packet-libvirt.c
+
+wireshark/src/packet-libvirt.c: wireshark/src/packet-libvirt.h \
+		wireshark/src/libvirt/protocol.h
+
+wireshark/src/plugin.c: wireshark/src/packet-libvirt.c
+	cd wireshark/src && \
+		$(abs_top_srcdir)/tools/wireshark/util/make-dissector-reg \
+		. plugin packet-libvirt.c
+
+WS_DISSECTOR_PROTO_FILES  = \
+  $(abs_top_srcdir)/src/remote/remote_protocol.x \
+  $(abs_top_srcdir)/src/remote/qemu_protocol.x \
+  $(abs_top_srcdir)/src/remote/lxc_protocol.x \
+  $(abs_top_srcdir)/src/rpc/virkeepaliveprotocol.x
+
+wireshark/src/libvirt/protocol.h: wireshark/util/genxdrstub.pl \
+		$(WS_DISSECTOR_PROTO_FILES)
+	$(MKDIR_P) wireshark/src/libvirt
+	cd wireshark/src && \
+	LIBVIRT_VERSION=$(LIBVIRT_VERSION) \
+		  $(PERL) $(abs_top_srcdir)/tools/wireshark/util/genxdrstub.pl \
+		  $(WS_DISSECTOR_PROTO_FILES)
+
+CLEANFILES += wireshark/src/plugin.c
+
+endif WITH_WIRESHARK_DISSECTOR
+
+
+clean-local:
+	-rm -rf wireshark/src/libvirt
+
+CLEANFILES += $(bin_SCRIPTS)
 CLEANFILES += *.gcov .libs/*.gcda .libs/*.gcno *.gcno *.gcda *.i *.s
 MAINTAINERCLEANFILES = $(dist_man1_MANS)
 

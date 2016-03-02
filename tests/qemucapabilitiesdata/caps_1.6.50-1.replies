@@ -1924,6 +1924,74 @@
 }
 
 {
+    "id": "libvirt-32",
+    "error": {
+        "class": "DeviceNotFound",
+        "desc": "Device 'virtio-gpu-pci' not found"
+    }
+}
+
+{
+    "id": "libvirt-33",
+    "error": {
+        "class": "DeviceNotFound",
+        "desc": "Device 'ICH9-LPC' not found"
+    }
+}
+
+{
+    "return": [
+        {
+             "name": "command_serr_enable",
+             "type": "on/off"
+        },
+        {
+            "name": "multifunction",
+            "type": "on/off"
+        },
+        {
+            "name": "rombar",
+            "type": "uint32"
+        },
+        {
+            "name": "romfile",
+            "type": "string"
+        },
+        {
+            "name": "addr",
+            "type": "pci-devfn"
+        },
+        {
+            "name": "class",
+            "type": "hex32"
+        },
+        {
+            "name": "event_idx",
+            "type": "on/off"
+        },
+        {
+            "name": "indirect_desc",
+            "type": "on/off"
+        }
+    ],
+    "id": "libvirt-34"
+}
+
+{
+    "id": "libvirt-35",
+    "error": {
+        "class": "DeviceNotFound",
+        "desc": "Device 'virtio-balloon-ccw' not found"
+    }
+}
+
+{
+    "return": [
+    ],
+    "id": "libvirt-36"
+}
+
+{
     "return": [
         {
             "name": "xenpv",
@@ -2017,7 +2085,7 @@
             "cpu-max": 1
         }
     ],
-    "id": "libvirt-32"
+    "id": "libvirt-37"
 }
 
 {
@@ -2095,7 +2163,7 @@
             "name": "qemu64"
         }
     ],
-    "id": "libvirt-33"
+    "id": "libvirt-38"
 }
 
 {
@@ -2103,19 +2171,19 @@
         "enabled": false,
         "present": true
     },
-    "id": "libvirt-34"
+    "id": "libvirt-39"
 }
 
 {
     "return": [
     ],
-    "id": "libvirt-35"
+    "id": "libvirt-40"
 }
 
 {
     "return": [
     ],
-    "id": "libvirt-36"
+    "id": "libvirt-41"
 }
 
 {
@@ -2703,7 +2771,7 @@
             "option": "drive"
         }
     ],
-    "id": "libvirt-37"
+    "id": "libvirt-42"
 }
 
 {
@@ -2725,5 +2793,5 @@
             "state": false
         }
     ],
-    "id": "libvirt-38"
+    "id": "libvirt-43"
 }

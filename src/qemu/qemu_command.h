@@ -78,8 +78,7 @@ virCommandPtr qemuBuildCommandLine(virConnectPtr conn,
                                    virDomainChrSourceDefPtr monitor_chr,
                                    bool monitor_json,
                                    virQEMUCapsPtr qemuCaps,
-                                   const char *migrateFrom,
-                                   int migrateFd,
+                                   const char *migrateURI,
                                    virDomainSnapshotObjPtr current_snapshot,
                                    virNetDevVPortProfileOp vmop,
                                    qemuBuildCommandLineCallbacksPtr callbacks,
@@ -88,7 +87,7 @@ virCommandPtr qemuBuildCommandLine(virConnectPtr conn,
                                    virBitmapPtr nodeset,
                                    size_t *nnicindexes,
                                    int **nicindexes)
-    ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(11);
+    ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(10);
 
 /* Generate '-device' string for chardev device */
 int
@@ -173,9 +172,7 @@ int qemuBuildMemoryBackendStr(unsigned long long size,
                               virJSONValuePtr *backendProps,
                               bool force);
 
-char *qemuBuildMemoryDeviceStr(virDomainMemoryDefPtr mem,
-                               virDomainDefPtr def,
-                               virQEMUCapsPtr qemuCaps);
+char *qemuBuildMemoryDeviceStr(virDomainMemoryDefPtr mem);
 
 /* Legacy, pre device support */
 char *qemuBuildPCIHostdevPCIDevStr(virDomainHostdevDefPtr dev,
@@ -183,6 +180,7 @@ char *qemuBuildPCIHostdevPCIDevStr(virDomainHostdevDefPtr dev,
 /* Current, best practice */
 char *qemuBuildPCIHostdevDevStr(virDomainDefPtr def,
                                 virDomainHostdevDefPtr dev,
+                                int bootIndex,
                                 const char *configfd,
                                 virQEMUCapsPtr qemuCaps);
 
@@ -228,7 +226,6 @@ char *qemuBuildRedirdevDevStr(virDomainDefPtr def,
 int qemuNetworkIfaceConnect(virDomainDefPtr def,
                             virQEMUDriverPtr driver,
                             virDomainNetDefPtr net,
-                            virQEMUCapsPtr qemuCaps,
                             int *tapfd,
                             size_t *tapfdSize)
     ATTRIBUTE_NONNULL(2);
@@ -236,7 +233,8 @@ int qemuNetworkIfaceConnect(virDomainDefPtr def,
 int qemuPhysIfaceConnect(virDomainDefPtr def,
                          virQEMUDriverPtr driver,
                          virDomainNetDefPtr net,
-                         virQEMUCapsPtr qemuCaps,
+                         int *tapfd,
+                         size_t tapfdSize,
                          virNetDevVPortProfileOp vmop);
 
 int qemuOpenVhostNet(virDomainDefPtr def,
@@ -324,4 +322,5 @@ bool qemuCheckCCWS390AddressSupport(virDomainDefPtr def,
                                     virDomainDeviceInfo info,
                                     virQEMUCapsPtr qemuCaps,
                                     const char *devicename);
+
 #endif /* __QEMU_COMMAND_H__*/

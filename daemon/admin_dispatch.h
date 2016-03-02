@@ -26,6 +26,59 @@ static int adminDispatchConnectCloseHelper(
 
 
 
+static int adminDispatchConnectGetLibVersion(
+    virNetServerPtr server,
+    virNetServerClientPtr client,
+    virNetMessagePtr msg,
+    virNetMessageErrorPtr rerr,
+    admin_connect_get_lib_version_ret *ret);
+static int adminDispatchConnectGetLibVersionHelper(
+    virNetServerPtr server,
+    virNetServerClientPtr client,
+    virNetMessagePtr msg,
+    virNetMessageErrorPtr rerr,
+    void *args ATTRIBUTE_UNUSED,
+    void *ret)
+{
+  int rv;
+  virThreadJobSet("adminDispatchConnectGetLibVersion");
+  VIR_DEBUG("server=%p client=%p msg=%p rerr=%p args=%p ret=%p",
+            server, client, msg, rerr, args, ret);
+  rv = adminDispatchConnectGetLibVersion(server, client, msg, rerr, ret);
+  virThreadJobClear(rv);
+  return rv;
+}
+static int adminDispatchConnectGetLibVersion(
+    virNetServerPtr server ATTRIBUTE_UNUSED,
+    virNetServerClientPtr client,
+    virNetMessagePtr msg ATTRIBUTE_UNUSED,
+    virNetMessageErrorPtr rerr,
+    admin_connect_get_lib_version_ret *ret)
+{
+    int rv = -1;
+    unsigned long long libVer;
+    struct daemonAdmClientPrivate *priv =
+        virNetServerClientGetPrivateData(client);
+
+    if (!priv->dmn) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("connection not open"));
+        goto cleanup;
+    }
+
+    if (adminConnectGetLibVersion(priv->dmn, &libVer) < 0)
+        goto cleanup;
+
+    ret->libVer = libVer;
+    rv = 0;
+
+cleanup:
+    if (rv < 0)
+        virNetMessageSaveError(rerr);
+    return rv;
+}
+
+
+
 static int adminDispatchConnectOpen(
     virNetServerPtr server,
     virNetServerClientPtr client,
@@ -77,6 +130,15 @@ virNetServerProgramProc adminProcs[] = {
    (xdrproc_t)xdr_void,
    0,
    (xdrproc_t)xdr_void,
+   true,
+   0
+},
+{ /* Method ConnectGetLibVersion => 3 */
+   adminDispatchConnectGetLibVersionHelper,
+   0,
+   (xdrproc_t)xdr_void,
+   sizeof(admin_connect_get_lib_version_ret),
+   (xdrproc_t)xdr_admin_connect_get_lib_version_ret,
    true,
    0
 },

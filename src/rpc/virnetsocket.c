@@ -196,7 +196,7 @@ int virNetSocketCheckProtocols(bool *hasIPv4,
 
     freeaddrinfo(ai);
 
-    VIR_DEBUG("Protocols: v4 %d v6 %d\n", *hasIPv4, *hasIPv6);
+    VIR_DEBUG("Protocols: v4 %d v6 %d", *hasIPv4, *hasIPv6);
 
     ret = 0;
  cleanup:
@@ -619,6 +619,10 @@ int virNetSocketNewConnectUNIX(const char *path,
     virSocketAddr remoteAddr;
     char *rundir = NULL;
     int ret = -1;
+    bool daemonLaunched = false;
+
+    VIR_DEBUG("path=%s spawnDaemon=%d binary=%s", path, spawnDaemon,
+        NULLSTR(binary));
 
     memset(&localAddr, 0, sizeof(localAddr));
     memset(&remoteAddr, 0, sizeof(remoteAddr));
@@ -680,19 +684,29 @@ int virNetSocketNewConnectUNIX(const char *path,
     if (remoteAddr.data.un.sun_path[0] == '@')
         remoteAddr.data.un.sun_path[0] = '\0';
 
-    while (retries &&
-           connect(fd, &remoteAddr.data.sa, remoteAddr.len) < 0) {
-        if (!(spawnDaemon && (errno == ENOENT ||
-                              errno == ECONNREFUSED))) {
+    while (retries) {
+        if (connect(fd, &remoteAddr.data.sa, remoteAddr.len) == 0) {
+            VIR_DEBUG("connect() succeeded");
+            break;
+        }
+        VIR_DEBUG("connect() failed: retries=%d errno=%d", retries, errno);
+
+        retries--;
+        if (!spawnDaemon ||
+            retries == 0 ||
+            (errno != ENOENT && errno != ECONNREFUSED)) {
             virReportSystemError(errno, _("Failed to connect socket to '%s'"),
                                  path);
             goto cleanup;
         }
 
-        if (virNetSocketForkDaemon(binary) < 0)
-            goto cleanup;
+        if (!daemonLaunched) {
+            if (virNetSocketForkDaemon(binary) < 0)
+                goto cleanup;
 
-        retries--;
+            daemonLaunched = true;
+        }
+
         usleep(5000);
     }
 
@@ -1259,7 +1273,11 @@ int virNetSocketGetUNIXIdentity(virNetSocketPtr sock,
                                 pid_t *pid,
                                 unsigned long long *timestamp)
 {
+# if defined(HAVE_STRUCT_SOCKPEERCRED)
+    struct sockpeercred cr;
+# else
     struct ucred cr;
+# endif
     socklen_t cr_len = sizeof(cr);
     int ret = -1;
 

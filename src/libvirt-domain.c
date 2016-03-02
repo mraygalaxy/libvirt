@@ -1882,8 +1882,9 @@ virDomainSetMaxMemory(virDomainPtr domain, unsigned long memory)
  * to Domain0 i.e. the domain where the application runs.
  * This function may require privileged access to the hypervisor.
  *
- * This command only changes the runtime configuration of the domain,
- * so can only be called on an active domain.
+ * This command is hypervisor-specific for whether active, persistent,
+ * or both configurations are changed; for more control, use
+ * virDomainSetMemoryFlags().
  *
  * Returns 0 in case of success and -1 in case of failure.
  */
@@ -2015,7 +2016,7 @@ virDomainSetMemoryStatsPeriod(virDomainPtr domain, int period,
 {
     virConnectPtr conn;
 
-    VIR_DOMAIN_DEBUG(domain, "peroid=%d, flags=%x", period, flags);
+    VIR_DOMAIN_DEBUG(domain, "period=%d, flags=%x", period, flags);
 
     virResetLastError();
 
@@ -3427,7 +3428,7 @@ virDomainMigrateUnmanagedParams(virDomainPtr domain,
                                 unsigned int flags)
 {
     VIR_DOMAIN_DEBUG(domain, "dconnuri=%s, params=%p, nparams=%d, flags=%x",
-                     dconnuri, params, nparams, flags);
+                     NULLSTR(dconnuri), params, nparams, flags);
     VIR_TYPED_PARAMS_DEBUG(params, nparams);
 
     if ((flags & VIR_MIGRATE_PEER2PEER) &&
@@ -4403,7 +4404,7 @@ virDomainMigrateToURI2(virDomainPtr domain,
     else
         dconnuri = NULL;
 
-    if (virDomainMigrateUnmanaged(domain, NULL, flags,
+    if (virDomainMigrateUnmanaged(domain, dxml, flags,
                                   dname, dconnuri, miguri, bandwidth) < 0)
         goto error;
 
@@ -8392,19 +8393,10 @@ virDomainAttachDeviceFlags(virDomainPtr domain,
  * @domain: pointer to domain object
  * @xml: pointer to XML description of one device
  *
- * Destroy a virtual device attachment to backend.  This function,
- * having hot-unplug semantics, is only allowed on an active domain.
+ * This is an equivalent of virDomainDetachDeviceFlags() when called with
+ * @flags parameter set to VIR_DOMAIN_AFFECT_LIVE.
  *
- * Be aware that hotplug changes might not persist across a domain going
- * into S4 state (also known as hibernation) unless you also modify the
- * persistent domain definition.
- *
- * The supplied XML description of the device should be as specific
- * as its definition in the domain XML. The set of attributes used
- * to match the device are internal to the drivers. Using a partial definition,
- * or attempting to detach a device that is not present in the domain XML,
- * but shares some specific attributes with one that is present,
- * may lead to unexpected results.
+ * See virDomainDetachDeviceFlags() for more details.
  *
  * Returns 0 in case of success, -1 in case of failure.
  */
@@ -10580,15 +10572,17 @@ virDomainGetBlockIoTune(virDomainPtr dom,
  * Typical use sequence is below.
  *
  * getting total stats: set start_cpu as -1, ncpus 1
- * virDomainGetCPUStats(dom, NULL, 0, -1, 1, 0) => nparams
- * params = calloc(nparams, sizeof(virTypedParameter))
- * virDomainGetCPUStats(dom, params, nparams, -1, 1, 0) => total stats.
+ *
+ *   virDomainGetCPUStats(dom, NULL, 0, -1, 1, 0); // nparams
+ *   params = calloc(nparams, sizeof(virTypedParameter))
+ *   virDomainGetCPUStats(dom, params, nparams, -1, 1, 0); // total stats.
  *
  * getting per-cpu stats:
- * virDomainGetCPUStats(dom, NULL, 0, 0, 0, 0) => ncpus
- * virDomainGetCPUStats(dom, NULL, 0, 0, 1, 0) => nparams
- * params = calloc(ncpus * nparams, sizeof(virTypedParameter))
- * virDomainGetCPUStats(dom, params, nparams, 0, ncpus, 0) => per-cpu stats
+ *
+ *   virDomainGetCPUStats(dom, NULL, 0, 0, 0, 0); // ncpus
+ *   virDomainGetCPUStats(dom, NULL, 0, 0, 1, 0); // nparams
+ *   params = calloc(ncpus * nparams, sizeof(virTypedParameter));
+ *   virDomainGetCPUStats(dom, params, nparams, 0, ncpus, 0); // per-cpu stats
  *
  * Returns -1 on failure, or the number of statistics that were
  * populated per cpu on success (this will be less than the total
@@ -10940,6 +10934,7 @@ virDomainGetTime(virDomainPtr dom,
     virResetLastError();
 
     virCheckDomainReturn(dom, -1);
+    virCheckReadOnlyGoto(dom->conn->flags, error);
 
     if (dom->conn->driver->domainGetTime) {
         int ret = dom->conn->driver->domainGetTime(dom, seconds,
@@ -11552,7 +11547,8 @@ virDomainInterfaceAddresses(virDomainPtr dom,
         *ifaces = NULL;
     virCheckDomainReturn(dom, -1);
     virCheckNonNullArgGoto(ifaces, error);
-    virCheckReadOnlyGoto(dom->conn->flags, error);
+    if (source == VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT)
+        virCheckReadOnlyGoto(dom->conn->flags, error);
 
     if (dom->conn->driver->domainInterfaceAddresses) {
         int ret;

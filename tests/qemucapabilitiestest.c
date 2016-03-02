@@ -190,6 +190,9 @@ mymain(void)
     DO_TEST("caps_1.6.0-1");
     DO_TEST("caps_1.6.50-1");
     DO_TEST("caps_2.1.1-1");
+    DO_TEST("caps_2.4.0-1");
+    DO_TEST("caps_2.5.0-1");
+    DO_TEST("caps_2.6.0-1");
 
     qemuTestDriverFree(&driver);
 

@@ -22,6 +22,8 @@
  * Author: Martin Kletzander <mkletzan@redhat.com>
  */
 
+%#include "virxdrdefs.h"
+
 /*----- Data types. -----*/
 
 /* Length of long, but not unbounded, strings.
@@ -39,6 +41,10 @@ typedef admin_nonnull_string *admin_string;
 /*----- Protocol. -----*/
 struct admin_connect_open_args {
     unsigned int flags;
+};
+
+struct admin_connect_get_lib_version_ret {
+    unsigned hyper libVer;
 };
 
 /* Define the program number, protocol version and procedure numbers here. */
@@ -64,12 +70,17 @@ enum admin_procedure {
      *   in the function parameter list.
      */
     /**
-     * @generate: client
+     * @generate: none
      */
     ADMIN_PROC_CONNECT_OPEN = 1,
 
     /**
-     * @generate: client
+     * @generate: none
      */
-    ADMIN_PROC_CONNECT_CLOSE = 2
+    ADMIN_PROC_CONNECT_CLOSE = 2,
+
+    /**
+     * @generate: both
+     */
+    ADMIN_PROC_CONNECT_GET_LIB_VERSION = 3
 };

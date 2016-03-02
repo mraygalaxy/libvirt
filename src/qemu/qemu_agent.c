@@ -710,7 +710,7 @@ qemuAgentIO(int watch, int fd, int events, void *opaque)
 
 qemuAgentPtr
 qemuAgentOpen(virDomainObjPtr vm,
-              virDomainChrSourceDefPtr config,
+              const virDomainChrSourceDef *config,
               qemuAgentCallbacksPtr cb)
 {
     qemuAgentPtr mon;
@@ -1241,7 +1241,8 @@ void qemuAgentNotifyEvent(qemuAgentPtr mon,
         }
     } else {
         /* shouldn't happen but one never knows */
-        VIR_WARN("Received unexpected event %d", event);
+        VIR_WARN("Received unexpected event %d (expected %d)",
+                 event, mon->await_event);
     }
 }
 

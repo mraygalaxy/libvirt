@@ -89,6 +89,8 @@ EXTRA_DIST =		\
 	domainsnapshotxml2xmlin \
 	domainsnapshotxml2xmlout \
 	fchostdata \
+	genericxml2xmlindata \
+	genericxml2xmloutdata \
 	interfaceschemadata \
 	lxcconf2xmldata \
 	lxcxml2xmldata \
@@ -116,7 +118,6 @@ EXTRA_DIST =		\
 	qemumonitorjsondata \
 	qemuxml2argvdata \
 	qemuxml2xmloutdata \
-	qemuxmlnsdata \
 	schematestutils.sh \
 	secretxml2xmlin \
 	securityselinuxhelperdata \
@@ -173,6 +174,7 @@ test_programs = virshtest sockettest \
 	virkeycodetest \
 	virlockspacetest \
 	virlogtest \
+	virrotatingfiletest \
 	virstringtest \
 	virportallocatortest \
 	sysinfotest \
@@ -244,7 +246,7 @@ test_programs += xlconfigtest
 endif WITH_LIBXL
 
 if WITH_QEMU
-test_programs += qemuxml2argvtest qemuxml2xmltest qemuxmlnstest \
+test_programs += qemuxml2argvtest qemuxml2xmltest \
 	qemuargv2xmltest qemuhelptest domainsnapshotxml2xmltest \
 	qemumonitortest qemumonitorjsontest qemuhotplugtest \
 	qemuagenttest qemucapabilitiestest qemucaps2xmltest \
@@ -333,6 +335,8 @@ test_programs += cputest
 test_programs += metadatatest
 
 test_programs += secretxml2xmltest
+
+test_programs += genericxml2xmltest
 
 if WITH_LINUX
 test_programs += virusbtest \
@@ -567,11 +571,6 @@ qemuxml2xmltest_SOURCES = \
 	testutils.c testutils.h
 qemuxml2xmltest_LDADD = $(qemu_LDADDS) $(LDADDS)
 
-qemuxmlnstest_SOURCES = \
-	qemuxmlnstest.c testutilsqemu.c testutilsqemu.h \
-	testutils.c testutils.h
-qemuxmlnstest_LDADD = $(qemu_LDADDS) $(LDADDS)
-
 qemuargv2xmltest_SOURCES = \
 	qemuargv2xmltest.c testutilsqemu.c testutilsqemu.h \
 	testutils.c testutils.h
@@ -642,7 +641,7 @@ domainsnapshotxml2xmltest_SOURCES = \
 domainsnapshotxml2xmltest_LDADD = $(qemu_LDADDS) $(LDADDS)
 else ! WITH_QEMU
 EXTRA_DIST += qemuxml2argvtest.c qemuxml2xmltest.c qemuargv2xmltest.c \
-	qemuxmlnstest.c qemuhelptest.c domainsnapshotxml2xmltest.c \
+	qemuhelptest.c domainsnapshotxml2xmltest.c \
 	qemumonitortest.c testutilsqemu.c testutilsqemu.h \
 	qemumonitorjsontest.c qemuhotplugtest.c \
 	qemuagenttest.c qemucapabilitiestest.c \
@@ -664,7 +663,7 @@ lxcxml2xmltest_SOURCES = \
 lxcxml2xmltest_LDADD = $(lxc_LDADDS)
 
 lxcconf2xmltest_SOURCES = \
-	lxcconf2xmltest.c \
+	lxcconf2xmltest.c testutilslxc.c testutilslxc.h \
 	testutils.c testutils.h
 lxcconf2xmltest_LDADD = $(lxc_LDADDS)
 else ! WITH_LXC
@@ -804,6 +803,11 @@ secretxml2xmltest_SOURCES = \
 	secretxml2xmltest.c \
 	testutils.c testutils.h
 secretxml2xmltest_LDADD = $(LDADDS)
+
+genericxml2xmltest_SOURCES = \
+	genericxml2xmltest.c \
+	testutils.c testutils.h
+genericxml2xmltest_LDADD = $(LDADDS)
 
 
 if WITH_STORAGE
@@ -1066,6 +1070,11 @@ virnetdevmock_la_CFLAGS = $(AM_CFLAGS) $(LIBNL_CFLAGS)
 virnetdevmock_la_LIBADD = $(GNULIB_LIBS) \
 					   ../src/libvirt.la
 virnetdevmock_la_LDFLAGS = $(MOCKLIBS_LDFLAGS)
+
+virrotatingfiletest_SOURCES = \
+	virrotatingfiletest.c testutils.h testutils.c
+virrotatingfiletest_CFLAGS = $(AM_CFLAGS)
+virrotatingfiletest_LDADD = $(LDADDS)
 
 if WITH_LINUX
 virusbtest_SOURCES = \

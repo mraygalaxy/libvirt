@@ -24,10 +24,9 @@
 #include <config.h>
 
 #include <stdio.h>
-#if defined HAVE_MNTENT_H && defined HAVE_GETMNTENT_R
+#if defined HAVE_MNTENT_H && defined HAVE_SYS_MOUNT_H \
+    && defined HAVE_GETMNTENT_R
 # include <mntent.h>
-#endif
-#if defined HAVE_SYS_MOUNT_H
 # include <sys/mount.h>
 #endif
 #include <fcntl.h>
@@ -38,6 +37,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <dirent.h>
+#include <unistd.h>
 
 #define __VIR_CGROUP_ALLOW_INCLUDE_PRIV_H__
 #include "vircgrouppriv.h"

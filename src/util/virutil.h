@@ -67,6 +67,7 @@ int virDoubleToStr(char **strp, double number)
 char *virFormatIntDecimal(char *buf, size_t buflen, int val)
     ATTRIBUTE_NONNULL(1) ATTRIBUTE_RETURN_CHECK;
 
+int virDiskNameParse(const char *name, int *disk, int *partition);
 int virDiskNameToIndex(const char* str);
 char *virIndexToDiskName(int idx, const char *prefix);
 
@@ -131,6 +132,7 @@ static inline int pthread_sigmask(int how,
 # endif
 
 char *virGetHostname(void);
+char *virGetHostnameQuiet(void);
 
 char *virGetUserDirectory(void);
 char *virGetUserDirectoryByUID(uid_t uid);

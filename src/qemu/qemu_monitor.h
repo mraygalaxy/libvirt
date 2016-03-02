@@ -455,24 +455,24 @@ int qemuMonitorGetMigrationCacheSize(qemuMonitorPtr mon,
 int qemuMonitorSetMigrationCacheSize(qemuMonitorPtr mon,
                                      unsigned long long cacheSize);
 
-enum {
+typedef enum {
     QEMU_MONITOR_MIGRATION_STATUS_INACTIVE,
+    QEMU_MONITOR_MIGRATION_STATUS_SETUP,
     QEMU_MONITOR_MIGRATION_STATUS_ACTIVE,
     QEMU_MONITOR_MIGRATION_STATUS_COMPLETED,
     QEMU_MONITOR_MIGRATION_STATUS_ERROR,
     QEMU_MONITOR_MIGRATION_STATUS_CANCELLING,
     QEMU_MONITOR_MIGRATION_STATUS_CANCELLED,
-    QEMU_MONITOR_MIGRATION_STATUS_SETUP,
 
     QEMU_MONITOR_MIGRATION_STATUS_LAST
-};
+} qemuMonitorMigrationStatus;
 
 VIR_ENUM_DECL(qemuMonitorMigrationStatus)
 
-typedef struct _qemuMonitorMigrationStatus qemuMonitorMigrationStatus;
-typedef qemuMonitorMigrationStatus *qemuMonitorMigrationStatusPtr;
-struct _qemuMonitorMigrationStatus {
-    int status;
+typedef struct _qemuMonitorMigrationStats qemuMonitorMigrationStats;
+typedef qemuMonitorMigrationStats *qemuMonitorMigrationStatsPtr;
+struct _qemuMonitorMigrationStats {
+    int status; /* qemuMonitorMigrationStatus */
     unsigned long long total_time;
     /* total or expected depending on status */
     bool downtime_set;
@@ -493,6 +493,8 @@ struct _qemuMonitorMigrationStatus {
     unsigned long long ram_duplicate;
     unsigned long long ram_normal;
     unsigned long long ram_normal_bytes;
+    unsigned long long ram_dirty_rate;
+    unsigned long long ram_iteration;
 
     unsigned long long disk_transferred;
     unsigned long long disk_remaining;
@@ -507,8 +509,8 @@ struct _qemuMonitorMigrationStatus {
     unsigned long long xbzrle_overflow;
 };
 
-int qemuMonitorGetMigrationStatus(qemuMonitorPtr mon,
-                                  qemuMonitorMigrationStatusPtr status);
+int qemuMonitorGetMigrationStats(qemuMonitorPtr mon,
+                                 qemuMonitorMigrationStatsPtr stats);
 
 typedef enum {
     QEMU_MONITOR_MIGRATION_CAPS_XBZRLE,
@@ -892,7 +894,13 @@ int qemuMonitorDetachCharDev(qemuMonitorPtr mon,
 int qemuMonitorGetDeviceAliases(qemuMonitorPtr mon,
                                 char ***aliases);
 
-int qemuMonitorSetDomainLog(qemuMonitorPtr mon, int logfd);
+typedef void (*qemuMonitorReportDomainLogError)(qemuMonitorPtr mon,
+                                                const char *msg,
+                                                void *opaque);
+void qemuMonitorSetDomainLog(qemuMonitorPtr mon,
+                             qemuMonitorReportDomainLogError func,
+                             void *opaque,
+                             virFreeCallback destroy);
 
 int qemuMonitorGetGuestCPU(qemuMonitorPtr mon,
                            virArch arch,
@@ -923,6 +931,9 @@ struct _qemuMonitorMemoryDeviceInfo {
 int qemuMonitorGetMemoryDeviceInfo(qemuMonitorPtr mon,
                                    virHashTablePtr *info)
     ATTRIBUTE_NONNULL(2);
+
+int qemuMonitorMigrateIncoming(qemuMonitorPtr mon,
+                               const char *uri);
 
 /**
  * When running two dd process and using <> redirection, we need a

@@ -111,11 +111,9 @@ virDomainVirtioSerialAddrAutoAssign;
 virDomainVirtioSerialAddrIsComplete;
 virDomainVirtioSerialAddrRelease;
 virDomainVirtioSerialAddrReserve;
-virDomainVirtioSerialAddrSetAddController;
 virDomainVirtioSerialAddrSetAddControllers;
 virDomainVirtioSerialAddrSetCreate;
 virDomainVirtioSerialAddrSetFree;
-virDomainVirtioSerialAddrSetRemoveController;
 
 
 # conf/domain_audit.h
@@ -148,6 +146,7 @@ virDomainCapsNew;
 
 # conf/domain_conf.h
 virBlkioDeviceArrayClear;
+virDiskNameParse;
 virDiskNameToBusDeviceIndex;
 virDiskNameToIndex;
 virDomainActualNetDefFree;
@@ -199,6 +198,7 @@ virDomainControllerTypeToString;
 virDomainCpuPlacementModeTypeFromString;
 virDomainCpuPlacementModeTypeToString;
 virDomainDefAddImplicitControllers;
+virDomainDefAddUSBController;
 virDomainDefCheckABIStability;
 virDomainDefCheckDuplicateDiskInfo;
 virDomainDefCheckUnsupportedMemoryHotplug;
@@ -216,8 +216,12 @@ virDomainDefGetDefaultEmulator;
 virDomainDefGetMemoryActual;
 virDomainDefGetMemoryInitial;
 virDomainDefGetSecurityLabelDef;
+virDomainDefGetVcpu;
+virDomainDefGetVcpus;
+virDomainDefGetVcpusMax;
 virDomainDefHasDeviceAddress;
 virDomainDefHasMemoryHotplug;
+virDomainDefHasVcpusOffline;
 virDomainDefMaybeAddController;
 virDomainDefMaybeAddInput;
 virDomainDefNeedsPlacementAdvice;
@@ -229,6 +233,8 @@ virDomainDefParseString;
 virDomainDefPostParse;
 virDomainDefSetMemoryInitial;
 virDomainDefSetMemoryTotal;
+virDomainDefSetVcpus;
+virDomainDefSetVcpusMax;
 virDomainDeleteConfig;
 virDomainDeviceAddressIsValid;
 virDomainDeviceAddressTypeToString;
@@ -395,24 +401,6 @@ virDomainObjGetMetadata;
 virDomainObjGetOneDef;
 virDomainObjGetPersistentDef;
 virDomainObjGetState;
-virDomainObjListAdd;
-virDomainObjListCollect;
-virDomainObjListConvert;
-virDomainObjListExport;
-virDomainObjListFindByID;
-virDomainObjListFindByName;
-virDomainObjListFindByUUID;
-virDomainObjListFindByUUIDRef;
-virDomainObjListForEach;
-virDomainObjListGetActiveIDs;
-virDomainObjListGetInactiveNames;
-virDomainObjListLoadAllConfigs;
-virDomainObjListNew;
-virDomainObjListNumOfDomains;
-virDomainObjListRemove;
-virDomainObjListRemoveLocked;
-virDomainObjListRenameAddNew;
-virDomainObjListRenameRemove;
 virDomainObjNew;
 virDomainObjParseNode;
 virDomainObjSetDefTransient;
@@ -884,6 +872,27 @@ virChrdevFree;
 virChrdevOpen;
 
 
+# conf/virdomainobjlist.h
+virDomainObjListAdd;
+virDomainObjListCollect;
+virDomainObjListConvert;
+virDomainObjListExport;
+virDomainObjListFindByID;
+virDomainObjListFindByName;
+virDomainObjListFindByUUID;
+virDomainObjListFindByUUIDRef;
+virDomainObjListForEach;
+virDomainObjListGetActiveIDs;
+virDomainObjListGetInactiveNames;
+virDomainObjListLoadAllConfigs;
+virDomainObjListNew;
+virDomainObjListNumOfDomains;
+virDomainObjListRemove;
+virDomainObjListRemoveLocked;
+virDomainObjListRenameAddNew;
+virDomainObjListRenameRemove;
+
+
 # cpu/cpu.h
 cpuBaseline;
 cpuBaselineXML;
@@ -1001,6 +1010,14 @@ virLockManagerPluginRef;
 virLockManagerPluginUnref;
 virLockManagerPluginUsesState;
 virLockManagerRelease;
+
+
+# logging/log_manager.h
+virLogManagerDomainGetLogFilePosition;
+virLogManagerDomainOpenLogFile;
+virLogManagerDomainReadLogFile;
+virLogManagerFree;
+virLogManagerNew;
 
 
 # nodeinfo.h
@@ -1323,6 +1340,7 @@ virRun;
 virConfFree;
 virConfFreeValue;
 virConfGetValue;
+virConfLoadConfig;
 virConfNew;
 virConfReadFile;
 virConfReadMem;
@@ -1986,6 +2004,8 @@ virPCIGetVirtualFunctionIndex;
 virPCIGetVirtualFunctionInfo;
 virPCIGetVirtualFunctions;
 virPCIIsVirtualFunction;
+virPCIStubDriverTypeFromString;
+virPCIStubDriverTypeToString;
 
 
 # util/virpidfile.h
@@ -2021,6 +2041,7 @@ virPortAllocatorSetUsed;
 virProcessAbort;
 virProcessExitWithStatus;
 virProcessGetAffinity;
+virProcessGetMaxMemLock;
 virProcessGetNamespaces;
 virProcessGetPids;
 virProcessGetStartTime;
@@ -2044,6 +2065,19 @@ virRandom;
 virRandomBits;
 virRandomGenerateWWN;
 virRandomInt;
+
+
+# util/virrotatingfile.h
+virRotatingFileReaderConsume;
+virRotatingFileReaderFree;
+virRotatingFileReaderNew;
+virRotatingFileReaderSeek;
+virRotatingFileWriterAppend;
+virRotatingFileWriterFree;
+virRotatingFileWriterGetINode;
+virRotatingFileWriterGetOffset;
+virRotatingFileWriterGetPath;
+virRotatingFileWriterNew;
 
 
 # util/virscsi.h
@@ -2321,6 +2355,7 @@ virURIFormat;
 virURIFormatParams;
 virURIFree;
 virURIParse;
+virURIResolveAlias;
 
 
 # util/virusb.h
@@ -2360,6 +2395,7 @@ virGetGroupID;
 virGetGroupList;
 virGetGroupName;
 virGetHostname;
+virGetHostnameQuiet;
 virGetListenFDs;
 virGetSCSIHostNameByParentaddr;
 virGetSCSIHostNumber;
