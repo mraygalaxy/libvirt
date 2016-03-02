@@ -572,6 +572,7 @@ sc_prohibit_int_index:
 
 sc_prohibit_int_ijk:
 	@prohibit='\<(int|unsigned) ([^(=]* )*(i|j|k)\>(\s|,|;)'	\
+	exclude='exempt from syntax-check'				\
 	halt='use size_t, not int/unsigned int for loop vars i, j, k'	\
 	  $(_sc_search_regexp)
 
@@ -1030,6 +1031,12 @@ sc_prohibit_not_strneq:
 	halt='Use STREQ instead of !STRNEQ'	\
 	  $(_sc_search_regexp)
 
+sc_prohibit_verbose_strcat:
+	@prohibit='strncat\([^,]*,\s+([^,]*),\s+strlen\(\1\)\)'     \
+	in_vc_files='\.[ch]$$'                                      \
+	halt='Use strcat(a, b) instead of strncat(a, b, strlen(b))' \
+	  $(_sc_search_regexp)
+
 # We don't use this feature of maint.mk.
 prev_version_file = /dev/null
 
@@ -1151,7 +1158,7 @@ exclude_file_name_regexp--sc_prohibit_strdup = \
   ^(docs/|examples/|src/util/virstring\.c|tests/vir(netserverclient|cgroup)mock.c$$)
 
 exclude_file_name_regexp--sc_prohibit_close = \
-  (\.p[yl]$$|\.spec\.in$$|^docs/|^(src/util/virfile\.c|src/libvirt-stream\.c|tests/vir(cgroup|pci)mock\.c)$$)
+  (\.p[yl]$$|\.spec\.in$$|^docs/|^(src/util/virfile\.c|src/libvirt-stream\.c|tests/vir.+mock\.c)$$)
 
 exclude_file_name_regexp--sc_prohibit_empty_lines_at_EOF = \
   (^tests/(qemuhelp|nodeinfo|virpcitest)data/|\.diff$$)

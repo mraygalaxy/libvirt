@@ -35,6 +35,7 @@
 #include "virstring.h"
 #include "virtime.h"
 #include "locking/domain_lock.h"
+#include "xen_common.h"
 
 #define VIR_FROM_THIS VIR_FROM_LIBXL
 
@@ -314,7 +315,7 @@ libxlDomainDeviceDefPostParse(virDomainDeviceDefPtr dev,
         virDomainHostdevSubsysPCIPtr pcisrc;
 
         if (dev->type == VIR_DOMAIN_DEVICE_NET)
-            hostdev = &(dev->data.net)->data.hostdev.def;
+            hostdev = &dev->data.net->data.hostdev.def;
         else
             hostdev = dev->data.hostdev;
         pcisrc = &hostdev->source.subsys.u.pci;
@@ -395,6 +396,10 @@ libxlDomainDefPostParse(virDomainDefPtr def,
         def->nconsoles = 1;
         def->consoles[0] = chrdef;
     }
+
+    /* add implicit input devices */
+    if (xenDomainDefAddImplicitInputDevice(def) < 0)
+        return -1;
 
     /* memory hotplug tunables are not supported by this driver */
     if (virDomainDefCheckUnsupportedMemoryHotplug(def) < 0)
@@ -757,6 +762,18 @@ libxlDomainCleanup(libxlDriverPrivatePtr driver,
         }
     }
 
+    if ((vm->def->nnets)) {
+        size_t i;
+
+        for (i = 0; i < vm->def->nnets; i++) {
+            virDomainNetDefPtr net = vm->def->nets[i];
+
+            if (net->ifname &&
+                STRPREFIX(net->ifname, LIBXL_GENERATED_PREFIX_XEN))
+                VIR_FREE(net->ifname);
+        }
+    }
+
     if (virAsprintf(&file, "%s/%s.xml", cfg->stateDir, vm->def->name) > 0) {
         if (unlink(file) < 0 && errno != ENOENT && errno != ENOTDIR)
             VIR_DEBUG("Failed to remove domain XML for %s", vm->def->name);
@@ -816,7 +833,7 @@ int
 libxlDomainSetVcpuAffinities(libxlDriverPrivatePtr driver, virDomainObjPtr vm)
 {
     libxlDriverConfigPtr cfg = libxlDriverConfigGet(driver);
-    virDomainPinDefPtr pin;
+    virDomainVcpuInfoPtr vcpu;
     libxl_bitmap map;
     virBitmapPtr cpumask = NULL;
     size_t i;
@@ -824,16 +841,24 @@ libxlDomainSetVcpuAffinities(libxlDriverPrivatePtr driver, virDomainObjPtr vm)
 
     libxl_bitmap_init(&map);
 
-    for (i = 0; i < vm->def->cputune.nvcpupin; ++i) {
-        pin = vm->def->cputune.vcpupin[i];
-        cpumask = pin->cpumask;
+    for (i = 0; i < virDomainDefGetVcpus(vm->def); ++i) {
+        vcpu = virDomainDefGetVcpu(vm->def, i);
+
+        if (!vcpu->online)
+            continue;
+
+        if (!(cpumask = vcpu->cpumask))
+            cpumask = vm->def->cpumask;
+
+        if (!cpumask)
+            continue;
 
         if (virBitmapToData(cpumask, &map.map, (int *)&map.size) < 0)
             goto cleanup;
 
-        if (libxl_set_vcpuaffinity(cfg->ctx, vm->def->id, pin->id, &map) != 0) {
+        if (libxl_set_vcpuaffinity(cfg->ctx, vm->def->id, i, &map) != 0) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
-                           _("Failed to pin vcpu '%d' with libxenlight"), pin->id);
+                           _("Failed to pin vcpu '%zu' with libxenlight"), i);
             goto cleanup;
         }
 
@@ -914,6 +939,32 @@ libxlConsoleCallback(libxl_ctx *ctx, libxl_event *ev, void *for_callback)
     }
     virObjectUnlock(vm);
     libxl_event_free(ctx, ev);
+}
+
+/*
+ * Create interface names for the network devices in parameter def.
+ * Names are created with the pattern 'vif<domid>.<devid><suffix>'.
+ * devid is extracted from the network devices in the d_config
+ * parameter. User-provided interface names are skipped.
+ */
+static void
+libxlDomainCreateIfaceNames(virDomainDefPtr def, libxl_domain_config *d_config)
+{
+    size_t i;
+
+    for (i = 0; i < def->nnets && i < d_config->num_nics; i++) {
+        virDomainNetDefPtr net = def->nets[i];
+        libxl_device_nic *x_nic = &d_config->nics[i];
+        const char *suffix =
+            x_nic->nictype != LIBXL_NIC_TYPE_VIF ? "-emu" : "";
+
+        if (net->ifname)
+            continue;
+
+        ignore_value(virAsprintf(&net->ifname,
+                                 LIBXL_GENERATED_PREFIX_XEN "%d.%d%s",
+                                 def->id, x_nic->devid, suffix));
+    }
 }
 
 
@@ -1060,8 +1111,9 @@ libxlDomainStart(libxlDriverPrivatePtr driver, virDomainObjPtr vm,
     if (libxl_evenable_domain_death(cfg->ctx, vm->def->id, 0, &priv->deathW))
         goto cleanup_dom;
 
+    libxlDomainCreateIfaceNames(vm->def, &d_config);
 
-    if ((dom_xml = virDomainDefFormat(vm->def, 0)) == NULL)
+    if ((dom_xml = virDomainDefFormat(vm->def, cfg->caps, 0)) == NULL)
         goto cleanup_dom;
 
     if (libxl_userdata_store(cfg->ctx, domid, "libvirt-xml",
@@ -1081,7 +1133,7 @@ libxlDomainStart(libxlDriverPrivatePtr driver, virDomainObjPtr vm,
         virDomainObjSetState(vm, VIR_DOMAIN_PAUSED, VIR_DOMAIN_PAUSED_USER);
     }
 
-    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, cfg->caps) < 0)
         goto cleanup_dom;
 
     if (virAtomicIntInc(&driver->nactive) == 1 && driver->inhibitCallback)

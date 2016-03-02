@@ -1,7 +1,7 @@
 /*
  * qemu_domain.h: QEMU domain private state
  *
- * Copyright (C) 2006-2014 Red Hat, Inc.
+ * Copyright (C) 2006-2016 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -203,6 +203,7 @@ struct _qemuDomainObjPrivate {
 
     bool signalIOError; /* true if the domain condition should be signalled on
                            I/O error */
+    char *machineName;
 };
 
 # define QEMU_DOMAIN_DISK_PRIVATE(disk)	\
@@ -233,6 +234,7 @@ typedef enum {
     QEMU_PROCESS_EVENT_NIC_RX_FILTER_CHANGED,
     QEMU_PROCESS_EVENT_SERIAL_CHANGED,
     QEMU_PROCESS_EVENT_BLOCK_JOB,
+    QEMU_PROCESS_EVENT_MONITOR_EOF,
 
     QEMU_PROCESS_EVENT_LAST
 } qemuProcessEventType;
@@ -265,6 +267,10 @@ int qemuDomainObjBeginJob(virQEMUDriverPtr driver,
 int qemuDomainObjBeginAsyncJob(virQEMUDriverPtr driver,
                                virDomainObjPtr obj,
                                qemuDomainAsyncJob asyncJob)
+    ATTRIBUTE_RETURN_CHECK;
+int qemuDomainObjBeginNestedJob(virQEMUDriverPtr driver,
+                                virDomainObjPtr obj,
+                                qemuDomainAsyncJob asyncJob)
     ATTRIBUTE_RETURN_CHECK;
 
 void qemuDomainObjEndJob(virQEMUDriverPtr driver,
@@ -375,6 +381,7 @@ const char *qemuFindQemuImgBinary(virQEMUDriverPtr driver);
 
 int qemuDomainSnapshotWriteMetadata(virDomainObjPtr vm,
                                     virDomainSnapshotObjPtr snapshot,
+                                    virCapsPtr caps,
                                     char *snapshotDir);
 
 int qemuDomainSnapshotForEachQcow2(virQEMUDriverPtr driver,
@@ -399,9 +406,9 @@ struct _virQEMUSnapRemove {
     bool current;
 };
 
-void qemuDomainSnapshotDiscardAll(void *payload,
-                                  const void *name,
-                                  void *data);
+int qemuDomainSnapshotDiscardAll(void *payload,
+                                 const void *name,
+                                 void *data);
 
 int qemuDomainSnapshotDiscardAllMetadata(virQEMUDriverPtr driver,
                                          virDomainObjPtr vm);
@@ -508,5 +515,17 @@ int qemuDomainDefValidateMemoryHotplug(const virDomainDef *def,
 
 bool qemuDomainHasVcpuPids(virDomainObjPtr vm);
 pid_t qemuDomainGetVcpuPid(virDomainObjPtr vm, unsigned int vcpu);
+int qemuDomainDetectVcpuPids(virQEMUDriverPtr driver, virDomainObjPtr vm,
+                             int asyncJob);
+
+bool qemuDomainSupportsNicdev(virDomainDefPtr def,
+                              virQEMUCapsPtr qemuCaps,
+                              virDomainNetDefPtr net);
+
+bool qemuDomainSupportsNetdev(virDomainDefPtr def,
+                              virQEMUCapsPtr qemuCaps,
+                              virDomainNetDefPtr net);
+
+int qemuDomainNetVLAN(virDomainNetDefPtr def);
 
 #endif /* __QEMU_DOMAIN_H__ */

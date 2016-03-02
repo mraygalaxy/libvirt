@@ -1258,7 +1258,10 @@ remoteDomainBlockCopy(virDomainPtr dom, const char *path, const char *destxml, v
     args.destxml = (char *)destxml;
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_block_copy_args, (char *)&args);
         goto done;
     }
@@ -1272,7 +1275,8 @@ remoteDomainBlockCopy(virDomainPtr dom, const char *path, const char *destxml, v
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -2134,11 +2138,11 @@ remoteDomainGetSchedulerParameters(virDomainPtr dom, virTypedParameterPtr params
         goto done;
     }
 
-    if (remoteDeserializeTypedParameters(ret.params.params_val,
-                                         ret.params.params_len,
-                                         REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
-                                         &params,
-                                         nparams) < 0)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) ret.params.params_val,
+                                  ret.params.params_len,
+                                  REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
+                                  &params,
+                                  nparams) < 0)
         goto cleanup;
 
     rv = 0;
@@ -2173,11 +2177,11 @@ remoteDomainGetSchedulerParametersFlags(virDomainPtr dom, virTypedParameterPtr p
         goto done;
     }
 
-    if (remoteDeserializeTypedParameters(ret.params.params_val,
-                                         ret.params.params_len,
-                                         REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
-                                         &params,
-                                         nparams) < 0)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) ret.params.params_val,
+                                  ret.params.params_len,
+                                  REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
+                                  &params,
+                                  nparams) < 0)
         goto cleanup;
 
     rv = 0;
@@ -3512,7 +3516,10 @@ remoteDomainSetBlkioParameters(virDomainPtr dom, virTypedParameterPtr params, in
     make_nonnull_domain(&args.dom, dom);
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_blkio_parameters_args, (char *)&args);
         goto done;
     }
@@ -3526,7 +3533,8 @@ remoteDomainSetBlkioParameters(virDomainPtr dom, virTypedParameterPtr params, in
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -3544,7 +3552,10 @@ remoteDomainSetBlockIoTune(virDomainPtr dom, const char *disk, virTypedParameter
     args.disk = (char *)disk;
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_block_io_tune_args, (char *)&args);
         goto done;
     }
@@ -3558,7 +3569,8 @@ remoteDomainSetBlockIoTune(virDomainPtr dom, const char *disk, virTypedParameter
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -3576,7 +3588,10 @@ remoteDomainSetInterfaceParameters(virDomainPtr dom, const char *device, virType
     args.device = (char *)device;
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_interface_parameters_args, (char *)&args);
         goto done;
     }
@@ -3590,7 +3605,8 @@ remoteDomainSetInterfaceParameters(virDomainPtr dom, const char *device, virType
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -3683,7 +3699,10 @@ remoteDomainSetMemoryParameters(virDomainPtr dom, virTypedParameterPtr params, i
     make_nonnull_domain(&args.dom, dom);
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_memory_parameters_args, (char *)&args);
         goto done;
     }
@@ -3697,7 +3716,8 @@ remoteDomainSetMemoryParameters(virDomainPtr dom, virTypedParameterPtr params, i
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -3769,7 +3789,10 @@ remoteDomainSetNumaParameters(virDomainPtr dom, virTypedParameterPtr params, int
     make_nonnull_domain(&args.dom, dom);
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_numa_parameters_args, (char *)&args);
         goto done;
     }
@@ -3783,7 +3806,8 @@ remoteDomainSetNumaParameters(virDomainPtr dom, virTypedParameterPtr params, int
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -3799,7 +3823,10 @@ remoteDomainSetSchedulerParameters(virDomainPtr dom, virTypedParameterPtr params
 
     make_nonnull_domain(&args.dom, dom);
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_scheduler_parameters_args, (char *)&args);
         goto done;
     }
@@ -3813,7 +3840,8 @@ remoteDomainSetSchedulerParameters(virDomainPtr dom, virTypedParameterPtr params
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -3830,7 +3858,10 @@ remoteDomainSetSchedulerParametersFlags(virDomainPtr dom, virTypedParameterPtr p
     make_nonnull_domain(&args.dom, dom);
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_domain_set_scheduler_parameters_flags_args, (char *)&args);
         goto done;
     }
@@ -3844,7 +3875,8 @@ remoteDomainSetSchedulerParametersFlags(virDomainPtr dom, virTypedParameterPtr p
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }
@@ -5582,7 +5614,10 @@ remoteNodeSetMemoryParameters(virConnectPtr conn, virTypedParameterPtr params, i
 
     args.flags = flags;
 
-    if (remoteSerializeTypedParameters(params, nparams, &args.params.params_val, &args.params.params_len) < 0) {
+    if (virTypedParamsSerialize(params, nparams,
+                                (virTypedParameterRemotePtr *) &args.params.params_val,
+                                &args.params.params_len,
+                                VIR_TYPED_PARAM_STRING_OKAY) < 0) {
         xdr_free((xdrproc_t)xdr_remote_node_set_memory_parameters_args, (char *)&args);
         goto done;
     }
@@ -5596,7 +5631,8 @@ remoteNodeSetMemoryParameters(virConnectPtr conn, virTypedParameterPtr params, i
     rv = 0;
 
 done:
-    remoteFreeTypedParameters(args.params.params_val, args.params.params_len);
+    virTypedParamsRemoteFree((virTypedParameterRemotePtr) args.params.params_val,
+                             args.params.params_len);
     remoteDriverUnlock(priv);
     return rv;
 }

@@ -1,7 +1,7 @@
 /*
  * qemu_domain.c: QEMU domain private state
  *
- * Copyright (C) 2006-2015 Red Hat, Inc.
+ * Copyright (C) 2006-2016 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -24,7 +24,9 @@
 #include <config.h>
 
 #include "qemu_domain.h"
+#include "qemu_alias.h"
 #include "qemu_command.h"
+#include "qemu_parse_command.h"
 #include "qemu_capabilities.h"
 #include "qemu_migration.h"
 #include "viralloc.h"
@@ -1035,6 +1037,25 @@ virDomainXMLNamespace virQEMUDriverDomainXMLNamespace = {
 
 
 static int
+qemuDomainDefAddImplicitInputDevice(virDomainDef *def)
+{
+    if (ARCH_IS_X86(def->os.arch)) {
+        if (virDomainDefMaybeAddInput(def,
+                                      VIR_DOMAIN_INPUT_TYPE_MOUSE,
+                                      VIR_DOMAIN_INPUT_BUS_PS2) < 0)
+            return -1;
+
+        if (virDomainDefMaybeAddInput(def,
+                                      VIR_DOMAIN_INPUT_TYPE_KBD,
+                                      VIR_DOMAIN_INPUT_BUS_PS2) < 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+
+static int
 qemuDomainDefAddDefaultDevices(virDomainDefPtr def,
                                virQEMUCapsPtr qemuCaps)
 {
@@ -1048,6 +1069,10 @@ qemuDomainDefAddDefaultDevices(virDomainDefPtr def,
     bool addDefaultUSBMouse = false;
     bool addPanicDevice = false;
     int ret = -1;
+
+    /* add implicit input devices */
+    if (qemuDomainDefAddImplicitInputDevice(def) < 0)
+        goto cleanup;
 
     /* Add implicit PCI root controller if the machine has one */
     switch (def->os.arch) {
@@ -1215,6 +1240,37 @@ qemuDomainDefAddDefaultDevices(virDomainDefPtr def,
 }
 
 
+/**
+ * qemuDomainDefEnableDefaultFeatures:
+ * @def: domain definition
+ *
+ * Make sure that features that should be enabled by default are actually
+ * enabled and configure default values related to those features.
+ */
+static void
+qemuDomainDefEnableDefaultFeatures(virDomainDefPtr def)
+{
+    switch (def->os.arch) {
+    case VIR_ARCH_ARMV7L:
+    case VIR_ARCH_AARCH64:
+        if (STREQ(def->os.machine, "virt") ||
+            STRPREFIX(def->os.machine, "virt-")) {
+            /* GIC is always available to ARM virt machines */
+            def->features[VIR_DOMAIN_FEATURE_GIC] = VIR_TRISTATE_SWITCH_ON;
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    /* Use the default GIC version if no version was specified */
+    if (def->features[VIR_DOMAIN_FEATURE_GIC] == VIR_TRISTATE_SWITCH_ON &&
+        def->gic_version == VIR_GIC_VERSION_NONE)
+        def->gic_version = VIR_GIC_VERSION_DEFAULT;
+}
+
+
 static int
 qemuCanonicalizeMachine(virDomainDefPtr def, virQEMUCapsPtr qemuCaps)
 {
@@ -1251,6 +1307,12 @@ qemuDomainDefPostParse(virDomainDefPtr def,
         return ret;
     }
 
+    if (!def->os.machine) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("missing machine type"));
+        return ret;
+    }
+
     /* check for emulator and create a default one if needed */
     if (!def->emulator &&
         !(def->emulator = virDomainDefGetDefaultEmulator(def, caps)))
@@ -1265,6 +1327,8 @@ qemuDomainDefPostParse(virDomainDefPtr def,
 
     if (qemuCanonicalizeMachine(def, qemuCaps) < 0)
         goto cleanup;
+
+    qemuDomainDefEnableDefaultFeatures(def);
 
     if (virSecurityManagerVerify(driver->securityManager, def) < 0)
         goto cleanup;
@@ -1466,7 +1530,7 @@ qemuDomainObjSaveJob(virQEMUDriverPtr driver, virDomainObjPtr obj)
     virQEMUDriverConfigPtr cfg = virQEMUDriverGetConfig(driver);
 
     if (virDomainObjIsActive(obj)) {
-        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, obj) < 0)
+        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, obj, driver->caps) < 0)
             VIR_WARN("Failed to save status on vm %s", obj->def->name);
     }
 
@@ -1736,7 +1800,7 @@ int qemuDomainObjBeginAsyncJob(virQEMUDriverPtr driver,
         return 0;
 }
 
-static int ATTRIBUTE_RETURN_CHECK
+int
 qemuDomainObjBeginNestedJob(virQEMUDriverPtr driver,
                             virDomainObjPtr obj,
                             qemuDomainAsyncJob asyncJob)
@@ -1875,11 +1939,8 @@ qemuDomainObjExitMonitorInternal(virQEMUDriverPtr driver,
     if (!hasRefs)
         priv->mon = NULL;
 
-    if (priv->job.active == QEMU_JOB_ASYNC_NESTED) {
-        qemuDomainObjResetJob(priv);
-        qemuDomainObjSaveJob(driver, obj);
-        virCondSignal(&priv->job.cond);
-    }
+    if (priv->job.active == QEMU_JOB_ASYNC_NESTED)
+        qemuDomainObjEndJob(driver, obj);
 }
 
 void qemuDomainObjEnterMonitor(virQEMUDriverPtr driver,
@@ -2137,7 +2198,7 @@ qemuDomainDefFormatBuf(virQEMUDriverPtr driver,
 
     }
 
-    ret = virDomainDefFormatInternal(def,
+    ret = virDomainDefFormatInternal(def, driver->caps,
                                      virDomainDefFormatConvertXMLFlags(flags),
                                      buf);
 
@@ -2582,6 +2643,7 @@ qemuFindQemuImgBinary(virQEMUDriverPtr driver)
 int
 qemuDomainSnapshotWriteMetadata(virDomainObjPtr vm,
                                 virDomainSnapshotObjPtr snapshot,
+                                virCapsPtr caps,
                                 char *snapshotDir)
 {
     char *newxml = NULL;
@@ -2592,7 +2654,7 @@ qemuDomainSnapshotWriteMetadata(virDomainObjPtr vm,
 
     virUUIDFormat(vm->def->uuid, uuidstr);
     newxml = virDomainSnapshotDefFormat(
-        uuidstr, snapshot->def,
+        uuidstr, snapshot->def, caps,
         virDomainDefFormatConvertXMLFlags(QEMU_DOMAIN_FORMAT_LIVE_FLAGS),
         1);
     if (newxml == NULL)
@@ -2752,7 +2814,7 @@ qemuDomainSnapshotDiscard(virQEMUDriverPtr driver,
                          snap->def->parent);
             } else {
                 parentsnap->def->current = true;
-                if (qemuDomainSnapshotWriteMetadata(vm, parentsnap,
+                if (qemuDomainSnapshotWriteMetadata(vm, parentsnap, driver->caps,
                                                     cfg->snapshotDir) < 0) {
                     VIR_WARN("failed to set parent snapshot '%s' as current",
                              snap->def->parent);
@@ -2777,9 +2839,9 @@ qemuDomainSnapshotDiscard(virQEMUDriverPtr driver,
 }
 
 /* Hash iterator callback to discard multiple snapshots.  */
-void qemuDomainSnapshotDiscardAll(void *payload,
-                                  const void *name ATTRIBUTE_UNUSED,
-                                  void *data)
+int qemuDomainSnapshotDiscardAll(void *payload,
+                                 const void *name ATTRIBUTE_UNUSED,
+                                 void *data)
 {
     virDomainSnapshotObjPtr snap = payload;
     virQEMUSnapRemovePtr curr = data;
@@ -2791,6 +2853,7 @@ void qemuDomainSnapshotDiscardAll(void *payload,
                                     curr->metadata_only);
     if (err && !curr->err)
         curr->err = err;
+    return 0;
 }
 
 int
@@ -2882,7 +2945,7 @@ qemuDomainSetFakeReboot(virQEMUDriverPtr driver,
 
     priv->fakeReboot = value;
 
-    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
         VIR_WARN("Failed to save status on vm %s", vm->def->name);
 
  cleanup:
@@ -4256,4 +4319,124 @@ qemuDomainGetVcpuPid(virDomainObjPtr vm,
         return 0;
 
     return priv->vcpupids[vcpu];
+}
+
+
+/**
+ * qemuDomainDetectVcpuPids:
+ * @driver: qemu driver data
+ * @vm: domain object
+ * @asyncJob: current asynchronous job type
+ *
+ * Updates vCPU thread ids in the private data of @vm.
+ *
+ * Returns number of detected vCPU threads on success, -1 on error and reports
+ * an appropriate error, -2 if the domain doesn't exist any more.
+ */
+int
+qemuDomainDetectVcpuPids(virQEMUDriverPtr driver,
+                         virDomainObjPtr vm,
+                         int asyncJob)
+{
+    pid_t *cpupids = NULL;
+    int ncpupids = 0;
+    qemuDomainObjPrivatePtr priv = vm->privateData;
+
+    /*
+     * Current QEMU *can* report info about host threads mapped
+     * to vCPUs, but it is not in a manner we can correctly
+     * deal with. The TCG CPU emulation does have a separate vCPU
+     * thread, but it runs every vCPU in that same thread. So it
+     * is impossible to setup different affinity per thread.
+     *
+     * What's more the 'query-cpus' command returns bizarre
+     * data for the threads. It gives the TCG thread for the
+     * vCPU 0, but for vCPUs 1-> N, it actually replies with
+     * the main process thread ID.
+     *
+     * The result is that when we try to set affinity for
+     * vCPU 1, it will actually change the affinity of the
+     * emulator thread :-( When you try to set affinity for
+     * vCPUs 2, 3.... it will fail if the affinity was
+     * different from vCPU 1.
+     *
+     * We *could* allow vcpu pinning with TCG, if we made the
+     * restriction that all vCPUs had the same mask. This would
+     * at least let us separate emulator from vCPUs threads, as
+     * we do for KVM. It would need some changes to our cgroups
+     * CPU layout though, and error reporting for the config
+     * restrictions.
+     *
+     * Just disable CPU pinning with TCG until someone wants
+     * to try to do this hard work.
+     */
+    if (vm->def->virtType == VIR_DOMAIN_VIRT_QEMU)
+        goto done;
+
+    if (qemuDomainObjEnterMonitorAsync(driver, vm, asyncJob) < 0)
+        return -1;
+    ncpupids = qemuMonitorGetCPUInfo(priv->mon, &cpupids);
+    if (qemuDomainObjExitMonitor(driver, vm) < 0) {
+        VIR_FREE(cpupids);
+        return -2;
+    }
+    /* failure to get the VCPU <-> PID mapping or to execute the query
+     * command will not be treated fatal as some versions of qemu don't
+     * support this command */
+    if (ncpupids <= 0) {
+        virResetLastError();
+        ncpupids = 0;
+        goto done;
+    }
+
+    if (ncpupids != virDomainDefGetVcpus(vm->def)) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       _("got wrong number of vCPU pids from QEMU monitor. "
+                         "got %d, wanted %d"),
+                       ncpupids, virDomainDefGetVcpus(vm->def));
+        VIR_FREE(cpupids);
+        return -1;
+    }
+
+ done:
+    VIR_FREE(priv->vcpupids);
+    priv->nvcpupids = ncpupids;
+    priv->vcpupids = cpupids;
+    return ncpupids;
+}
+
+
+bool
+qemuDomainSupportsNicdev(virDomainDefPtr def,
+                         virQEMUCapsPtr qemuCaps,
+                         virDomainNetDefPtr net)
+{
+    if (!virQEMUCapsGet(qemuCaps, QEMU_CAPS_DEVICE))
+        return false;
+
+    /* non-virtio ARM nics require legacy -net nic */
+    if (((def->os.arch == VIR_ARCH_ARMV7L) ||
+        (def->os.arch == VIR_ARCH_AARCH64)) &&
+        net->info.type != VIR_DOMAIN_DEVICE_ADDRESS_TYPE_VIRTIO_MMIO &&
+        net->info.type != VIR_DOMAIN_DEVICE_ADDRESS_TYPE_PCI)
+        return false;
+
+    return true;
+}
+
+bool
+qemuDomainSupportsNetdev(virDomainDefPtr def,
+                         virQEMUCapsPtr qemuCaps,
+                         virDomainNetDefPtr net)
+{
+    if (!qemuDomainSupportsNicdev(def, qemuCaps, net))
+        return false;
+    return virQEMUCapsGet(qemuCaps, QEMU_CAPS_NETDEV);
+}
+
+
+int
+qemuDomainNetVLAN(virDomainNetDefPtr def)
+{
+    return qemuDomainDeviceAliasIndex(&def->info, "net");
 }

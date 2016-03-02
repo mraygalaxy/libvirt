@@ -79,6 +79,33 @@ cleanup:
 
 
 
+static int adminDispatchConnectListServers(
+    virNetServerPtr server,
+    virNetServerClientPtr client,
+    virNetMessagePtr msg,
+    virNetMessageErrorPtr rerr,
+    admin_connect_list_servers_args *args,
+    admin_connect_list_servers_ret *ret);
+static int adminDispatchConnectListServersHelper(
+    virNetServerPtr server,
+    virNetServerClientPtr client,
+    virNetMessagePtr msg,
+    virNetMessageErrorPtr rerr,
+    void *args,
+    void *ret)
+{
+  int rv;
+  virThreadJobSet("adminDispatchConnectListServers");
+  VIR_DEBUG("server=%p client=%p msg=%p rerr=%p args=%p ret=%p",
+            server, client, msg, rerr, args, ret);
+  rv = adminDispatchConnectListServers(server, client, msg, rerr, args, ret);
+  virThreadJobClear(rv);
+  return rv;
+}
+/* adminDispatchConnectListServers body has to be implemented manually */
+
+
+
 static int adminDispatchConnectOpen(
     virNetServerPtr server,
     virNetServerClientPtr client,
@@ -141,6 +168,15 @@ virNetServerProgramProc adminProcs[] = {
    (xdrproc_t)xdr_admin_connect_get_lib_version_ret,
    true,
    0
+},
+{ /* Method ConnectListServers => 4 */
+   adminDispatchConnectListServersHelper,
+   sizeof(admin_connect_list_servers_args),
+   (xdrproc_t)xdr_admin_connect_list_servers_args,
+   sizeof(admin_connect_list_servers_ret),
+   (xdrproc_t)xdr_admin_connect_list_servers_ret,
+   true,
+   1
 },
 };
 size_t adminNProcs = ARRAY_CARDINALITY(adminProcs);

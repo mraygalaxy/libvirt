@@ -3025,10 +3025,11 @@ static int remoteDispatchDomainBlockCopy(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_BLOCK_COPY_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_BLOCK_COPY_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainBlockCopy(dom, args->path, args->destxml, params, nparams, args->flags) < 0)
@@ -8662,7 +8663,7 @@ static int remoteDispatchDomainScreenshot(
 
     if (VIR_ALLOC(mime_p) < 0)
         goto cleanup;
-    
+
     if (VIR_STRDUP(*mime_p, mime) < 0)
         goto cleanup;
 
@@ -8899,10 +8900,11 @@ static int remoteDispatchDomainSetBlkioParameters(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_BLKIO_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_BLKIO_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetBlkioParameters(dom, params, nparams, args->flags) < 0)
@@ -8964,10 +8966,11 @@ static int remoteDispatchDomainSetBlockIoTune(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_BLOCK_IO_TUNE_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_BLOCK_IO_TUNE_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetBlockIoTune(dom, args->disk, params, nparams, args->flags) < 0)
@@ -9029,10 +9032,11 @@ static int remoteDispatchDomainSetInterfaceParameters(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_INTERFACE_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_INTERFACE_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetInterfaceParameters(dom, args->device, params, nparams, args->flags) < 0)
@@ -9271,10 +9275,11 @@ static int remoteDispatchDomainSetMemoryParameters(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_MEMORY_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_MEMORY_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetMemoryParameters(dom, params, nparams, args->flags) < 0)
@@ -9455,10 +9460,11 @@ static int remoteDispatchDomainSetNumaParameters(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_NUMA_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_NUMA_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetNumaParameters(dom, params, nparams, args->flags) < 0)
@@ -9520,10 +9526,11 @@ static int remoteDispatchDomainSetSchedulerParameters(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetSchedulerParameters(dom, params, nparams) < 0)
@@ -9585,10 +9592,11 @@ static int remoteDispatchDomainSetSchedulerParametersFlags(
     if (!(dom = get_nonnull_domain(priv->conn, args->dom)))
         goto cleanup;
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_DOMAIN_SCHEDULER_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virDomainSetSchedulerParametersFlags(dom, params, nparams, args->flags) < 0)
@@ -13623,10 +13631,11 @@ static int remoteDispatchNodeSetMemoryParameters(
         goto cleanup;
     }
 
-    if ((params = remoteDeserializeTypedParameters(args->params.params_val,
-                                                   args->params.params_len,
-                                                   REMOTE_NODE_MEMORY_PARAMETERS_MAX,
-                                                   &nparams)) == NULL)
+    if (virTypedParamsDeserialize((virTypedParameterRemotePtr) args->params.params_val,
+                                  args->params.params_len,
+                                  REMOTE_NODE_MEMORY_PARAMETERS_MAX,
+                                  &params,
+                                  &nparams) < 0)
         goto cleanup;
 
     if (virNodeSetMemoryParameters(priv->conn, params, nparams, args->flags) < 0)
@@ -19567,6 +19576,15 @@ virNetServerProgramProc remoteProcs[] = {
    (xdrproc_t)xdr_remote_domain_rename_args,
    sizeof(remote_domain_rename_ret),
    (xdrproc_t)xdr_remote_domain_rename_ret,
+   true,
+   0
+},
+{ /* Async event DomainEventCallbackMigrationIteration => 359 */
+   NULL,
+   0,
+   (xdrproc_t)xdr_void,
+   0,
+   (xdrproc_t)xdr_void,
    true,
    0
 },

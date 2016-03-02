@@ -32,11 +32,19 @@
  */
 const ADMIN_STRING_MAX = 4194304;
 
+/* Upper limit on list of servers */
+const ADMIN_SERVER_LIST_MAX = 16384;
+
 /* A long string, which may NOT be NULL. */
 typedef string admin_nonnull_string<ADMIN_STRING_MAX>;
 
 /* A long string, which may be NULL. */
 typedef admin_nonnull_string *admin_string;
+
+/* A server which may NOT be NULL */
+struct admin_nonnull_server {
+    admin_nonnull_string name;
+};
 
 /*----- Protocol. -----*/
 struct admin_connect_open_args {
@@ -45,6 +53,16 @@ struct admin_connect_open_args {
 
 struct admin_connect_get_lib_version_ret {
     unsigned hyper libVer;
+};
+
+struct admin_connect_list_servers_args {
+    unsigned int need_results;
+    unsigned int flags;
+};
+
+struct admin_connect_list_servers_ret {
+    admin_nonnull_server servers<ADMIN_SERVER_LIST_MAX>;
+    unsigned int ret;
 };
 
 /* Define the program number, protocol version and procedure numbers here. */
@@ -82,5 +100,11 @@ enum admin_procedure {
     /**
      * @generate: both
      */
-    ADMIN_PROC_CONNECT_GET_LIB_VERSION = 3
+    ADMIN_PROC_CONNECT_GET_LIB_VERSION = 3,
+
+    /**
+      * @generate: none
+      * @priority: high
+      */
+    ADMIN_PROC_CONNECT_LIST_SERVERS = 4
 };

@@ -54,9 +54,6 @@ int virtTestRun(const char *title,
 int virtTestLoadFile(const char *file, char **buf);
 int virtTestCaptureProgramOutput(const char *const argv[], char **buf, int maxlen);
 
-int virtTestClearLineRegex(const char *pattern,
-                           char *string);
-
 void virtTestClearCommandPath(char *cmdset);
 
 int virtTestDifference(FILE *stream,
@@ -137,10 +134,15 @@ int virtTestMain(int argc,
 virCapsPtr virTestGenericCapsInit(void);
 virDomainXMLOptionPtr virTestGenericDomainXMLConfInit(void);
 
+typedef int (*testCompareDomXML2XMLPreFormatCallback)(virDomainDefPtr def,
+                                                      const void *opaque);
 int testCompareDomXML2XMLFiles(virCapsPtr caps,
                                virDomainXMLOptionPtr xmlopt,
                                const char *inxml,
                                const char *outfile,
-                               bool live);
+                               bool live,
+                               testCompareDomXML2XMLPreFormatCallback cb,
+                               const void *opaque,
+                               unsigned int parseFlags);
 
 #endif /* __VIT_TEST_UTILS_H__ */

@@ -37,9 +37,12 @@
 
 virNetDaemonPtr virNetDaemonNew(void);
 
-int virNetDaemonAddServer(virNetDaemonPtr dmn, virNetServerPtr);
+int virNetDaemonAddServer(virNetDaemonPtr dmn,
+                          const char *serverName,
+                          virNetServerPtr srv);
 
 virNetServerPtr virNetDaemonAddServerPostExec(virNetDaemonPtr dmn,
+                                              const char *serverName,
                                               virNetServerClientPrivNew clientPrivNew,
                                               virNetServerClientPrivNewPostExecRestart clientPrivNewPostExecRestart,
                                               virNetServerClientPrivPreExecRestart clientPrivPreExecRestart,
@@ -79,6 +82,7 @@ void virNetDaemonClose(virNetDaemonPtr dmn);
 bool virNetDaemonHasClients(virNetDaemonPtr dmn);
 
 virNetServerPtr virNetDaemonGetServer(virNetDaemonPtr dmn,
-                                      int subServerID);
+                                      const char *serverName);
+ssize_t virNetDaemonGetServerNames(virNetDaemonPtr dmn, const char ***servers);
 
 #endif /* __VIR_NET_DAEMON_H__ */

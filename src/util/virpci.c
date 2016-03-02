@@ -1106,26 +1106,37 @@ virPCIDeviceUnbindFromStub(virPCIDevicePtr dev)
 
     if (!driver) {
         /* The device is not bound to any driver and we are almost done. */
+        VIR_DEBUG("PCI device %s is not bound to any driver", dev->name);
         goto reprobe;
     }
 
-    if (!dev->unbind_from_stub)
+    if (!dev->unbind_from_stub) {
+        VIR_DEBUG("Unbind from stub skipped for PCI device %s", dev->name);
         goto remove_slot;
+    }
 
     /* If the device isn't bound to a known stub, skip the unbind. */
     if (virPCIStubDriverTypeFromString(driver) < 0 ||
-        virPCIStubDriverTypeFromString(driver) == VIR_PCI_STUB_DRIVER_NONE)
+        virPCIStubDriverTypeFromString(driver) == VIR_PCI_STUB_DRIVER_NONE) {
+        VIR_DEBUG("Unbind from stub skipped for PCI device %s because of "
+                  "unknown stub driver", dev->name);
         goto remove_slot;
+    }
 
-    VIR_DEBUG("Found stub driver %s", driver);
+    VIR_DEBUG("Unbinding PCI device %s from stub driver %s",
+              dev->name, driver);
 
     if (virPCIDeviceUnbind(dev) < 0)
         goto cleanup;
     dev->unbind_from_stub = false;
 
  remove_slot:
-    if (!dev->remove_slot)
+    if (!dev->remove_slot) {
+        VIR_DEBUG("Slot removal skipped for PCI device %s", dev->name);
         goto reprobe;
+    }
+
+    VIR_DEBUG("Removing slot for PCI device %s", dev->name);
 
     /* Xen's pciback.ko wants you to use remove_slot on the specific device */
     if (!(path = virPCIDriverFile(driver, "remove_slot")))
@@ -1141,9 +1152,12 @@ virPCIDeviceUnbindFromStub(virPCIDevicePtr dev)
 
  reprobe:
     if (!dev->reprobe) {
+        VIR_DEBUG("Reprobe skipped for PCI device %s", dev->name);
         result = 0;
         goto cleanup;
     }
+
+    VIR_DEBUG("Reprobing for PCI device %s", dev->name);
 
     /* Trigger a re-probe of the device is not in the stub's dynamic
      * ID table. If the stub is available, but 'remove_id' isn't
@@ -1693,7 +1707,7 @@ void virPCIDeviceSetManaged(virPCIDevicePtr dev, bool managed)
     dev->managed = managed;
 }
 
-unsigned int
+bool
 virPCIDeviceGetManaged(virPCIDevicePtr dev)
 {
     return dev->managed;
@@ -1711,7 +1725,7 @@ virPCIDeviceGetStubDriver(virPCIDevicePtr dev)
     return dev->stubDriver;
 }
 
-unsigned int
+bool
 virPCIDeviceGetUnbindFromStub(virPCIDevicePtr dev)
 {
     return dev->unbind_from_stub;
@@ -1723,7 +1737,7 @@ virPCIDeviceSetUnbindFromStub(virPCIDevicePtr dev, bool unbind)
     dev->unbind_from_stub = unbind;
 }
 
-unsigned int
+bool
 virPCIDeviceGetRemoveSlot(virPCIDevicePtr dev)
 {
     return dev->remove_slot;
@@ -1735,7 +1749,7 @@ virPCIDeviceSetRemoveSlot(virPCIDevicePtr dev, bool remove_slot)
     dev->remove_slot = remove_slot;
 }
 
-unsigned int
+bool
 virPCIDeviceGetReprobe(virPCIDevicePtr dev)
 {
     return dev->reprobe;
@@ -1770,14 +1784,6 @@ virPCIDeviceGetUsedBy(virPCIDevicePtr dev,
     *drv_name = dev->used_by_drvname;
     *dom_name = dev->used_by_domname;
 }
-
-void virPCIDeviceReattachInit(virPCIDevicePtr pci)
-{
-    pci->unbind_from_stub = true;
-    pci->remove_slot = true;
-    pci->reprobe = true;
-}
-
 
 virPCIDeviceListPtr
 virPCIDeviceListNew(void)

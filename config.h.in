@@ -2397,9 +2397,9 @@
    context parameters */
 #undef VIR_SELINUX_CTX_CONST
 
-/* Define to the absolute path of a shell that does not truncate on <>
-   redirection, if /bin/sh does not fit the bill */
-#undef VIR_WRAPPER_SHELL
+/* Define to empty or 'const' depending on how SELinux qualifies its
+   selabel_open parameter */
+#undef VIR_SELINUX_OPEN_CONST
 
 /* Define to 1 if unsetenv returns void instead of int. */
 #undef VOID_UNSETENV

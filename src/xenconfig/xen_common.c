@@ -39,6 +39,7 @@
 #include "virstring.h"
 #include "xen_common.h"
 
+#define VIR_FROM_THIS VIR_FROM_XEN
 
 /*
  * Convenience method to grab a long int from the config file object
@@ -1825,6 +1826,28 @@ xenFormatConfigCommon(virConfPtr conf,
         return -1;
 
     if (xenFormatSound(conf, def) < 0)
+        return -1;
+
+    return 0;
+}
+
+
+int
+xenDomainDefAddImplicitInputDevice(virDomainDefPtr def)
+{
+    virDomainInputBus implicitInputBus = VIR_DOMAIN_INPUT_BUS_XEN;
+
+    if (def->os.type == VIR_DOMAIN_OSTYPE_HVM)
+        implicitInputBus = VIR_DOMAIN_INPUT_BUS_PS2;
+
+    if (virDomainDefMaybeAddInput(def,
+                                  VIR_DOMAIN_INPUT_TYPE_MOUSE,
+                                  implicitInputBus) < 0)
+        return -1;
+
+    if (virDomainDefMaybeAddInput(def,
+                                  VIR_DOMAIN_INPUT_TYPE_KBD,
+                                  implicitInputBus) < 0)
         return -1;
 
     return 0;

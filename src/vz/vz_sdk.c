@@ -346,31 +346,37 @@ prlsdkGetDomainIds(PRL_HANDLE sdkdom,
     PRL_UINT32 len;
     PRL_RESULT pret;
 
-    len = 0;
-    /* get name length */
-    pret = PrlVmCfg_GetName(sdkdom, NULL, &len);
-    prlsdkCheckRetGoto(pret, error);
+    if (name) {
+        len = 0;
+        *name = NULL;
+        /* get name length */
+        pret = PrlVmCfg_GetName(sdkdom, NULL, &len);
+        prlsdkCheckRetGoto(pret, error);
 
-    if (VIR_ALLOC_N(*name, len) < 0)
-        goto error;
+        if (VIR_ALLOC_N(*name, len) < 0)
+            goto error;
 
-    PrlVmCfg_GetName(sdkdom, *name, &len);
-    prlsdkCheckRetGoto(pret, error);
+        pret = PrlVmCfg_GetName(sdkdom, *name, &len);
+        prlsdkCheckRetGoto(pret, error);
+    }
 
-    len = sizeof(uuidstr);
-    PrlVmCfg_GetUuid(sdkdom, uuidstr, &len);
-    prlsdkCheckRetGoto(pret, error);
+    if (uuid) {
+        len = sizeof(uuidstr);
+        pret = PrlVmCfg_GetUuid(sdkdom, uuidstr, &len);
+        prlsdkCheckRetGoto(pret, error);
 
-    if (prlsdkUUIDParse(uuidstr, uuid) < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                       _("Domain UUID is malformed or empty"));
-        goto error;
+        if (prlsdkUUIDParse(uuidstr, uuid) < 0) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                           _("Domain UUID is malformed or empty"));
+            goto error;
+        }
     }
 
     return 0;
 
  error:
-    VIR_FREE(*name);
+    if (name)
+        VIR_FREE(*name);
     return -1;
 }
 
@@ -402,7 +408,7 @@ prlsdkGetDomainState(PRL_HANDLE sdkdom, VIRTUAL_MACHINE_STATE_PTR vmState)
     return ret;
 }
 
-static void
+void
 prlsdkDomObjFreePrivate(void *p)
 {
     vzDomObjPtr pdom = p;
@@ -413,7 +419,6 @@ prlsdkDomObjFreePrivate(void *p)
     PrlHandle_Free(pdom->sdkdom);
     PrlHandle_Free(pdom->cache.stats);
     virCondDestroy(&pdom->cache.cond);
-    VIR_FREE(pdom->uuid);
     VIR_FREE(pdom->home);
     VIR_FREE(p);
 };
@@ -1236,61 +1241,58 @@ prlsdkConvertCpuMode(PRL_HANDLE sdkdom, virDomainDefPtr def)
     return -1;
 }
 
-/*
- * This function retrieves information about domain.
- * If the domains is already in the domains list
- * privconn->domains, then locked 'olddom' must be
- * provided. If the domains must be added to the list,
- * olddom must be NULL.
- *
- * The function return a pointer to a locked virDomainObj.
- */
 static virDomainObjPtr
-prlsdkLoadDomain(vzConnPtr privconn,
-                 PRL_HANDLE sdkdom,
-                 virDomainObjPtr olddom)
+prlsdkNewDomainByHandle(vzConnPtr privconn, PRL_HANDLE sdkdom)
 {
     virDomainObjPtr dom = NULL;
+    unsigned char uuid[VIR_UUID_BUFLEN];
+    char *name = NULL;
+
+    if (prlsdkGetDomainIds(sdkdom, &name, uuid) < 0)
+        goto cleanup;
+
+    if (!(dom = vzNewDomain(privconn, name, uuid)))
+        goto cleanup;
+
+    if (prlsdkLoadDomain(privconn, dom) < 0) {
+        virDomainObjListRemove(privconn->domains, dom);
+        dom = NULL;
+        goto cleanup;
+    }
+
+ cleanup:
+    VIR_FREE(name);
+    return dom;
+}
+
+int
+prlsdkLoadDomain(vzConnPtr privconn, virDomainObjPtr dom)
+{
     virDomainDefPtr def = NULL;
     vzDomObjPtr pdom = NULL;
     VIRTUAL_MACHINE_STATE domainState;
+    char *home = NULL;
 
     PRL_UINT32 buflen = 0;
     PRL_RESULT pret;
     PRL_UINT32 ram;
     PRL_UINT32 envId;
     PRL_VM_AUTOSTART_OPTION autostart;
+    PRL_HANDLE sdkdom = PRL_INVALID_HANDLE;
 
     virCheckNonNullArgGoto(privconn, error);
-    virCheckNonNullArgGoto(sdkdom, error);
+    virCheckNonNullArgGoto(dom, error);
+
+    pdom = dom->privateData;
+    sdkdom = prlsdkSdkDomainLookupByUUID(privconn, dom->def->uuid);
+    if (sdkdom == PRL_INVALID_HANDLE)
+        return -1;
 
     if (!(def = virDomainDefNew()))
         goto error;
 
-    if (!olddom) {
-        if (VIR_ALLOC(pdom) < 0)
-            goto error;
-    } else {
-        pdom = olddom->privateData;
-    }
-
-    if (STREQ(privconn->drivername, "vz"))
-        def->virtType = VIR_DOMAIN_VIRT_VZ;
-    else
-        def->virtType = VIR_DOMAIN_VIRT_PARALLELS;
-
-    def->id = -1;
-
-    /* we will remove this field in the near future, so let's set it
-     * to NULL temporarily */
-    pdom->uuid = NULL;
-
-    pdom->cache.stats = PRL_INVALID_HANDLE;
-    pdom->cache.count = -1;
-    if (virCondInit(&pdom->cache.cond) < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR, "%s", _("cannot initialize condition"));
-        goto error;
-    }
+    def->virtType = dom->def->virtType;
+    def->id = dom->def->id;
 
     if (prlsdkGetDomainIds(sdkdom, &def->name, def->uuid) < 0)
         goto error;
@@ -1323,29 +1325,33 @@ prlsdkLoadDomain(vzConnPtr privconn,
 
     pret = PrlVmCfg_GetEnvId(sdkdom, &envId);
     prlsdkCheckRetGoto(pret, error);
-    pdom->id = envId;
 
     buflen = 0;
     pret = PrlVmCfg_GetHomePath(sdkdom, NULL, &buflen);
     prlsdkCheckRetGoto(pret, error);
 
-    VIR_FREE(pdom->home);
-    if (VIR_ALLOC_N(pdom->home, buflen) < 0)
+    if (VIR_ALLOC_N(home, buflen) < 0)
         goto error;
 
-    pret = PrlVmCfg_GetHomePath(sdkdom, pdom->home, &buflen);
+    pret = PrlVmCfg_GetHomePath(sdkdom, home, &buflen);
     prlsdkCheckRetGoto(pret, error);
 
-    /* For VMs pdom->home is actually /directory/config.pvs */
+    /* For VMs home is actually /directory/config.pvs */
     if (!IS_CT(def)) {
         /* Get rid of /config.pvs in path string */
-        char *s = strrchr(pdom->home, '/');
+        char *s = strrchr(home, '/');
         if (s)
             *s = '\0';
     }
 
     pret = PrlVmCfg_GetAutoStart(sdkdom, &autostart);
     prlsdkCheckRetGoto(pret, error);
+    if (autostart != PAO_VM_START_ON_LOAD &&
+        autostart != PAO_VM_START_MANUAL) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       _("Unknown autostart mode: %X"), autostart);
+        goto error;
+    }
 
     if (prlsdkGetDomainState(sdkdom, &domainState) < 0)
         goto error;
@@ -1368,65 +1374,35 @@ prlsdkLoadDomain(vzConnPtr privconn,
             goto error;
     }
 
-    if (olddom) {
-        /* assign new virDomainDef without any checks */
-        /* we can't use virDomainObjAssignDef, because it checks
-         * for state and domain name */
-        dom = olddom;
-        virDomainDefFree(dom->def);
-        dom->def = def;
-    } else {
-        if (!(dom = virDomainObjListAdd(privconn->domains, def,
-                                        privconn->xmlopt,
-                                        0, NULL)))
-            goto error;
-    }
-    /* dom is locked here */
-
-    dom->privateData = pdom;
-    dom->privateDataFreeFunc = prlsdkDomObjFreePrivate;
-    dom->persistent = 1;
-
-    switch (autostart) {
-    case PAO_VM_START_ON_LOAD:
-        dom->autostart = 1;
-        break;
-    case PAO_VM_START_MANUAL:
-        dom->autostart = 0;
-        break;
-    default:
-        virReportError(VIR_ERR_INTERNAL_ERROR,
-                       _("Unknown autostart mode: %X"), autostart);
-        goto error;
-    }
-
     if (prlsdkConvertDomainState(domainState, envId, dom) < 0)
         goto error;
 
+    /* assign new virDomainDef without any checks
+     * we can't use virDomainObjAssignDef, because it checks
+     * for state and domain name */
+    virDomainDefFree(dom->def);
+    dom->def = def;
+    pdom->id = envId;
+    VIR_FREE(pdom->home);
+    pdom->home = home;
+
     if (!pdom->sdkdom) {
-        pret = PrlHandle_AddRef(sdkdom);
-        prlsdkCheckRetGoto(pret, error);
+        PrlHandle_AddRef(sdkdom);
         pdom->sdkdom = sdkdom;
     }
 
-    return dom;
+    if (autostart == PAO_VM_START_ON_LOAD)
+        dom->autostart = 1;
+    else
+        dom->autostart = 0;
+
+    PrlHandle_Free(sdkdom);
+    return 0;
  error:
-    if (dom && !olddom) {
-        /* Domain isn't persistent means that we haven't yet set
-         * prlsdkDomObjFreePrivate and should call it manually
-         */
-        if (!dom->persistent)
-            prlsdkDomObjFreePrivate(pdom);
-
-        virDomainObjListRemove(privconn->domains, dom);
-    }
-    /* Delete newly allocated def only if we haven't assigned it to domain
-     * Otherwise we will end up with domain having invalid def within it
-     */
-    if (!dom)
-        virDomainDefFree(def);
-
-    return NULL;
+    PrlHandle_Free(sdkdom);
+    VIR_FREE(home);
+    virDomainDefFree(def);
+    return -1;
 }
 
 int
@@ -1434,7 +1410,7 @@ prlsdkLoadDomains(vzConnPtr privconn)
 {
     PRL_HANDLE job = PRL_INVALID_HANDLE;
     PRL_HANDLE result;
-    PRL_HANDLE sdkdom;
+    PRL_HANDLE sdkdom = PRL_INVALID_HANDLE;
     PRL_UINT32 paramsCount;
     PRL_RESULT pret;
     size_t i = 0;
@@ -1450,63 +1426,36 @@ prlsdkLoadDomains(vzConnPtr privconn)
 
     for (i = 0; i < paramsCount; i++) {
         pret = PrlResult_GetParamByIndex(result, i, &sdkdom);
-        if (PRL_FAILED(pret)) {
-            logPrlError(pret);
-            PrlHandle_Free(sdkdom);
-            goto error;
-        }
+        prlsdkCheckRetGoto(pret, error);
 
-        dom = prlsdkLoadDomain(privconn, sdkdom, NULL);
+        if (!(dom = prlsdkNewDomainByHandle(privconn, sdkdom)))
+            goto error;
+
+        virObjectUnlock(dom);
         PrlHandle_Free(sdkdom);
-
-        if (!dom)
-            goto error;
-        else
-            virObjectUnlock(dom);
+        sdkdom = PRL_INVALID_HANDLE;
     }
 
     PrlHandle_Free(result);
     return 0;
 
  error:
+    PrlHandle_Free(sdkdom);
     PrlHandle_Free(result);
     return -1;
-}
-
-virDomainObjPtr
-prlsdkAddDomain(vzConnPtr privconn, const unsigned char *uuid)
-{
-    PRL_HANDLE sdkdom = PRL_INVALID_HANDLE;
-    virDomainObjPtr dom;
-
-    dom = virDomainObjListFindByUUID(privconn->domains, uuid);
-    if (dom) {
-        /* domain is already in the list */
-        return dom;
-    }
-
-    sdkdom = prlsdkSdkDomainLookupByUUID(privconn, uuid);
-    if (sdkdom == PRL_INVALID_HANDLE)
-        return NULL;
-
-    dom = prlsdkLoadDomain(privconn, sdkdom, NULL);
-    PrlHandle_Free(sdkdom);
-    return dom;
 }
 
 int
 prlsdkUpdateDomain(vzConnPtr privconn, virDomainObjPtr dom)
 {
     PRL_HANDLE job;
-    virDomainObjPtr retdom = NULL;
     vzDomObjPtr pdom = dom->privateData;
 
     job = PrlVm_RefreshConfig(pdom->sdkdom);
     if (waitJob(job))
         return -1;
 
-    retdom = prlsdkLoadDomain(privconn, pdom->sdkdom, dom);
-    return retdom ? 0 : -1;
+    return prlsdkLoadDomain(privconn, dom);
 }
 
 static int prlsdkSendEvent(vzConnPtr privconn,
@@ -1623,15 +1572,25 @@ prlsdkHandleVmAddedEvent(vzConnPtr privconn,
                          unsigned char *uuid)
 {
     virDomainObjPtr dom = NULL;
+    PRL_HANDLE sdkdom = PRL_INVALID_HANDLE;
 
-    dom = prlsdkAddDomain(privconn, uuid);
-    if (dom == NULL)
-        return;
+    dom = virDomainObjListFindByUUID(privconn->domains, uuid);
+    if (!dom) {
+        sdkdom = prlsdkSdkDomainLookupByUUID(privconn, uuid);
+        if (sdkdom == PRL_INVALID_HANDLE)
+            goto cleanup;
+
+        if (!(dom = prlsdkNewDomainByHandle(privconn, sdkdom)))
+            goto cleanup;
+    }
 
     prlsdkSendEvent(privconn, dom, VIR_DOMAIN_EVENT_DEFINED,
                     VIR_DOMAIN_EVENT_DEFINED_ADDED);
 
-    virObjectUnlock(dom);
+ cleanup:
+    if (dom)
+        virObjectUnlock(dom);
+    PrlHandle_Free(sdkdom);
     return;
 }
 
@@ -1957,14 +1916,14 @@ prlsdkCheckUnsupportedParams(PRL_HANDLE sdkdom, virDomainDefPtr def)
         return -1;
     }
 
-    if (def->cputune.vcpupin) {
-        for (i = 0; i < virDomainDefGetVcpus(def); i++) {
-            if (!virBitmapEqual(def->cpumask,
-                                def->cputune.vcpupin[i]->cpumask)) {
-                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,
-                               "%s", _("vcpupin cpumask differs from default cpumask"));
-                return -1;
-            }
+    for (i = 0; i < virDomainDefGetVcpusMax(def); i++) {
+        virDomainVcpuInfoPtr vcpu = virDomainDefGetVcpu(def, i);
+
+        if (vcpu->cpumask &&
+            !virBitmapEqual(def->cpumask, vcpu->cpumask)) {
+            virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
+                           _("vcpupin cpumask differs from default cpumask"));
+            return -1;
         }
     }
 

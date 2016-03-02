@@ -59,6 +59,7 @@ virCapabilitiesGetCpusForNodemask;
 virCapabilitiesHostSecModelAddBaseLabel;
 virCapabilitiesNew;
 virCapabilitiesSetHostCPU;
+virCapabilitiesSetNetPrefix;
 
 
 # conf/cpu_conf.h
@@ -152,6 +153,8 @@ virDiskNameToIndex;
 virDomainActualNetDefFree;
 virDomainBlockedReasonTypeFromString;
 virDomainBlockedReasonTypeToString;
+virDomainBootTypeFromString;
+virDomainBootTypeToString;
 virDomainCapabilitiesPolicyTypeToString;
 virDomainCapsFeatureTypeToString;
 virDomainChrConsoleTargetTypeFromString;
@@ -215,6 +218,7 @@ virDomainDefFree;
 virDomainDefGetDefaultEmulator;
 virDomainDefGetMemoryActual;
 virDomainDefGetMemoryInitial;
+virDomainDefGetOnlineVcpumap;
 virDomainDefGetSecurityLabelDef;
 virDomainDefGetVcpu;
 virDomainDefGetVcpus;
@@ -253,7 +257,7 @@ virDomainDiskByName;
 virDomainDiskCacheTypeFromString;
 virDomainDiskCacheTypeToString;
 virDomainDiskDefAssignAddress;
-virDomainDiskDefDstDuplicates;
+virDomainDiskDefCheckDuplicateInfo;
 virDomainDiskDefForeachPath;
 virDomainDiskDefFree;
 virDomainDiskDefNew;
@@ -341,7 +345,7 @@ virDomainIOThreadIDAdd;
 virDomainIOThreadIDDefFree;
 virDomainIOThreadIDDel;
 virDomainIOThreadIDFind;
-virDomainIOThreadSchedDelId;
+virDomainIOThreadIDMap;
 virDomainKeyWrapCipherNameTypeFromString;
 virDomainKeyWrapCipherNameTypeToString;
 virDomainLeaseDefFree;
@@ -415,12 +419,6 @@ virDomainOSTypeToString;
 virDomainParseMemory;
 virDomainPausedReasonTypeFromString;
 virDomainPausedReasonTypeToString;
-virDomainPinAdd;
-virDomainPinDefArrayFree;
-virDomainPinDefCopy;
-virDomainPinDefFree;
-virDomainPinDel;
-virDomainPinFind;
 virDomainPMSuspendedReasonTypeFromString;
 virDomainPMSuspendedReasonTypeToString;
 virDomainRedirdevBusTypeFromString;
@@ -514,6 +512,8 @@ virDomainEventLifecycleNew;
 virDomainEventLifecycleNewFromDef;
 virDomainEventLifecycleNewFromDom;
 virDomainEventLifecycleNewFromObj;
+virDomainEventMigrationIterationNewFromDom;
+virDomainEventMigrationIterationNewFromObj;
 virDomainEventPMSuspendDiskNewFromDom;
 virDomainEventPMSuspendDiskNewFromObj;
 virDomainEventPMSuspendNewFromDom;
@@ -889,8 +889,7 @@ virDomainObjListNew;
 virDomainObjListNumOfDomains;
 virDomainObjListRemove;
 virDomainObjListRemoveLocked;
-virDomainObjListRenameAddNew;
-virDomainObjListRenameRemove;
+virDomainObjListRename;
 
 
 # cpu/cpu.h
@@ -1156,6 +1155,7 @@ virBitmapSetAll;
 virBitmapSetBit;
 virBitmapSize;
 virBitmapString;
+virBitmapSubtract;
 virBitmapToData;
 virBitmapToDataBuf;
 
@@ -1189,15 +1189,14 @@ virCgroupAddTask;
 virCgroupAddTaskController;
 virCgroupAllowAllDevices;
 virCgroupAllowDevice;
-virCgroupAllowDeviceMajor;
 virCgroupAllowDevicePath;
 virCgroupAvailable;
+virCgroupBindMount;
 virCgroupControllerAvailable;
 virCgroupControllerTypeFromString;
 virCgroupControllerTypeToString;
 virCgroupDenyAllDevices;
 virCgroupDenyDevice;
-virCgroupDenyDeviceMajor;
 virCgroupDenyDevicePath;
 virCgroupDetectMountsFromFile;
 virCgroupFree;
@@ -1229,7 +1228,6 @@ virCgroupGetMemSwapUsage;
 virCgroupGetPercpuStats;
 virCgroupHasController;
 virCgroupHasEmptyTasks;
-virCgroupIsolateMount;
 virCgroupKill;
 virCgroupKillPainfully;
 virCgroupKillRecursive;
@@ -1370,6 +1368,7 @@ virDBusHasSystemBus;
 virDBusMessageDecode;
 virDBusMessageEncode;
 virDBusMessageRead;
+virDBusMessageUnref;
 virDBusSetSharedBus;
 
 
@@ -1509,6 +1508,11 @@ virFirewallSetBackend;
 virFirewallSetLockOverride;
 virFirewallStartRollback;
 virFirewallStartTransaction;
+
+
+# util/virgic.h
+virGICVersionTypeFromString;
+virGICVersionTypeToString;
 
 
 # util/virhash.h
@@ -1849,6 +1853,8 @@ virNetDevMacVLanCreate;
 virNetDevMacVLanCreateWithVPortProfile;
 virNetDevMacVLanDelete;
 virNetDevMacVLanDeleteWithVPortProfile;
+virNetDevMacVLanReleaseName;
+virNetDevMacVLanReserveName;
 virNetDevMacVLanRestartWithVPortProfile;
 virNetDevMacVLanVPortProfileRegisterCallback;
 
@@ -1987,7 +1993,6 @@ virPCIDeviceListSteal;
 virPCIDeviceListStealIndex;
 virPCIDeviceNew;
 virPCIDeviceReattach;
-virPCIDeviceReattachInit;
 virPCIDeviceReset;
 virPCIDeviceSetManaged;
 virPCIDeviceSetRemoveSlot;
@@ -2268,6 +2273,7 @@ virSystemdCanHibernate;
 virSystemdCanHybridSleep;
 virSystemdCanSuspend;
 virSystemdCreateMachine;
+virSystemdGetMachineNameByPID;
 virSystemdMakeMachineName;
 virSystemdMakeScopeName;
 virSystemdMakeSliceName;
@@ -2344,9 +2350,12 @@ virTypedParameterTypeFromString;
 virTypedParameterTypeToString;
 virTypedParamsCheck;
 virTypedParamsCopy;
+virTypedParamsDeserialize;
 virTypedParamsFilter;
 virTypedParamsGetStringList;
+virTypedParamsRemoteFree;
 virTypedParamsReplaceString;
+virTypedParamsSerialize;
 virTypedParamsValidate;
 
 

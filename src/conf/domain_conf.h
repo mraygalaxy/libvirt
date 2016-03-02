@@ -50,6 +50,7 @@
 # include "virstoragefile.h"
 # include "virseclabel.h"
 # include "virprocess.h"
+# include "virgic.h"
 
 /* forward declarations of all device types, required by
  * virDomainDeviceDef
@@ -1898,7 +1899,6 @@ typedef enum {
 typedef struct _virDomainThreadSchedParam virDomainThreadSchedParam;
 typedef virDomainThreadSchedParam *virDomainThreadSchedParamPtr;
 struct _virDomainThreadSchedParam {
-    virBitmapPtr ids;
     virProcessSchedPolicy policy;
     int priority;
 };
@@ -2095,37 +2095,12 @@ struct _virDomainIOThreadIDDef {
     unsigned int iothread_id;
     int thread_id;
     virBitmapPtr cpumask;
+
+    virDomainThreadSchedParam sched;
 };
 
 void virDomainIOThreadIDDefFree(virDomainIOThreadIDDefPtr def);
 
-
-typedef struct _virDomainPinDef virDomainPinDef;
-typedef virDomainPinDef *virDomainPinDefPtr;
-struct _virDomainPinDef {
-    int id;
-    virBitmapPtr cpumask;
-};
-
-void virDomainPinDefFree(virDomainPinDefPtr def);
-void virDomainPinDefArrayFree(virDomainPinDefPtr *def, int npin);
-
-virDomainPinDefPtr *virDomainPinDefCopy(virDomainPinDefPtr *src,
-                                        int npin);
-
-virDomainPinDefPtr virDomainPinFind(virDomainPinDefPtr *def,
-                                    int npin,
-                                    int id);
-
-int virDomainPinAdd(virDomainPinDefPtr **pindef_list,
-                    size_t *npin,
-                    unsigned char *cpumap,
-                    int maplen,
-                    int id);
-
-void virDomainPinDel(virDomainPinDefPtr **pindef_list,
-                     size_t *npin,
-                     int vcpu);
 
 typedef struct _virDomainCputune virDomainCputune;
 typedef virDomainCputune *virDomainCputunePtr;
@@ -2137,14 +2112,7 @@ struct _virDomainCputune {
     long long quota;
     unsigned long long emulator_period;
     long long emulator_quota;
-    size_t nvcpupin;
-    virDomainPinDefPtr *vcpupin;
     virBitmapPtr emulatorpin;
-
-    size_t nvcpusched;
-    virDomainThreadSchedParamPtr vcpusched;
-    size_t niothreadsched;
-    virDomainThreadSchedParamPtr iothreadsched;
 };
 
 
@@ -2153,6 +2121,9 @@ typedef virDomainVcpuInfo *virDomainVcpuInfoPtr;
 
 struct _virDomainVcpuInfo {
     bool online;
+    virBitmapPtr cpumask;
+
+    virDomainThreadSchedParam sched;
 };
 
 typedef struct _virDomainBlkiotune virDomainBlkiotune;
@@ -2262,7 +2233,7 @@ struct _virDomainDef {
     int hyperv_features[VIR_DOMAIN_HYPERV_LAST];
     int kvm_features[VIR_DOMAIN_KVM_LAST];
     unsigned int hyperv_spinlocks;
-    unsigned int gic_version;
+    virGICVersion gic_version;
 
     /* These options are of type virTristateSwitch: ON = keep, OFF = drop */
     int caps_features[VIR_DOMAIN_CAPS_FEATURE_LAST];
@@ -2358,6 +2329,7 @@ bool virDomainDefHasVcpusOffline(const virDomainDef *def);
 unsigned int virDomainDefGetVcpusMax(const virDomainDef *def);
 int virDomainDefSetVcpus(virDomainDefPtr def, unsigned int vcpus);
 unsigned int virDomainDefGetVcpus(const virDomainDef *def);
+virBitmapPtr virDomainDefGetOnlineVcpumap(const virDomainDef *def);
 virDomainVcpuInfoPtr virDomainDefGetVcpu(virDomainDefPtr def, unsigned int vcpu)
     ATTRIBUTE_RETURN_CHECK;
 
@@ -2727,17 +2699,22 @@ virDomainIOThreadIDDefPtr virDomainIOThreadIDFind(virDomainDefPtr def,
                                                   unsigned int iothread_id);
 virDomainIOThreadIDDefPtr virDomainIOThreadIDAdd(virDomainDefPtr def,
                                                  unsigned int iothread_id);
+
+virBitmapPtr virDomainIOThreadIDMap(virDomainDefPtr def)
+    ATTRIBUTE_NONNULL(1) ATTRIBUTE_RETURN_CHECK;
 void virDomainIOThreadIDDel(virDomainDefPtr def, unsigned int iothread_id);
-void virDomainIOThreadSchedDelId(virDomainDefPtr def, unsigned int iothread_id);
 
 unsigned int virDomainDefFormatConvertXMLFlags(unsigned int flags);
 
 char *virDomainDefFormat(virDomainDefPtr def,
+                         virCapsPtr caps,
                          unsigned int flags);
 char *virDomainObjFormat(virDomainXMLOptionPtr xmlopt,
                          virDomainObjPtr obj,
+                         virCapsPtr caps,
                          unsigned int flags);
 int virDomainDefFormatInternal(virDomainDefPtr def,
+                               virCapsPtr caps,
                                unsigned int flags,
                                virBufferPtr buf);
 
@@ -2748,6 +2725,7 @@ int virDomainDiskSourceFormat(virBufferPtr buf,
 
 int virDomainNetDefFormat(virBufferPtr buf,
                           virDomainNetDefPtr def,
+                          char *prefix,
                           unsigned int flags);
 
 typedef enum {
@@ -2762,7 +2740,6 @@ int virDomainDefCompatibleDevice(virDomainDefPtr def,
 
 void virDomainRNGDefFree(virDomainRNGDefPtr def);
 
-bool virDomainDiskDefDstDuplicates(virDomainDefPtr def);
 int virDomainDiskIndexByAddress(virDomainDefPtr def,
                                 virDevicePCIAddressPtr pci_controller,
                                 unsigned int bus, unsigned int target,
@@ -2904,10 +2881,12 @@ int virDomainSaveXML(const char *configDir,
                      const char *xml);
 
 int virDomainSaveConfig(const char *configDir,
+                        virCapsPtr caps,
                         virDomainDefPtr def);
 int virDomainSaveStatus(virDomainXMLOptionPtr xmlopt,
                         const char *statusDir,
-                        virDomainObjPtr obj) ATTRIBUTE_RETURN_CHECK;
+                        virDomainObjPtr obj,
+                        virCapsPtr caps) ATTRIBUTE_RETURN_CHECK;
 
 typedef void (*virDomainLoadConfigNotify)(virDomainObjPtr dom,
                                           int newDomain,
@@ -3143,6 +3122,9 @@ virDomainParseMemory(const char *xpath,
 bool virDomainDefNeedsPlacementAdvice(virDomainDefPtr def)
     ATTRIBUTE_NONNULL(1);
 
+int virDomainDiskDefCheckDuplicateInfo(virDomainDiskDefPtr a,
+                                       virDomainDiskDefPtr b)
+    ATTRIBUTE_NONNULL(1) ATTRIBUTE_NONNULL(2);
 int virDomainDefCheckDuplicateDiskInfo(virDomainDefPtr def)
     ATTRIBUTE_NONNULL(1);
 

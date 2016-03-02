@@ -251,6 +251,7 @@
     <reference name='VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON'/>
     <reference name='VIR_DOMAIN_EVENT_ID_LAST' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_LAST'/>
     <reference name='VIR_DOMAIN_EVENT_ID_LIFECYCLE' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_LIFECYCLE'/>
+    <reference name='VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION'/>
     <reference name='VIR_DOMAIN_EVENT_ID_PMSUSPEND' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_PMSUSPEND'/>
     <reference name='VIR_DOMAIN_EVENT_ID_PMSUSPEND_DISK' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_PMSUSPEND_DISK'/>
     <reference name='VIR_DOMAIN_EVENT_ID_PMWAKEUP' href='html/libvirt-libvirt-domain.html#VIR_DOMAIN_EVENT_ID_PMWAKEUP'/>
@@ -775,6 +776,7 @@
     <reference name='VIR_FROM_XENAPI' href='html/libvirt-virterror.html#VIR_FROM_XENAPI'/>
     <reference name='VIR_FROM_XEND' href='html/libvirt-virterror.html#VIR_FROM_XEND'/>
     <reference name='VIR_FROM_XENSTORE' href='html/libvirt-virterror.html#VIR_FROM_XENSTORE'/>
+    <reference name='VIR_FROM_XENXL' href='html/libvirt-virterror.html#VIR_FROM_XENXL'/>
     <reference name='VIR_FROM_XENXM' href='html/libvirt-virterror.html#VIR_FROM_XENXM'/>
     <reference name='VIR_FROM_XEN_INOTIFY' href='html/libvirt-virterror.html#VIR_FROM_XEN_INOTIFY'/>
     <reference name='VIR_FROM_XML' href='html/libvirt-virterror.html#VIR_FROM_XML'/>
@@ -927,6 +929,7 @@
     <reference name='VIR_STORAGE_VOL_WIPE_ALG_PFITZNER7' href='html/libvirt-libvirt-storage.html#VIR_STORAGE_VOL_WIPE_ALG_PFITZNER7'/>
     <reference name='VIR_STORAGE_VOL_WIPE_ALG_RANDOM' href='html/libvirt-libvirt-storage.html#VIR_STORAGE_VOL_WIPE_ALG_RANDOM'/>
     <reference name='VIR_STORAGE_VOL_WIPE_ALG_SCHNEIER' href='html/libvirt-libvirt-storage.html#VIR_STORAGE_VOL_WIPE_ALG_SCHNEIER'/>
+    <reference name='VIR_STORAGE_VOL_WIPE_ALG_TRIM' href='html/libvirt-libvirt-storage.html#VIR_STORAGE_VOL_WIPE_ALG_TRIM'/>
     <reference name='VIR_STORAGE_VOL_WIPE_ALG_ZERO' href='html/libvirt-libvirt-storage.html#VIR_STORAGE_VOL_WIPE_ALG_ZERO'/>
     <reference name='VIR_STORAGE_XML_INACTIVE' href='html/libvirt-libvirt-storage.html#VIR_STORAGE_XML_INACTIVE'/>
     <reference name='VIR_STREAM_EVENT_ERROR' href='html/libvirt-libvirt-stream.html#VIR_STREAM_EVENT_ERROR'/>
@@ -1030,6 +1033,7 @@
     <reference name='virConnectDomainEventGraphicsCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventGraphicsCallback'/>
     <reference name='virConnectDomainEventIOErrorCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventIOErrorCallback'/>
     <reference name='virConnectDomainEventIOErrorReasonCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventIOErrorReasonCallback'/>
+    <reference name='virConnectDomainEventMigrationIterationCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventMigrationIterationCallback'/>
     <reference name='virConnectDomainEventPMSuspendCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventPMSuspendCallback'/>
     <reference name='virConnectDomainEventPMSuspendDiskCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventPMSuspendDiskCallback'/>
     <reference name='virConnectDomainEventPMWakeupCallback' href='html/libvirt-libvirt-domain.html#virConnectDomainEventPMWakeupCallback'/>
@@ -1916,6 +1920,7 @@
       <ref name='VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON'/>
       <ref name='VIR_DOMAIN_EVENT_ID_LAST'/>
       <ref name='VIR_DOMAIN_EVENT_ID_LIFECYCLE'/>
+      <ref name='VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION'/>
       <ref name='VIR_DOMAIN_EVENT_ID_PMSUSPEND'/>
       <ref name='VIR_DOMAIN_EVENT_ID_PMSUSPEND_DISK'/>
       <ref name='VIR_DOMAIN_EVENT_ID_PMWAKEUP'/>
@@ -2440,6 +2445,7 @@
       <ref name='VIR_FROM_XENAPI'/>
       <ref name='VIR_FROM_XEND'/>
       <ref name='VIR_FROM_XENSTORE'/>
+      <ref name='VIR_FROM_XENXL'/>
       <ref name='VIR_FROM_XENXM'/>
       <ref name='VIR_FROM_XEN_INOTIFY'/>
       <ref name='VIR_FROM_XML'/>
@@ -2592,6 +2598,7 @@
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_PFITZNER7'/>
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_RANDOM'/>
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_SCHNEIER'/>
+      <ref name='VIR_STORAGE_VOL_WIPE_ALG_TRIM'/>
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_ZERO'/>
       <ref name='VIR_STORAGE_XML_INACTIVE'/>
       <ref name='VIR_STREAM_EVENT_ERROR'/>
@@ -2699,6 +2706,7 @@
       <ref name='virConnectDomainEventGraphicsCallback'/>
       <ref name='virConnectDomainEventIOErrorCallback'/>
       <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+      <ref name='virConnectDomainEventMigrationIterationCallback'/>
       <ref name='virConnectDomainEventPMSuspendCallback'/>
       <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
       <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -3834,6 +3842,7 @@
       <ref name='virConnectDomainEventGraphicsCallback'/>
       <ref name='virConnectDomainEventIOErrorCallback'/>
       <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+      <ref name='virConnectDomainEventMigrationIterationCallback'/>
       <ref name='virConnectDomainEventPMSuspendCallback'/>
       <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
       <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -4013,6 +4022,7 @@
       <ref name='virConnectDomainEventGraphicsCallback'/>
       <ref name='virConnectDomainEventIOErrorCallback'/>
       <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+      <ref name='virConnectDomainEventMigrationIterationCallback'/>
       <ref name='virConnectDomainEventPMSuspendCallback'/>
       <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
       <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -4501,6 +4511,7 @@
       <ref name='virConnectDomainEventGraphicsCallback'/>
       <ref name='virConnectDomainEventIOErrorCallback'/>
       <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+      <ref name='virConnectDomainEventMigrationIterationCallback'/>
       <ref name='virConnectDomainEventPMSuspendCallback'/>
       <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
       <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -4777,6 +4788,7 @@
       <ref name='VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON'/>
       <ref name='VIR_DOMAIN_EVENT_ID_LAST'/>
       <ref name='VIR_DOMAIN_EVENT_ID_LIFECYCLE'/>
+      <ref name='VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION'/>
       <ref name='VIR_DOMAIN_EVENT_ID_PMSUSPEND'/>
       <ref name='VIR_DOMAIN_EVENT_ID_PMSUSPEND_DISK'/>
       <ref name='VIR_DOMAIN_EVENT_ID_PMWAKEUP'/>
@@ -5201,6 +5213,7 @@
       <ref name='virConnectDomainEventGraphicsCallback'/>
       <ref name='virConnectDomainEventIOErrorCallback'/>
       <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+      <ref name='virConnectDomainEventMigrationIterationCallback'/>
       <ref name='virConnectDomainEventPMSuspendCallback'/>
       <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
       <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -5935,6 +5948,7 @@
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_PFITZNER7'/>
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_RANDOM'/>
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_SCHNEIER'/>
+      <ref name='VIR_STORAGE_VOL_WIPE_ALG_TRIM'/>
       <ref name='VIR_STORAGE_VOL_WIPE_ALG_ZERO'/>
       <ref name='VIR_STORAGE_XML_INACTIVE'/>
       <ref name='_virStoragePoolInfo'/>
@@ -6189,6 +6203,7 @@
       <ref name='VIR_FROM_XENAPI'/>
       <ref name='VIR_FROM_XEND'/>
       <ref name='VIR_FROM_XENSTORE'/>
+      <ref name='VIR_FROM_XENXL'/>
       <ref name='VIR_FROM_XENXM'/>
       <ref name='VIR_FROM_XEN_INOTIFY'/>
       <ref name='VIR_FROM_XML'/>
@@ -8467,6 +8482,9 @@
         </word>
         <word name='VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON'>
           <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+        </word>
+        <word name='VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION'>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
         </word>
         <word name='VIR_DOMAIN_EVENT_ID_PMSUSPEND'>
           <ref name='virConnectDomainEventPMSuspendCallback'/>
@@ -12104,6 +12122,7 @@
           <ref name='VIR_DOMAIN_JOB_MEMORY_DIRTY_RATE'/>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
           <ref name='_virDomainJobInfo'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
         </word>
         <word name='dirty'>
           <ref name='VIR_DOMAIN_BLOCK_COPY_GRANULARITY'/>
@@ -12703,6 +12722,7 @@
         <word name='every'>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
           <ref name='virConnectClose'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectRegisterCloseCallback'/>
           <ref name='virDomainFSFreeze'/>
           <ref name='virDomainFSThaw'/>
@@ -14204,6 +14224,7 @@
         <word name='increased'>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
           <ref name='virConnectClose'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virDomainGetConnect'/>
           <ref name='virDomainSnapshotGetConnect'/>
           <ref name='virDomainSnapshotGetDomain'/>
@@ -14661,6 +14682,7 @@
         </word>
         <word name='iteration'>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectListAllDomains'/>
           <ref name='virConnectListAllInterfaces'/>
           <ref name='virConnectListAllNWFilters'/>
@@ -14914,6 +14936,7 @@
           <ref name='virConnGetLastError'/>
           <ref name='virConnResetLastError'/>
           <ref name='virConnectClose'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectListAllStoragePools'/>
           <ref name='virCopyLastError'/>
           <ref name='virDomainListAllSnapshots'/>
@@ -16375,6 +16398,7 @@
           <ref name='virConnectDomainEventGraphicsCallback'/>
           <ref name='virConnectDomainEventIOErrorCallback'/>
           <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectDomainEventPMSuspendCallback'/>
           <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
           <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -16403,6 +16427,7 @@
           <ref name='virConnectDomainEventDeviceAddedCallback'/>
           <ref name='virConnectDomainEventDeviceRemovedCallback'/>
           <ref name='virConnectDomainEventDiskChangeCallback'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectDomainEventPMSuspendCallback'/>
           <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
           <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -18050,6 +18075,7 @@
           <ref name='virConnectDomainEventGraphicsCallback'/>
           <ref name='virConnectDomainEventIOErrorCallback'/>
           <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectDomainEventPMSuspendCallback'/>
           <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
           <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -19232,6 +19258,7 @@
           <ref name='virConnectDomainEventGraphicsCallback'/>
           <ref name='virConnectDomainEventIOErrorCallback'/>
           <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectDomainEventPMSuspendCallback'/>
           <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
           <ref name='virConnectDomainEventPMWakeupCallback'/>
@@ -19587,6 +19614,7 @@
         </word>
         <word name='started'>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectListDomains'/>
           <ref name='virConnectListInterfaces'/>
           <ref name='virConnectListNetworks'/>
@@ -19617,6 +19645,7 @@
         </word>
         <word name='starts'>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virDomainBlockCommit'/>
           <ref name='virDomainBlockCopy'/>
           <ref name='virDomainBlockRebase'/>
@@ -20431,6 +20460,7 @@
           <ref name='VIR_DOMAIN_JOB_DOWNTIME_NET'/>
           <ref name='VIR_DOMAIN_JOB_MEMORY_ITERATION'/>
           <ref name='VIR_DOMAIN_JOB_TIME_ELAPSED_NET'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virDomainScreenshot'/>
           <ref name='virStorageVolDownload'/>
           <ref name='virStorageVolUpload'/>
@@ -21310,6 +21340,7 @@
           <ref name='virConnectDomainEventGraphicsCallback'/>
           <ref name='virConnectDomainEventIOErrorCallback'/>
           <ref name='virConnectDomainEventIOErrorReasonCallback'/>
+          <ref name='virConnectDomainEventMigrationIterationCallback'/>
           <ref name='virConnectDomainEventPMSuspendCallback'/>
           <ref name='virConnectDomainEventPMSuspendDiskCallback'/>
           <ref name='virConnectDomainEventPMWakeupCallback'/>

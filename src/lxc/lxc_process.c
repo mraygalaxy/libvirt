@@ -177,7 +177,7 @@ static void virLXCProcessCleanup(virLXCDriverPtr driver,
 
     /* now that we know it's stopped call the hook if present */
     if (virHookPresent(VIR_HOOK_DRIVER_LXC)) {
-        char *xml = virDomainDefFormat(vm->def, 0);
+        char *xml = virDomainDefFormat(vm->def, driver->caps, 0);
 
         /* we can't stop the operation even if the script raised an error */
         virHookCall(VIR_HOOK_DRIVER_LXC, vm->def->name,
@@ -233,12 +233,11 @@ static void virLXCProcessCleanup(virLXCDriverPtr driver,
      * properly. See https://bugs.freedesktop.org/show_bug.cgi?id=68370 for
      * the bug we are working around here.
      */
-    virSystemdTerminateMachine(vm->def->name, "lxc", true);
-
+    virCgroupTerminateMachine(priv->machineName);
 
     /* The "release" hook cleans up additional resources */
     if (virHookPresent(VIR_HOOK_DRIVER_LXC)) {
-        char *xml = virDomainDefFormat(vm->def, 0);
+        char *xml = virDomainDefFormat(vm->def, driver->caps, 0);
 
         /* we can't stop the operation even if the script raised an error */
         virHookCall(VIR_HOOK_DRIVER_LXC, vm->def->name,
@@ -767,7 +766,7 @@ static void virLXCProcessMonitorInitNotify(virLXCMonitorPtr mon ATTRIBUTE_UNUSED
     }
     virDomainAuditInit(vm, initpid, inode);
 
-    if (virDomainSaveStatus(lxc_driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(lxc_driver->xmlopt, cfg->stateDir, vm, lxc_driver->caps) < 0)
         VIR_WARN("Cannot update XML with PID for LXC %s", vm->def->name);
 
     virObjectUnlock(vm);
@@ -1278,7 +1277,7 @@ int virLXCProcessStart(virConnectPtr conn,
 
     /* Run an early hook to set-up missing devices */
     if (virHookPresent(VIR_HOOK_DRIVER_LXC)) {
-        char *xml = virDomainDefFormat(vm->def, 0);
+        char *xml = virDomainDefFormat(vm->def, driver->caps, 0);
         int hookret;
 
         hookret = virHookCall(VIR_HOOK_DRIVER_LXC, vm->def->name,
@@ -1390,7 +1389,7 @@ int virLXCProcessStart(virConnectPtr conn,
 
     /* now that we know it is about to start call the hook if present */
     if (virHookPresent(VIR_HOOK_DRIVER_LXC)) {
-        char *xml = virDomainDefFormat(vm->def, 0);
+        char *xml = virDomainDefFormat(vm->def, driver->caps, 0);
         int hookret;
 
         hookret = virHookCall(VIR_HOOK_DRIVER_LXC, vm->def->name,
@@ -1469,7 +1468,7 @@ int virLXCProcessStart(virConnectPtr conn,
 
     /* Write domain status to disk for the controller to
      * read when it starts */
-    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
         goto cleanup;
 
     /* Allow the child to exec the controller */
@@ -1494,8 +1493,9 @@ int virLXCProcessStart(virConnectPtr conn,
      * point so lets detect that first, since it gives us a
      * more reliable way to kill everything off if something
      * goes wrong from here onwards ... */
-    if (virCgroupNewDetectMachine(vm->def->name, "lxc", vm->pid,
-                                  -1, &priv->cgroup) < 0)
+    if (virCgroupNewDetectMachine(vm->def->name, "lxc",
+                                  vm->def->id, true,
+                                  vm->pid, -1, &priv->cgroup) < 0)
         goto cleanup;
 
     if (!priv->cgroup) {
@@ -1504,6 +1504,11 @@ int virLXCProcessStart(virConnectPtr conn,
                        vm->def->name);
         goto cleanup;
     }
+
+    /* Get the machine name so we can properly delete it through
+     * systemd later */
+    if (!(priv->machineName = virSystemdGetMachineNameByPID(vm->pid)))
+        virResetLastError();
 
     /* And we can get the first monitor connection now too */
     if (!(priv->monitor = virLXCProcessConnectMonitor(driver, vm))) {
@@ -1532,7 +1537,7 @@ int virLXCProcessStart(virConnectPtr conn,
 
     /* finally we can call the 'started' hook script if any */
     if (virHookPresent(VIR_HOOK_DRIVER_LXC)) {
-        char *xml = virDomainDefFormat(vm->def, 0);
+        char *xml = virDomainDefFormat(vm->def, driver->caps, 0);
         int hookret;
 
         hookret = virHookCall(VIR_HOOK_DRIVER_LXC, vm->def->name,
@@ -1677,8 +1682,8 @@ virLXCProcessReconnectDomain(virDomainObjPtr vm,
         if (!(priv->monitor = virLXCProcessConnectMonitor(driver, vm)))
             goto error;
 
-        if (virCgroupNewDetectMachine(vm->def->name, "lxc", vm->pid,
-                                      -1, &priv->cgroup) < 0)
+        if (virCgroupNewDetectMachine(vm->def->name, "lxc", vm->def->id, true,
+                                      vm->pid, -1, &priv->cgroup) < 0)
             goto error;
 
         if (!priv->cgroup) {
@@ -1687,6 +1692,9 @@ virLXCProcessReconnectDomain(virDomainObjPtr vm,
                            vm->def->name);
             goto error;
         }
+
+        if (!(priv->machineName = virSystemdGetMachineNameByPID(vm->pid)))
+            virResetLastError();
 
         if (virLXCUpdateActiveUSBHostdevs(driver, vm->def) < 0)
             goto error;
@@ -1697,7 +1705,7 @@ virLXCProcessReconnectDomain(virDomainObjPtr vm,
 
         /* now that we know it's reconnected call the hook if present */
         if (virHookPresent(VIR_HOOK_DRIVER_LXC)) {
-            char *xml = virDomainDefFormat(vm->def, 0);
+            char *xml = virDomainDefFormat(vm->def, driver->caps, 0);
             int hookret;
 
             /* we can't stop the operation even if the script raised an error */

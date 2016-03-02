@@ -2128,7 +2128,7 @@ qemuMigrationDriveMirror(virQEMUDriverPtr driver,
         }
         diskPriv->migrating = true;
 
-        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0) {
+        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0) {
             VIR_WARN("Failed to save status on vm %s", vm->def->name);
             goto cleanup;
         }
@@ -2364,97 +2364,10 @@ qemuMigrationSetOffline(virQEMUDriverPtr driver,
     return ret;
 }
 
-
 static int
-qemuMigrationSetCompression(virQEMUDriverPtr driver,
-                            virDomainObjPtr vm,
-                            bool state,
-                            qemuDomainAsyncJob job)
-{
-    qemuDomainObjPrivatePtr priv = vm->privateData;
-    int ret;
-
-    if (qemuDomainObjEnterMonitorAsync(driver, vm, job) < 0)
-        return -1;
-
-    ret = qemuMonitorGetMigrationCapability(
-                priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_XBZRLE);
-
-    if (ret < 0) {
-        goto cleanup;
-    } else if (ret == 0 && !state) {
-        /* Unsupported but we want it off anyway */
-        goto cleanup;
-    } else if (ret == 0) {
-        if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
-            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
-                           _("Compressed migration is not supported by "
-                             "target QEMU binary"));
-        } else {
-            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
-                           _("Compressed migration is not supported by "
-                             "source QEMU binary"));
-        }
-        ret = -1;
-        goto cleanup;
-    }
-
-    ret = qemuMonitorSetMigrationCapability(
-                priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_XBZRLE,
-                state);
-
- cleanup:
-    if (qemuDomainObjExitMonitor(driver, vm) < 0)
-        ret = -1;
-    return ret;
-}
-
-static int
-qemuMigrationSetAutoConverge(virQEMUDriverPtr driver,
-                             virDomainObjPtr vm,
-                             bool state,
-                             qemuDomainAsyncJob job)
-{
-    qemuDomainObjPrivatePtr priv = vm->privateData;
-    int ret;
-
-    if (qemuDomainObjEnterMonitorAsync(driver, vm, job) < 0)
-        return -1;
-
-    ret = qemuMonitorGetMigrationCapability(
-                priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_AUTO_CONVERGE);
-
-    if (ret < 0) {
-        goto cleanup;
-    } else if (ret == 0 && !state) {
-        /* Unsupported but we want it off anyway */
-        goto cleanup;
-    } else if (ret == 0) {
-        virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
-                       _("Auto-Converge is not supported by "
-                         "QEMU binary"));
-        ret = -1;
-        goto cleanup;
-    }
-
-    ret = qemuMonitorSetMigrationCapability(
-                priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_AUTO_CONVERGE,
-                state);
-
- cleanup:
-    if (qemuDomainObjExitMonitor(driver, vm) < 0)
-        ret = -1;
-    return ret;
-}
-
-
-static int
-qemuMigrationSetPinAll(virQEMUDriverPtr driver,
+qemuMigrationSetOption(virQEMUDriverPtr driver,
                        virDomainObjPtr vm,
+                       qemuMonitorMigrationCaps capability,
                        bool state,
                        qemuDomainAsyncJob job)
 {
@@ -2464,9 +2377,7 @@ qemuMigrationSetPinAll(virQEMUDriverPtr driver,
     if (qemuDomainObjEnterMonitorAsync(driver, vm, job) < 0)
         return -1;
 
-    ret = qemuMonitorGetMigrationCapability(
-                priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_RDMA_PIN_ALL);
+    ret = qemuMonitorGetMigrationCapability(priv->mon, capability);
 
     if (ret < 0) {
         goto cleanup;
@@ -2475,22 +2386,21 @@ qemuMigrationSetPinAll(virQEMUDriverPtr driver,
         goto cleanup;
     } else if (ret == 0) {
         if (job == QEMU_ASYNC_JOB_MIGRATION_IN) {
-            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
-                           _("rdma pinning migration is not supported by "
-                             "target QEMU binary"));
+            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED,
+                           _("Migration option '%s' is not supported by "
+                             "target QEMU binary"),
+                           qemuMonitorMigrationCapsTypeToString(capability));
         } else {
-            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED, "%s",
-                           _("rdma pinning migration is not supported by "
-                             "source QEMU binary"));
+            virReportError(VIR_ERR_ARGUMENT_UNSUPPORTED,
+                           _("Migration option '%s' is not supported by "
+                             "source QEMU binary"),
+                           qemuMonitorMigrationCapsTypeToString(capability));
         }
         ret = -1;
         goto cleanup;
     }
 
-    ret = qemuMonitorSetMigrationCapability(
-                priv->mon,
-                QEMU_MONITOR_MIGRATION_CAPS_RDMA_PIN_ALL,
-                state);
+    ret = qemuMonitorSetMigrationCapability(priv->mon, capability, state);
 
  cleanup:
     if (qemuDomainObjExitMonitor(driver, vm) < 0)
@@ -3552,7 +3462,8 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
         goto stopjob;
     }
 
-    if (qemuProcessInit(driver, vm, true) < 0)
+    if (qemuProcessInit(driver, vm, QEMU_ASYNC_JOB_MIGRATION_IN,
+                        true, false) < 0)
         goto stopjob;
     stopProcess = true;
 
@@ -3582,9 +3493,10 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
         dataFD[1] = -1; /* 'st' owns the FD now & will close it */
     }
 
-    if (qemuMigrationSetCompression(driver, vm,
-                                    flags & VIR_MIGRATE_COMPRESSED,
-                                    QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
+    if (qemuMigrationSetOption(driver, vm,
+                               QEMU_MONITOR_MIGRATION_CAPS_XBZRLE,
+                               flags & VIR_MIGRATE_COMPRESSED,
+                               QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stopjob;
 
     if (STREQ_NULLABLE(protocol, "rdma") &&
@@ -3592,7 +3504,8 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
         goto stopjob;
     }
 
-    if (qemuMigrationSetPinAll(driver, vm,
+    if (qemuMigrationSetOption(driver, vm,
+                               QEMU_MONITOR_MIGRATION_CAPS_RDMA_PIN_ALL,
                                flags & VIR_MIGRATE_RDMA_PIN_ALL,
                                QEMU_ASYNC_JOB_MIGRATION_IN) < 0)
         goto stopjob;
@@ -3681,7 +3594,8 @@ qemuMigrationPrepareAny(virQEMUDriverPtr driver,
         if (!relabel)
             stopFlags |= VIR_QEMU_PROCESS_STOP_NO_RELABEL;
         virDomainAuditStart(vm, "migrated", false);
-        qemuProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_FAILED, stopFlags);
+        qemuProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_FAILED,
+                        QEMU_ASYNC_JOB_MIGRATION_IN, stopFlags);
     }
 
     qemuMigrationJobFinish(driver, vm);
@@ -3990,6 +3904,7 @@ qemuMigrationConfirmPhase(virQEMUDriverPtr driver,
         qemuMigrationWaitForSpice(vm);
 
         qemuProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_MIGRATED,
+                        QEMU_ASYNC_JOB_MIGRATION_OUT,
                         VIR_QEMU_PROCESS_STOP_MIGRATED);
         virDomainAuditStop(vm, "migrated");
 
@@ -4012,7 +3927,7 @@ qemuMigrationConfirmPhase(virQEMUDriverPtr driver,
                                                       VIR_DOMAIN_EVENT_RESUMED_MIGRATED);
         }
 
-        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
             VIR_WARN("Failed to save status on vm %s", vm->def->name);
     }
 
@@ -4447,17 +4362,20 @@ qemuMigrationRun(virQEMUDriverPtr driver,
             goto cleanup;
     }
 
-    if (qemuMigrationSetCompression(driver, vm,
-                                    flags & VIR_MIGRATE_COMPRESSED,
-                                    QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+    if (qemuMigrationSetOption(driver, vm,
+                               QEMU_MONITOR_MIGRATION_CAPS_XBZRLE,
+                               flags & VIR_MIGRATE_COMPRESSED,
+                               QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
-    if (qemuMigrationSetAutoConverge(driver, vm,
-                                     flags & VIR_MIGRATE_AUTO_CONVERGE,
-                                     QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
+    if (qemuMigrationSetOption(driver, vm,
+                               QEMU_MONITOR_MIGRATION_CAPS_AUTO_CONVERGE,
+                               flags & VIR_MIGRATE_AUTO_CONVERGE,
+                               QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
 
-    if (qemuMigrationSetPinAll(driver, vm,
+    if (qemuMigrationSetOption(driver, vm,
+                               QEMU_MONITOR_MIGRATION_CAPS_RDMA_PIN_ALL,
                                flags & VIR_MIGRATE_RDMA_PIN_ALL,
                                QEMU_ASYNC_JOB_MIGRATION_OUT) < 0)
         goto cleanup;
@@ -5498,6 +5416,7 @@ qemuMigrationPerformJob(virQEMUDriverPtr driver,
      */
     if (!v3proto) {
         qemuProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_MIGRATED,
+                        QEMU_ASYNC_JOB_MIGRATION_OUT,
                         VIR_QEMU_PROCESS_STOP_MIGRATED);
         virDomainAuditStop(vm, "migrated");
         event = virDomainEventLifecycleNewFromObj(vm,
@@ -5747,7 +5666,8 @@ qemuMigrationPersist(virQEMUDriverPtr driver,
     if (!(vmdef = virDomainObjGetPersistentDef(caps, driver->xmlopt, vm)))
         goto error;
 
-    if (virDomainSaveConfig(cfg->configDir, vmdef) < 0 && !ignoreSaveError)
+    if (virDomainSaveConfig(cfg->configDir, driver->caps, vmdef) < 0 &&
+        !ignoreSaveError)
         goto error;
 
     event = virDomainEventLifecycleNewFromObj(vm,
@@ -5795,6 +5715,7 @@ qemuMigrationFinish(virQEMUDriverPtr driver,
     unsigned short port;
     unsigned long long timeReceived = 0;
     virObjectEventPtr event;
+    int rc;
 
     VIR_DEBUG("driver=%p, dconn=%p, vm=%p, cookiein=%s, cookieinlen=%d, "
               "cookieout=%p, cookieoutlen=%p, flags=%lx, retcode=%d",
@@ -5862,6 +5783,20 @@ qemuMigrationFinish(virQEMUDriverPtr driver,
 
     if (qemuMigrationStopNBDServer(driver, vm, mig) < 0)
         goto endjob;
+
+    if (qemuRefreshVirtioChannelState(driver, vm) < 0)
+        goto endjob;
+
+    if ((rc = qemuConnectAgent(driver, vm)) < 0) {
+        if (rc == -2)
+            goto endjob;
+
+        VIR_WARN("Cannot connect to QEMU guest agent for %s",
+                 vm->def->name);
+        virResetLastError();
+        priv->agentError = true;
+    }
+
 
     if (flags & VIR_MIGRATE_PERSIST_DEST) {
         if (qemuMigrationPersist(driver, vm, mig, !v3proto) < 0) {
@@ -5953,7 +5888,7 @@ qemuMigrationFinish(virQEMUDriverPtr driver,
     }
 
     if (virDomainObjIsActive(vm) &&
-        virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+        virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
         VIR_WARN("Failed to save status on vm %s", vm->def->name);
 
     /* Guest is successfully running, so cancel previous auto destroy */
@@ -5964,6 +5899,7 @@ qemuMigrationFinish(virQEMUDriverPtr driver,
         !(flags & VIR_MIGRATE_OFFLINE) &&
         virDomainObjIsActive(vm)) {
         qemuProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_FAILED,
+                        QEMU_ASYNC_JOB_MIGRATION_IN,
                         VIR_QEMU_PROCESS_STOP_MIGRATED);
         virDomainAuditStop(vm, "failed");
         event = virDomainEventLifecycleNewFromObj(vm,
@@ -6009,15 +5945,13 @@ qemuMigrationFinish(virQEMUDriverPtr driver,
 /* Helper function called while vm is active.  */
 int
 qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
-                    int fd, off_t offset, const char *path,
+                    int fd,
                     const char *compressor,
-                    bool bypassSecurityDriver,
                     qemuDomainAsyncJob asyncJob)
 {
     qemuDomainObjPrivatePtr priv = vm->privateData;
     int rc;
     int ret = -1;
-    bool restoreLabel = false;
     virCommandPtr cmd = NULL;
     int pipeFD[2] = { -1, -1 };
     unsigned long saveMigBandwidth = priv->migMaxBandwidth;
@@ -6041,54 +5975,27 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
         return -1;
     }
 
-    if ((!compressor || pipe(pipeFD) == 0)) {
-        /* All right! We can use fd migration, which means that qemu
-         * doesn't have to open() the file, so while we still have to
-         * grant SELinux access, we can do it on fd and avoid cleanup
-         * later, as well as skip futzing with cgroup.  */
-        if (virSecurityManagerSetImageFDLabel(driver->securityManager, vm->def,
-                                              compressor ? pipeFD[1] : fd) < 0)
-            goto cleanup;
-        bypassSecurityDriver = true;
-    } else {
-        /* Phooey - we have to fall back on exec migration, where qemu
-         * has to popen() the file by name, and block devices have to be
-         * given cgroup ACL permission.  We might also stumble on
-         * a race present in some qemu versions where it does a wait()
-         * that botches pclose.  */
-        if (virCgroupHasController(priv->cgroup,
-                                   VIR_CGROUP_CONTROLLER_DEVICES)) {
-            int rv = virCgroupAllowDevicePath(priv->cgroup, path,
-                                              VIR_CGROUP_DEVICE_RW);
-            virDomainAuditCgroupPath(vm, priv->cgroup, "allow", path, "rw", rv == 0);
-            if (rv == 1) {
-                /* path was not a device, no further need for cgroup */
-            } else if (rv < 0) {
-                goto cleanup;
-            }
-        }
-        if ((!bypassSecurityDriver) &&
-            virSecurityManagerSetSavedStateLabel(driver->securityManager,
-                                                 vm->def, path) < 0)
-            goto cleanup;
-        restoreLabel = true;
+    if (compressor && pipe(pipeFD) < 0) {
+        virReportSystemError(errno, "%s",
+                             _("Failed to create pipe for migration"));
+        return -1;
     }
+
+    /* All right! We can use fd migration, which means that qemu
+     * doesn't have to open() the file, so while we still have to
+     * grant SELinux access, we can do it on fd and avoid cleanup
+     * later, as well as skip futzing with cgroup.  */
+    if (virSecurityManagerSetImageFDLabel(driver->securityManager, vm->def,
+                                          compressor ? pipeFD[1] : fd) < 0)
+        goto cleanup;
 
     if (qemuDomainObjEnterMonitorAsync(driver, vm, asyncJob) < 0)
         goto cleanup;
 
     if (!compressor) {
-        const char *args[] = { "cat", NULL };
-
-        if (priv->monConfig->type == VIR_DOMAIN_CHR_TYPE_UNIX) {
-            rc = qemuMonitorMigrateToFd(priv->mon,
-                                        QEMU_MONITOR_MIGRATE_BACKGROUND,
-                                        fd);
-        } else {
-            rc = qemuMonitorMigrateToFile(priv->mon,
-                                          QEMU_MONITOR_MIGRATE_BACKGROUND,
-                                          args, path, offset);
-        }
+        rc = qemuMonitorMigrateToFd(priv->mon,
+                                    QEMU_MONITOR_MIGRATE_BACKGROUND,
+                                    fd);
     } else {
         const char *prog = compressor;
         const char *args[] = {
@@ -6096,33 +6003,28 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
             "-c",
             NULL
         };
-        if (pipeFD[0] != -1) {
-            cmd = virCommandNewArgs(args);
-            virCommandSetInputFD(cmd, pipeFD[0]);
-            virCommandSetOutputFD(cmd, &fd);
-            virCommandSetErrorBuffer(cmd, &errbuf);
-            virCommandDoAsyncIO(cmd);
-            if (virSetCloseExec(pipeFD[1]) < 0) {
-                virReportSystemError(errno, "%s",
-                                     _("Unable to set cloexec flag"));
-                ignore_value(qemuDomainObjExitMonitor(driver, vm));
-                goto cleanup;
-            }
-            if (virCommandRunAsync(cmd, NULL) < 0) {
-                ignore_value(qemuDomainObjExitMonitor(driver, vm));
-                goto cleanup;
-            }
-            rc = qemuMonitorMigrateToFd(priv->mon,
-                                        QEMU_MONITOR_MIGRATE_BACKGROUND,
-                                        pipeFD[1]);
-            if (VIR_CLOSE(pipeFD[0]) < 0 ||
-                VIR_CLOSE(pipeFD[1]) < 0)
-                VIR_WARN("failed to close intermediate pipe");
-        } else {
-            rc = qemuMonitorMigrateToFile(priv->mon,
-                                          QEMU_MONITOR_MIGRATE_BACKGROUND,
-                                          args, path, offset);
+
+        cmd = virCommandNewArgs(args);
+        virCommandSetInputFD(cmd, pipeFD[0]);
+        virCommandSetOutputFD(cmd, &fd);
+        virCommandSetErrorBuffer(cmd, &errbuf);
+        virCommandDoAsyncIO(cmd);
+        if (virSetCloseExec(pipeFD[1]) < 0) {
+            virReportSystemError(errno, "%s",
+                                 _("Unable to set cloexec flag"));
+            ignore_value(qemuDomainObjExitMonitor(driver, vm));
+            goto cleanup;
         }
+        if (virCommandRunAsync(cmd, NULL) < 0) {
+            ignore_value(qemuDomainObjExitMonitor(driver, vm));
+            goto cleanup;
+        }
+        rc = qemuMonitorMigrateToFd(priv->mon,
+                                    QEMU_MONITOR_MIGRATE_BACKGROUND,
+                                    pipeFD[1]);
+        if (VIR_CLOSE(pipeFD[0]) < 0 ||
+            VIR_CLOSE(pipeFD[1]) < 0)
+            VIR_WARN("failed to close intermediate pipe");
     }
     if (qemuDomainObjExitMonitor(driver, vm) < 0)
         goto cleanup;
@@ -6168,17 +6070,6 @@ qemuMigrationToFile(virQEMUDriverPtr driver, virDomainObjPtr vm,
         VIR_DEBUG("Compression binary stderr: %s", NULLSTR(errbuf));
         VIR_FREE(errbuf);
         virCommandFree(cmd);
-    }
-    if (restoreLabel && (!bypassSecurityDriver) &&
-        virSecurityManagerRestoreSavedStateLabel(driver->securityManager,
-                                                 vm->def, path) < 0)
-        VIR_WARN("failed to restore save state label on %s", path);
-
-    if (virCgroupHasController(priv->cgroup,
-                               VIR_CGROUP_CONTROLLER_DEVICES)) {
-        int rv = virCgroupDenyDevicePath(priv->cgroup, path,
-                                         VIR_CGROUP_DEVICE_RWM);
-        virDomainAuditCgroupPath(vm, priv->cgroup, "deny", path, "rwm", rv == 0);
     }
 
     if (orig_err) {

@@ -140,7 +140,7 @@ VIR_MOCK_WRAP_RET_ARGS(dbus_connection_send_with_reply_and_block,
     return reply;
 
  error:
-    dbus_message_unref(reply);
+    virDBusMessageUnref(reply);
     return NULL;
 }
 
@@ -349,7 +349,7 @@ mymain(void)
     return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-VIRT_TEST_MAIN_PRELOAD(mymain, abs_builddir "/.libs/virmockdbus.so")
+VIRT_TEST_MAIN_PRELOAD(mymain, abs_builddir "/.libs/virdbusmock.so")
 
 #else /* ! (WITH_DBUS && __linux__) */
 int

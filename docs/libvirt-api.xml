@@ -333,6 +333,7 @@
      <exports symbol='VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON' type='enum'/>
      <exports symbol='VIR_DOMAIN_EVENT_ID_LAST' type='enum'/>
      <exports symbol='VIR_DOMAIN_EVENT_ID_LIFECYCLE' type='enum'/>
+     <exports symbol='VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION' type='enum'/>
      <exports symbol='VIR_DOMAIN_EVENT_ID_PMSUSPEND' type='enum'/>
      <exports symbol='VIR_DOMAIN_EVENT_ID_PMSUSPEND_DISK' type='enum'/>
      <exports symbol='VIR_DOMAIN_EVENT_ID_PMWAKEUP' type='enum'/>
@@ -791,6 +792,7 @@
      <exports symbol='virConnectDomainEventGraphicsCallback' type='function'/>
      <exports symbol='virConnectDomainEventIOErrorCallback' type='function'/>
      <exports symbol='virConnectDomainEventIOErrorReasonCallback' type='function'/>
+     <exports symbol='virConnectDomainEventMigrationIterationCallback' type='function'/>
      <exports symbol='virConnectDomainEventPMSuspendCallback' type='function'/>
      <exports symbol='virConnectDomainEventPMSuspendDiskCallback' type='function'/>
      <exports symbol='virConnectDomainEventPMWakeupCallback' type='function'/>
@@ -1374,7 +1376,7 @@
     <file name='libvirt-storage'>
      <summary>APIs for management of storage pools and volumes</summary>
      <description>Provides APIs for the management of storage pools and volumes</description>
-     <author>Daniel Veillard &lt;veillard@redhat.com&gt;  Copyright (C) 2006-2014 Red Hat, Inc.  This library is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation; either version 2.1 of the License, or (at your option) any later version.  This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.  You should have received a copy of the GNU Lesser General Public License along with this library.  If not, see &lt;http://www.gnu.org/licenses/&gt;. </author>
+     <author>Daniel Veillard &lt;veillard@redhat.com&gt;  Copyright (C) 2006-2016 Red Hat, Inc.  This library is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation; either version 2.1 of the License, or (at your option) any later version.  This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.  You should have received a copy of the GNU Lesser General Public License along with this library.  If not, see &lt;http://www.gnu.org/licenses/&gt;. </author>
      <exports symbol='VIR_CONNECT_LIST_STORAGE_POOLS_ACTIVE' type='enum'/>
      <exports symbol='VIR_CONNECT_LIST_STORAGE_POOLS_AUTOSTART' type='enum'/>
      <exports symbol='VIR_CONNECT_LIST_STORAGE_POOLS_DIR' type='enum'/>
@@ -1433,6 +1435,7 @@
      <exports symbol='VIR_STORAGE_VOL_WIPE_ALG_PFITZNER7' type='enum'/>
      <exports symbol='VIR_STORAGE_VOL_WIPE_ALG_RANDOM' type='enum'/>
      <exports symbol='VIR_STORAGE_VOL_WIPE_ALG_SCHNEIER' type='enum'/>
+     <exports symbol='VIR_STORAGE_VOL_WIPE_ALG_TRIM' type='enum'/>
      <exports symbol='VIR_STORAGE_VOL_WIPE_ALG_ZERO' type='enum'/>
      <exports symbol='VIR_STORAGE_XML_INACTIVE' type='enum'/>
      <exports symbol='virConnectListAllStoragePoolsFlags' type='typedef'/>
@@ -1693,6 +1696,7 @@
      <exports symbol='VIR_FROM_XENAPI' type='enum'/>
      <exports symbol='VIR_FROM_XEND' type='enum'/>
      <exports symbol='VIR_FROM_XENSTORE' type='enum'/>
+     <exports symbol='VIR_FROM_XENXL' type='enum'/>
      <exports symbol='VIR_FROM_XENXM' type='enum'/>
      <exports symbol='VIR_FROM_XEN_INOTIFY' type='enum'/>
      <exports symbol='VIR_FROM_XML' type='enum'/>
@@ -2462,10 +2466,11 @@ limited set of commands may be allowed'/>
     <enum name='VIR_DOMAIN_EVENT_ID_GRAPHICS' file='libvirt-domain' value='5' type='virDomainEventID' info='virConnectDomainEventGraphicsCallback'/>
     <enum name='VIR_DOMAIN_EVENT_ID_IO_ERROR' file='libvirt-domain' value='4' type='virDomainEventID' info='virConnectDomainEventIOErrorCallback'/>
     <enum name='VIR_DOMAIN_EVENT_ID_IO_ERROR_REASON' file='libvirt-domain' value='6' type='virDomainEventID' info='virConnectDomainEventIOErrorReasonCallback'/>
-    <enum name='VIR_DOMAIN_EVENT_ID_LAST' file='libvirt-domain' value='20' type='virDomainEventID' info='NB: this enum value will increase over time as new events are
+    <enum name='VIR_DOMAIN_EVENT_ID_LAST' file='libvirt-domain' value='21' type='virDomainEventID' info='NB: this enum value will increase over time as new events are
  added to the libvirt API. It reflects the last event ID supported
  by this version of the libvirt API.'/>
     <enum name='VIR_DOMAIN_EVENT_ID_LIFECYCLE' file='libvirt-domain' value='0' type='virDomainEventID' info='virConnectDomainEventCallback'/>
+    <enum name='VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION' file='libvirt-domain' value='20' type='virDomainEventID' info='virConnectDomainEventMigrationIterationCallback'/>
     <enum name='VIR_DOMAIN_EVENT_ID_PMSUSPEND' file='libvirt-domain' value='12' type='virDomainEventID' info='virConnectDomainEventPMSuspendCallback'/>
     <enum name='VIR_DOMAIN_EVENT_ID_PMSUSPEND_DISK' file='libvirt-domain' value='14' type='virDomainEventID' info='virConnectDomainEventPMSuspendDiskCallback'/>
     <enum name='VIR_DOMAIN_EVENT_ID_PMWAKEUP' file='libvirt-domain' value='11' type='virDomainEventID' info='virConnectDomainEventPMWakeupCallback'/>
@@ -2835,7 +2840,7 @@ conf file'/>
     <enum name='VIR_ERR_CPU_INCOMPATIBLE' file='virterror' value='91' type='virErrorNumber' info='given CPU is incompatible with host
 CP'/>
     <enum name='VIR_ERR_DBUS_SERVICE' file='virterror' value='89' type='virErrorNumber' info='error from a dbus service'/>
-    <enum name='VIR_ERR_DOMAIN_LAST' file='virterror' value='64' type='virErrorDomain'/>
+    <enum name='VIR_ERR_DOMAIN_LAST' file='virterror' value='65' type='virErrorDomain'/>
     <enum name='VIR_ERR_DOM_EXIST' file='virterror' value='28' type='virErrorNumber' info='the domain already exist'/>
     <enum name='VIR_ERR_DRIVER_FULL' file='virterror' value='25' type='virErrorNumber' info='too many drivers registered'/>
     <enum name='VIR_ERR_ERROR' file='virterror' value='2' type='virErrorLevel' info='An error'/>
@@ -2992,6 +2997,7 @@ Retained for ABI/API compat only'/>
     <enum name='VIR_FROM_XENAPI' file='virterror' value='32' type='virErrorDomain' info='Error from XenAPI'/>
     <enum name='VIR_FROM_XEND' file='virterror' value='2' type='virErrorDomain' info='Error at connection with xend daemon'/>
     <enum name='VIR_FROM_XENSTORE' file='virterror' value='3' type='virErrorDomain' info='Error at connection with xen store'/>
+    <enum name='VIR_FROM_XENXL' file='virterror' value='64' type='virErrorDomain' info='Error from Xen xl config code'/>
     <enum name='VIR_FROM_XENXM' file='virterror' value='15' type='virErrorDomain' info='Error at Xen XM layer'/>
     <enum name='VIR_FROM_XEN_INOTIFY' file='virterror' value='23' type='virErrorDomain' info='Error from xen inotify layer'/>
     <enum name='VIR_FROM_XML' file='virterror' value='5' type='virErrorDomain' info='Error in the XML code'/>
@@ -3126,7 +3132,7 @@ Information Technologies'/>
     <enum name='VIR_STORAGE_VOL_WIPE_ALG_DOD' file='libvirt-storage' value='2' type='virStorageVolWipeAlgorithm' info='4-pass DoD 5220.22-M section
 8-306 procedure'/>
     <enum name='VIR_STORAGE_VOL_WIPE_ALG_GUTMANN' file='libvirt-storage' value='4' type='virStorageVolWipeAlgorithm' info='The canonical 35-pass sequence'/>
-    <enum name='VIR_STORAGE_VOL_WIPE_ALG_LAST' file='libvirt-storage' value='9' type='virStorageVolWipeAlgorithm' info='NB: this enum value will increase over time as new algorithms are
+    <enum name='VIR_STORAGE_VOL_WIPE_ALG_LAST' file='libvirt-storage' value='10' type='virStorageVolWipeAlgorithm' info='NB: this enum value will increase over time as new algorithms are
  added to the libvirt API. It reflects the last algorithm supported
  by this version of the libvirt API.'/>
     <enum name='VIR_STORAGE_VOL_WIPE_ALG_NNSA' file='libvirt-storage' value='1' type='virStorageVolWipeAlgorithm' info='4-pass  NNSA Policy Letter
@@ -3137,6 +3143,8 @@ NAP-14.1-C (XVI-8)'/>
     <enum name='VIR_STORAGE_VOL_WIPE_ALG_SCHNEIER' file='libvirt-storage' value='5' type='virStorageVolWipeAlgorithm' info='7-pass method described by
 Bruce Schneier in &quot;Applied
 Cryptography&quot; (1996)'/>
+    <enum name='VIR_STORAGE_VOL_WIPE_ALG_TRIM' file='libvirt-storage' value='9' type='virStorageVolWipeAlgorithm' info='1-pass, trim all data on the
+volume by using TRIM or DISCARD'/>
     <enum name='VIR_STORAGE_VOL_WIPE_ALG_ZERO' file='libvirt-storage' value='0' type='virStorageVolWipeAlgorithm' info='1-pass, all zeroes'/>
     <enum name='VIR_STORAGE_XML_INACTIVE' file='libvirt-storage' value='1' type='virStorageXMLFlags' info='dump inactive pool/volume information'/>
     <enum name='VIR_STREAM_EVENT_ERROR' file='libvirt-stream' value='4' type='virStreamEventType'/>
@@ -3943,6 +3951,21 @@ if determination of other error types becomes possible.]]></info>
       <arg name='action' type='int' info='action that is to be taken due to the IO error'/>
       <arg name='reason' type='const char *' info='the cause of the IO error'/>
       <arg name='opaque' type='void *' info='application specified data'/>
+    </functype>
+    <functype name='virConnectDomainEventMigrationIterationCallback' file='libvirt-domain' module='libvirt-domain'>
+      <info><![CDATA[This callback occurs during live migration when a new iteration over
+domain's memory starts. The @iteration value is increased by one every
+time a new iteration is started to transfer memory pages dirtied since
+the last iteration.
+
+The callback signature to use when registering for an event of type
+VIR_DOMAIN_EVENT_ID_MIGRATION_ITERATION with
+virConnectDomainEventRegisterAny().]]></info>
+      <return type='void'/>
+      <arg name='conn' type='virConnectPtr' info='connection object'/>
+      <arg name='dom' type='virDomainPtr' info='domain on which the event occurred'/>
+      <arg name='iteration' type='int' info='current iteration over domain&apos;s memory'/>
+      <arg name='opaque' type='void *' info='application specific data'/>
     </functype>
     <functype name='virConnectDomainEventPMSuspendCallback' file='libvirt-domain' module='libvirt-domain'>
       <info><![CDATA[This callback occurs when the guest is suspended.

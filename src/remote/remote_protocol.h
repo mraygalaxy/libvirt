@@ -3902,6 +3902,13 @@ struct remote_domain_rename_ret {
         int retcode;
 };
 typedef struct remote_domain_rename_ret remote_domain_rename_ret;
+
+struct remote_domain_event_callback_migration_iteration_msg {
+        int callbackID;
+        remote_nonnull_domain dom;
+        int iteration;
+};
+typedef struct remote_domain_event_callback_migration_iteration_msg remote_domain_event_callback_migration_iteration_msg;
 #define REMOTE_PROGRAM 0x20008086
 #define REMOTE_PROTOCOL_VERSION 1
 
@@ -4264,6 +4271,7 @@ enum remote_procedure {
         REMOTE_PROC_DOMAIN_DEL_IOTHREAD = 356,
         REMOTE_PROC_DOMAIN_SET_USER_PASSWORD = 357,
         REMOTE_PROC_DOMAIN_RENAME = 358,
+        REMOTE_PROC_DOMAIN_EVENT_CALLBACK_MIGRATION_ITERATION = 359,
 };
 typedef enum remote_procedure remote_procedure;
 
@@ -4843,6 +4851,7 @@ extern  bool_t xdr_remote_domain_interface_addresses_ret (XDR *, remote_domain_i
 extern  bool_t xdr_remote_domain_set_user_password_args (XDR *, remote_domain_set_user_password_args*);
 extern  bool_t xdr_remote_domain_rename_args (XDR *, remote_domain_rename_args*);
 extern  bool_t xdr_remote_domain_rename_ret (XDR *, remote_domain_rename_ret*);
+extern  bool_t xdr_remote_domain_event_callback_migration_iteration_msg (XDR *, remote_domain_event_callback_migration_iteration_msg*);
 extern  bool_t xdr_remote_procedure (XDR *, remote_procedure*);
 
 #else /* K&R C */
@@ -5419,6 +5428,7 @@ extern bool_t xdr_remote_domain_interface_addresses_ret ();
 extern bool_t xdr_remote_domain_set_user_password_args ();
 extern bool_t xdr_remote_domain_rename_args ();
 extern bool_t xdr_remote_domain_rename_ret ();
+extern bool_t xdr_remote_domain_event_callback_migration_iteration_msg ();
 extern bool_t xdr_remote_procedure ();
 
 #endif /* K&R C */

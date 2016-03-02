@@ -42,8 +42,6 @@ int qemuProcessStopCPUs(virQEMUDriverPtr driver,
 void qemuProcessAutostartAll(virQEMUDriverPtr driver);
 void qemuProcessReconnectAll(virConnectPtr conn, virQEMUDriverPtr driver);
 
-int qemuProcessAssignPCIAddresses(virDomainDefPtr def);
-
 typedef struct _qemuProcessIncomingDef qemuProcessIncomingDef;
 typedef qemuProcessIncomingDef *qemuProcessIncomingDefPtr;
 struct _qemuProcessIncomingDef {
@@ -83,9 +81,17 @@ int qemuProcessStart(virConnectPtr conn,
                      virNetDevVPortProfileOp vmop,
                      unsigned int flags);
 
+
+int qemuProcessStartValidate(virDomainDefPtr def,
+                             virQEMUCapsPtr qemuCaps,
+                             bool migration,
+                             bool snap);
+
 int qemuProcessInit(virQEMUDriverPtr driver,
                     virDomainObjPtr vm,
-                    bool migration);
+                    qemuDomainAsyncJob asyncJob,
+                    bool migration,
+                    bool snap);
 
 int qemuProcessLaunch(virConnectPtr conn,
                       virQEMUDriverPtr driver,
@@ -108,9 +114,14 @@ typedef enum {
     VIR_QEMU_PROCESS_STOP_NO_RELABEL    = 1 << 1,
 } qemuProcessStopFlags;
 
+int qemuProcessBeginStopJob(virQEMUDriverPtr driver,
+                            virDomainObjPtr vm,
+                            qemuDomainJob job,
+                            bool forceKill);
 void qemuProcessStop(virQEMUDriverPtr driver,
                      virDomainObjPtr vm,
                      virDomainShutoffReason reason,
+                     qemuDomainAsyncJob asyncJob,
                      unsigned int flags);
 
 int qemuProcessAttach(virConnectPtr conn,
@@ -155,4 +166,12 @@ virDomainDiskDefPtr qemuProcessFindDomainDiskByAlias(virDomainObjPtr vm,
 
 int qemuConnectAgent(virQEMUDriverPtr driver, virDomainObjPtr vm);
 
+
+int qemuProcessSetupVcpu(virDomainObjPtr vm,
+                         unsigned int vcpuid);
+int qemuProcessSetupIOThread(virDomainObjPtr vm,
+                             virDomainIOThreadIDDefPtr iothread);
+
+int qemuRefreshVirtioChannelState(virQEMUDriverPtr driver,
+                                  virDomainObjPtr vm);
 #endif /* __QEMU_PROCESS_H__ */

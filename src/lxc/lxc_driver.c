@@ -488,7 +488,7 @@ lxcDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
     def = NULL;
     vm->persistent = 1;
 
-    if (virDomainSaveConfig(cfg->configDir,
+    if (virDomainSaveConfig(cfg->configDir, driver->caps,
                             vm->newDef ? vm->newDef : vm->def) < 0) {
         virDomainObjListRemove(driver->domains, vm);
         vm = NULL;
@@ -737,7 +737,8 @@ static int lxcDomainSetMemoryFlags(virDomainPtr dom, unsigned long newmem,
             virDomainDefSetMemoryTotal(persistentDef, newmem);
             if (persistentDef->mem.cur_balloon > newmem)
                 persistentDef->mem.cur_balloon = newmem;
-            if (virDomainSaveConfig(cfg->configDir, persistentDef) < 0)
+            if (virDomainSaveConfig(cfg->configDir, driver->caps,
+                                    persistentDef) < 0)
                 goto cleanup;
         }
     } else {
@@ -764,13 +765,14 @@ static int lxcDomainSetMemoryFlags(virDomainPtr dom, unsigned long newmem,
             }
 
             vm->def->mem.cur_balloon = newmem;
-            if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+            if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
                 goto cleanup;
         }
 
         if (flags & VIR_DOMAIN_AFFECT_CONFIG) {
             persistentDef->mem.cur_balloon = newmem;
-            if (virDomainSaveConfig(cfg->configDir, persistentDef) < 0)
+            if (virDomainSaveConfig(cfg->configDir, driver->caps,
+                                    persistentDef) < 0)
                 goto cleanup;
         }
     }
@@ -915,7 +917,7 @@ lxcDomainSetMemoryParameters(virDomainPtr dom,
 #undef LXC_SET_MEM_PARAMETER
 
     if (flags & VIR_DOMAIN_AFFECT_CONFIG &&
-        virDomainSaveConfig(cfg->configDir, vmdef) < 0)
+        virDomainSaveConfig(cfg->configDir, driver->caps, vmdef) < 0)
         goto cleanup;
 
     ret = 0;
@@ -1027,6 +1029,7 @@ lxcDomainGetMemoryParameters(virDomainPtr dom,
 static char *lxcDomainGetXMLDesc(virDomainPtr dom,
                                  unsigned int flags)
 {
+    virLXCDriverPtr driver = dom->conn->privateData;
     virDomainObjPtr vm;
     char *ret = NULL;
 
@@ -1040,6 +1043,7 @@ static char *lxcDomainGetXMLDesc(virDomainPtr dom,
 
     ret = virDomainDefFormat((flags & VIR_DOMAIN_XML_INACTIVE) &&
                              vm->newDef ? vm->newDef : vm->def,
+                             driver->caps,
                              virDomainDefFormatConvertXMLFlags(flags));
 
  cleanup:
@@ -1072,7 +1076,7 @@ static char *lxcConnectDomainXMLFromNative(virConnectPtr conn,
     if (!(def = lxcParseConfigString(nativeConfig, caps, driver->xmlopt)))
         goto cleanup;
 
-    xml = virDomainDefFormat(def, 0);
+    xml = virDomainDefFormat(def, caps, 0);
 
  cleanup:
     virObjectUnref(caps);
@@ -2018,12 +2022,12 @@ lxcDomainSetSchedulerParametersFlags(virDomainPtr dom,
         }
     }
 
-    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
         goto cleanup;
 
 
     if (flags & VIR_DOMAIN_AFFECT_CONFIG) {
-        rc = virDomainSaveConfig(cfg->configDir, vmdef);
+        rc = virDomainSaveConfig(cfg->configDir, driver->caps, vmdef);
         if (rc < 0)
             goto cleanup;
 
@@ -2725,7 +2729,7 @@ lxcDomainSetBlkioParameters(virDomainPtr dom,
             }
         }
 
-        if (virDomainSaveConfig(cfg->configDir, persistentDef) < 0)
+        if (virDomainSaveConfig(cfg->configDir, driver->caps, persistentDef) < 0)
             ret = -1;
     }
 
@@ -3398,7 +3402,7 @@ static int lxcDomainSuspend(virDomainPtr dom)
                                          VIR_DOMAIN_EVENT_SUSPENDED_PAUSED);
     }
 
-    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
         goto cleanup;
     ret = 0;
 
@@ -3448,7 +3452,7 @@ static int lxcDomainResume(virDomainPtr dom)
                                          VIR_DOMAIN_EVENT_RESUMED_UNPAUSED);
     }
 
-    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0)
+    if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0)
         goto cleanup;
     ret = 0;
 
@@ -4642,7 +4646,8 @@ lxcDomainDetachDeviceDiskLive(virDomainObjPtr vm,
     }
     virDomainAuditDisk(vm, def->src, NULL, "detach", true);
 
-    if (virCgroupDenyDevicePath(priv->cgroup, src, VIR_CGROUP_DEVICE_RWM) != 0)
+    if (virCgroupDenyDevicePath(priv->cgroup, src,
+                                VIR_CGROUP_DEVICE_RWM, false) != 0)
         VIR_WARN("cannot deny device %s for domain %s",
                  src, vm->def->name);
 
@@ -4818,7 +4823,8 @@ lxcDomainDetachDeviceHostdevStorageLive(virDomainObjPtr vm,
     }
     virDomainAuditHostdev(vm, def, "detach", true);
 
-    if (virCgroupDenyDevicePath(priv->cgroup, def->source.caps.u.storage.block, VIR_CGROUP_DEVICE_RWM) != 0)
+    if (virCgroupDenyDevicePath(priv->cgroup, def->source.caps.u.storage.block,
+                                VIR_CGROUP_DEVICE_RWM, false) != 0)
         VIR_WARN("cannot deny device %s for domain %s",
                  def->source.caps.u.storage.block, vm->def->name);
 
@@ -4867,7 +4873,8 @@ lxcDomainDetachDeviceHostdevMiscLive(virDomainObjPtr vm,
     }
     virDomainAuditHostdev(vm, def, "detach", true);
 
-    if (virCgroupDenyDevicePath(priv->cgroup, def->source.caps.u.misc.chardev, VIR_CGROUP_DEVICE_RWM) != 0)
+    if (virCgroupDenyDevicePath(priv->cgroup, def->source.caps.u.misc.chardev,
+                                VIR_CGROUP_DEVICE_RWM, false) != 0)
         VIR_WARN("cannot deny device %s for domain %s",
                  def->source.caps.u.misc.chardev, vm->def->name);
 
@@ -5071,7 +5078,7 @@ static int lxcDomainAttachDeviceFlags(virDomainPtr dom,
          * changed even if we failed to attach the device. For example,
          * a new controller may be created.
          */
-        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0) {
+        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0) {
             ret = -1;
             goto cleanup;
         }
@@ -5079,7 +5086,7 @@ static int lxcDomainAttachDeviceFlags(virDomainPtr dom,
 
     /* Finally, if no error until here, we can save config. */
     if (flags & VIR_DOMAIN_AFFECT_CONFIG) {
-        ret = virDomainSaveConfig(cfg->configDir, vmdef);
+        ret = virDomainSaveConfig(cfg->configDir, driver->caps, vmdef);
         if (!ret) {
             virDomainObjAssignDef(vm, vmdef, false, NULL);
             vmdef = NULL;
@@ -5201,7 +5208,7 @@ static int lxcDomainUpdateDeviceFlags(virDomainPtr dom,
 
     /* Finally, if no error until here, we can save config. */
     if (flags & VIR_DOMAIN_AFFECT_CONFIG) {
-        ret = virDomainSaveConfig(cfg->configDir, vmdef);
+        ret = virDomainSaveConfig(cfg->configDir, driver->caps, vmdef);
         if (!ret) {
             virDomainObjAssignDef(vm, vmdef, false, NULL);
             vmdef = NULL;
@@ -5313,7 +5320,7 @@ static int lxcDomainDetachDeviceFlags(virDomainPtr dom,
          * changed even if we failed to attach the device. For example,
          * a new controller may be created.
          */
-        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm) < 0) {
+        if (virDomainSaveStatus(driver->xmlopt, cfg->stateDir, vm, driver->caps) < 0) {
             ret = -1;
             goto cleanup;
         }
@@ -5321,7 +5328,7 @@ static int lxcDomainDetachDeviceFlags(virDomainPtr dom,
 
     /* Finally, if no error until here, we can save config. */
     if (flags & VIR_DOMAIN_AFFECT_CONFIG) {
-        ret = virDomainSaveConfig(cfg->configDir, vmdef);
+        ret = virDomainSaveConfig(cfg->configDir, driver->caps, vmdef);
         if (!ret) {
             virDomainObjAssignDef(vm, vmdef, false, NULL);
             vmdef = NULL;
@@ -5702,10 +5709,9 @@ lxcDomainGetCPUStats(virDomainPtr dom,
                                               params, nparams);
     else
         ret = virCgroupGetPercpuStats(priv->cgroup, params,
-                                      nparams, start_cpu, ncpus, 0);
+                                      nparams, start_cpu, ncpus, NULL);
  cleanup:
-    if (vm)
-        virObjectUnlock(vm);
+    virObjectUnlock(vm);
     return ret;
 }
 

@@ -1563,14 +1563,16 @@
         <span class="since">Since 1.2.12</span>
       </dd><dt><code>vmport</code></dt><dd>Depending on the <code>state</code> attribute (values <code>on</code>,
         <code>off</code>, default <code>on</code>) enable or disable
-        the emulation of VMWare IO port, for vmmouse etc.
+        the emulation of VMware IO port, for vmmouse etc.
         <span class="since">Since 1.2.16</span>
       </dd><dt><code>gic</code></dt><dd>Enable for architectures using a General Interrupt
           Controller instead of APIC in order to handle interrupts.
           For example, the 'aarch64' architecture uses
           <code>gic</code> instead of <code>apic</code>. The optional
           attribute <code>version</code> specifies the GIC version;
-          however, it may not be supported by all hypervisors. <span class="since">Since 1.2.16</span>
+          however, it may not be supported by all hypervisors. Accepted
+          values are <code>2</code>, <code>3</code> and <code>host</code>.
+          <span class="since">Since 1.2.16</span>
       </dd></dl>
         <h3>
           <a name="elementsTime" shape="rect" id="elementsTime">Time keeping</a>
@@ -4410,7 +4412,8 @@ qemu-kvm -net nic,model=? /dev/null
   &lt;/devices&gt;
   ...</pre>
         <dl><dt><code>graphics</code></dt><dd>The <code>graphics</code> element has a mandatory <code>type</code>
-        attribute which takes the value "sdl", "vnc", "rdp" or "desktop":
+        attribute which takes the value "sdl", "vnc", "spice", "rdp" or
+        "desktop":
         <dl><dt><code>"sdl"</code></dt><dd>
             This displays a window on the host desktop, it can take 3
             optional arguments: a <code>display</code> attribute for

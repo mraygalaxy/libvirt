@@ -77,6 +77,18 @@ const vshCmdDef *cmdSet;
 /* Bypass header poison */
 #undef strdup
 
+
+/* simple handler for oom conditions */
+static void
+vshErrorOOM(void)
+{
+    fflush(stdout);
+    fputs(_("error: Out of memory\n"), stderr);
+    fflush(stderr);
+    exit(EXIT_FAILURE);
+}
+
+
 double
 vshPrettyCapacity(unsigned long long val, const char **unit)
 {
@@ -1700,11 +1712,23 @@ vshPrintExtra(vshControl *ctl, const char *format, ...)
         return;
 
     va_start(ap, format);
-    if (virVasprintf(&str, format, ap) < 0) {
-        vshError(ctl, "%s", _("Out of memory"));
-        va_end(ap);
-        return;
-    }
+    if (virVasprintfQuiet(&str, format, ap) < 0)
+        vshErrorOOM();
+    va_end(ap);
+    fputs(str, stdout);
+    VIR_FREE(str);
+}
+
+
+void
+vshPrint(vshControl *ctl ATTRIBUTE_UNUSED, const char *format, ...)
+{
+    va_list ap;
+    char *str;
+
+    va_start(ap, format);
+    if (virVasprintfQuiet(&str, format, ap) < 0)
+        vshErrorOOM();
     va_end(ap);
     fputs(str, stdout);
     VIR_FREE(str);
@@ -2086,6 +2110,7 @@ vshOutputLogFile(vshControl *ctl, int log_level, const char *msg_format,
     }
     virBufferAsprintf(&buf, "%s ", lvl);
     virBufferVasprintf(&buf, msg_format, ap);
+    virBufferTrim(&buf, "\n", -1);
     virBufferAddChar(&buf, '\n');
 
     if (virBufferError(&buf))
@@ -2093,10 +2118,6 @@ vshOutputLogFile(vshControl *ctl, int log_level, const char *msg_format,
 
     str = virBufferContentAndReset(&buf);
     len = strlen(str);
-    if (len > 1 && str[len - 2] == '\n') {
-        str[len - 1] = '\0';
-        len--;
-    }
 
     /* write log */
     if (safewrite(ctl->log_fd, str, len) < 0)

@@ -190,7 +190,7 @@
 %endif
 
 # RHEL doesn't ship OpenVZ, VBox, UML, PowerHypervisor,
-# VMWare, libxenserver (xenapi), libxenlight (Xen 4.1 and newer),
+# VMware, libxenserver (xenapi), libxenlight (Xen 4.1 and newer),
 # or HyperV.
 %if 0%{?rhel}
     %define with_openvz 0
@@ -377,7 +377,7 @@
 
 Summary: Library providing a simple virtualization API
 Name: libvirt
-Version: 1.3.1
+Version: 1.3.2
 Release: 1%{?dist}%{?extra_release}
 License: LGPLv2+
 Group: Development/Libraries
@@ -2377,6 +2377,12 @@ exit 0
 %doc examples/systemtap
 
 %changelog
+* Tue Mar  1 2016 Daniel Veillard <veillard@redhat.com> - 1.3.2-1
+- Various improvements for the Xen libxl driver
+- virt-admin improvement
+- Various improvements for the RDB volumes
+- many bug fixes and improvements
+
 * Sun Jan 17 2016 Daniel Veillard <veillard@redhat.com> - 1.3.1-1
 - Various improvements for the Xen libxl driver
 - rbd: Add support for wiping and cloning images to storage driver

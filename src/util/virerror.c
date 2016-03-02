@@ -105,7 +105,7 @@ VIR_ENUM_IMPL(virErrorDomain, VIR_ERR_DOMAIN_LAST,
               "Audit Utils",
               "Sysinfo Utils",
               "I/O Stream Utils",
-              "VMWare Driver",
+              "VMware Driver",
 
               "Event Loop", /* 40 */
               "Xen Light Driver",
@@ -135,6 +135,7 @@ VIR_ENUM_IMPL(virErrorDomain, VIR_ERR_DOMAIN_LAST,
               "Thread jobs",
               "Admin Interface",
               "Log Manager",
+              "Xen XL Config",
     )
 
 

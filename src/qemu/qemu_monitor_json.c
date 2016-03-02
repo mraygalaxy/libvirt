@@ -1,7 +1,7 @@
 /*
  * qemu_monitor_json.c: interaction with QEMU monitor console
  *
- * Copyright (C) 2006-2015 Red Hat, Inc.
+ * Copyright (C) 2006-2016 Red Hat, Inc.
  * Copyright (C) 2006 Daniel P. Berrange
  *
  * This library is free software; you can redistribute it and/or
@@ -34,6 +34,7 @@
 #include "qemu_monitor_text.h"
 #include "qemu_monitor_json.h"
 #include "qemu_command.h"
+#include "qemu_parse_command.h"
 #include "qemu_capabilities.h"
 #include "viralloc.h"
 #include "virlog.h"
@@ -86,6 +87,7 @@ static void qemuMonitorJSONHandleNicRxFilterChanged(qemuMonitorPtr mon, virJSONV
 static void qemuMonitorJSONHandleSerialChange(qemuMonitorPtr mon, virJSONValuePtr data);
 static void qemuMonitorJSONHandleSpiceMigrated(qemuMonitorPtr mon, virJSONValuePtr data);
 static void qemuMonitorJSONHandleMigrationStatus(qemuMonitorPtr mon, virJSONValuePtr data);
+static void qemuMonitorJSONHandleMigrationPass(qemuMonitorPtr mon, virJSONValuePtr data);
 
 typedef struct {
     const char *type;
@@ -102,6 +104,7 @@ static qemuEventHandler eventHandlers[] = {
     { "DEVICE_TRAY_MOVED", qemuMonitorJSONHandleTrayChange, },
     { "GUEST_PANICKED", qemuMonitorJSONHandleGuestPanic, },
     { "MIGRATION", qemuMonitorJSONHandleMigrationStatus, },
+    { "MIGRATION_PASS", qemuMonitorJSONHandleMigrationPass, },
     { "NIC_RX_FILTER_CHANGED", qemuMonitorJSONHandleNicRxFilterChanged, },
     { "POWERDOWN", qemuMonitorJSONHandlePowerdown, },
     { "RESET", qemuMonitorJSONHandleReset, },
@@ -1005,6 +1008,21 @@ qemuMonitorJSONHandleMigrationStatus(qemuMonitorPtr mon,
     }
 
     qemuMonitorEmitMigrationStatus(mon, status);
+}
+
+
+static void
+qemuMonitorJSONHandleMigrationPass(qemuMonitorPtr mon,
+                                   virJSONValuePtr data)
+{
+    int pass;
+
+    if (virJSONValueObjectGetNumberInt(data, "pass", &pass) < 0) {
+        VIR_WARN("missing dirty-sync-count in migration-pass event");
+        return;
+    }
+
+    qemuMonitorEmitMigrationPass(mon, pass);
 }
 
 

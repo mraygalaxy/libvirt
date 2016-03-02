@@ -642,6 +642,7 @@ vzDomainGetState(virDomainPtr domain,
 static char *
 vzDomainGetXMLDesc(virDomainPtr domain, unsigned int flags)
 {
+    vzConnPtr privconn = domain->conn->privateData;
     virDomainDefPtr def;
     virDomainObjPtr privdom;
     char *ret = NULL;
@@ -654,7 +655,7 @@ vzDomainGetXMLDesc(virDomainPtr domain, unsigned int flags)
     def = (flags & VIR_DOMAIN_XML_INACTIVE) &&
         privdom->newDef ? privdom->newDef : privdom->def;
 
-    ret = virDomainDefFormat(def, flags);
+    ret = virDomainDefFormat(def, privconn->caps, flags);
 
  cleanup:
     if (privdom)
@@ -687,6 +688,7 @@ vzDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
     virDomainPtr retdom = NULL;
     virDomainDefPtr def;
     virDomainObjPtr olddom = NULL;
+    virDomainObjPtr newdom = NULL;
     unsigned int parse_flags = VIR_DOMAIN_DEF_PARSE_INACTIVE;
 
     virCheckFlags(VIR_DOMAIN_DEFINE_VALIDATE, NULL);
@@ -702,6 +704,9 @@ vzDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
     olddom = virDomainObjListFindByUUID(privconn->domains, def->uuid);
     if (olddom == NULL) {
         virResetLastError();
+        newdom = vzNewDomain(privconn, def->name, def->uuid);
+        if (!newdom)
+            goto cleanup;
         if (def->os.type == VIR_DOMAIN_OSTYPE_HVM) {
             if (prlsdkCreateVm(conn, def))
                 goto cleanup;
@@ -715,8 +720,7 @@ vzDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
             goto cleanup;
         }
 
-        olddom = prlsdkAddDomain(privconn, def->uuid);
-        if (!olddom)
+        if (prlsdkLoadDomain(privconn, newdom))
             goto cleanup;
     } else {
         int state, reason;
@@ -757,6 +761,12 @@ vzDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
  cleanup:
     if (olddom)
         virObjectUnlock(olddom);
+    if (newdom) {
+        if (!retdom)
+             virDomainObjListRemove(privconn->domains, newdom);
+        else
+             virObjectUnlock(newdom);
+    }
     virDomainDefFree(def);
     vzDriverUnlock(privconn);
     return retdom;
