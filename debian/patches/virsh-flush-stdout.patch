@@ -1,0 +1,26 @@
+--- a/tools/vsh.c
++++ b/tools/vsh.c
+@@ -1699,6 +1699,7 @@
+     }
+     va_end(ap);
+     fputs(str, stdout);
++    fflush(stdout);
+     VIR_FREE(str);
+ }
+ 
+@@ -1716,6 +1717,7 @@
+         vshErrorOOM();
+     va_end(ap);
+     fputs(str, stdout);
++    fflush(stdout);
+     VIR_FREE(str);
+ }
+ 
+@@ -1731,6 +1733,7 @@
+         vshErrorOOM();
+     va_end(ap);
+     fputs(str, stdout);
++    fflush(stdout);
+     VIR_FREE(str);
+ }
+ 
