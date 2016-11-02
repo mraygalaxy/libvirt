@@ -20,3 +20,4 @@ virt-aa-helper-apparmor-allow-usr-share-OVMF-too.patch
 stdio-handler-default-file.patch
 no-deny-snapshot-parent.patch
 virsh-flush-stdout.patch
+rssusage.patch
